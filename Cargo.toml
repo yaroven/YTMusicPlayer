@@ -106,7 +106,7 @@ slint = { version = "1.18", optional = true, default-features = false, features 
     "unstable-winit-030",
 ] }
 
-# Process memory (macOS `proc_pid_rusage`) and the single-instance socket.
+# Process memory (macOS `proc_pid_rusage`), quiet SIGPIPE handling.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

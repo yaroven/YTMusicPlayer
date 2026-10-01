@@ -45,6 +45,13 @@ USAGE:
     ytm status                  show setup state (config, sign-in, library)";
 
 fn main() -> Result<()> {
+    // Like other Unix tools, exit quietly when output is piped into
+    // something that stops reading (`ytm --help | head`) instead of
+    // panicking on a broken pipe (which aborts with panic = "abort").
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let paths = AppPaths::new().context("cannot determine home directory")?;
     let _log_guard = init_logging(&paths);
     let settings = Settings::load(&paths.config_file())?;

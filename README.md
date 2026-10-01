@@ -52,7 +52,9 @@ OAuth client (see below), sign you in and start the player. Re-run to update.
 The installer also adds the player to your applications: a menu entry with
 an icon on Linux, and `~/Applications/ytm-player.app` on macOS (Launchpad,
 Spotlight, Dock; it shows up as "ytm-player" in Activity Monitor). Re-create
-just that with `./install.sh --launcher-only`.
+just that with `./install.sh --launcher-only`. Copies left by earlier
+installs (another `ytm` on PATH, an older `ytm-player.app`) are removed, so
+one binary and one app remain.
 
 `install.sh` options: `--yes`, `--from-source`, `--no-deps`, `--no-launch`,
 `--launcher-only`.

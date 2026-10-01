@@ -135,6 +135,12 @@ main services the CFRunLoop for media keys).
   binary copied in, ad-hoc signed, opens the GUI when started from the
   bundle) and a Linux `.desktop` entry + icon (`assets/`, icon drawn with a
   Swift CoreGraphics script, `.icns` via `iconutil`).
+- **install.sh must run on macOS bash 3.2**: no `mapfile`, assoc arrays or
+  `${x,,}`; check with `/bin/bash -n install.sh`. It removes other
+  ytm-player binaries/apps (identified by `--help` banner / bundle id) so
+  only one of each remains.
+- Tests that launch the GUI/TUI must use their own `TMPDIR` (single-instance
+  socket is per user, not per HOME) or they find the user's running player.
 - **Windows media keys skipped**: souvlaki needs an HWND.
 - **CI**: Linux only (fmt/clippy/test/shellcheck); no macOS on push (10x
   minutes on private repos). **Releases (user's choice, 2026-10-01): only

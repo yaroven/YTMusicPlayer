@@ -127,9 +127,54 @@ install_prebuilt() {
   info "installed release $target to $BIN"
 }
 
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
+# Every ytm-player binary we can find (checked by its --help banner, so a
+# different program called `ytm` is never touched).
+installed_binaries() {
+  local f seen=" "
+  local candidates=("$HOME/.cargo/bin/ytm" "$HOME/.local/bin/ytm")
+  # (No mapfile: macOS ships bash 3.2.)
+  while IFS= read -r f; do candidates+=("$f"); done < <(type -ap ytm 2>/dev/null)
+  for f in "${candidates[@]}"; do
+    [[ -f $f && $seen != *" $f "* ]] || continue
+    seen+="$f "
+    # Read the help fully first: `| grep -q` would close the pipe early.
+    case $("$f" --help 2>/dev/null) in
+      *"lightweight YouTube Music player"*) printf '%s\n' "$f" ;;
+    esac
+  done
+}
+
+# Removes copies left by earlier installs, so exactly one `ytm` and one app
+# remain (otherwise Launchpad/menus and PATH show stale duplicates).
+remove_old_installs() {
+  local keep=$1 f app
+  while IFS= read -r f; do
+    [[ $f == "$keep" ]] && continue
+    rm -f "$f" && info "removed old binary: $f"
+  done < <(installed_binaries)
+
+  if [[ $OS == Darwin && -x $LSREGISTER ]]; then
+    while IFS= read -r app; do
+      [[ $app == "$HOME/Applications/ytm-player.app" ]] && continue
+      if [[ -d $app ]]; then
+        [[ $(defaults read "$app/Contents/Info" CFBundleIdentifier 2>/dev/null) == dev.ytm-player.app ]] ||
+          continue
+        rm -rf "$app" && info "removed old app: $app"
+      fi
+      "$LSREGISTER" -u "$app" >/dev/null 2>&1 || true
+    done < <("$LSREGISTER" -dump 2>/dev/null |
+      sed -n 's/^path: *\(.*ytm-player\.app\) (0x[0-9a-f]*)$/\1/p' | sort -u)
+  fi
+}
+
 BIN=""
 if ((LAUNCHER_ONLY)); then
-  BIN=$(command -v ytm || true)
+  # Newest installed binary, not whichever happens to come first on PATH.
+  while IFS= read -r f; do
+    if [[ -z $BIN || $f -nt $BIN ]]; then BIN=$f; fi
+  done < <(installed_binaries)
   [[ -n $BIN ]] || die "ytm is not installed yet; run ./install.sh first"
 elif ((!FROM_SOURCE)); then
   say "Downloading ytm"
@@ -214,6 +259,7 @@ build_from_source() {
 }
 
 [[ -n $BIN ]] || build_from_source
+remove_old_installs "$BIN"
 
 # --- App launcher -----------------------------------------------------------------------
 
@@ -253,6 +299,8 @@ install_launcher() {
     write_info_plist "$app/Contents/Info.plist"
     # Ad-hoc signature: a stable identity for the bundle (Keychain, Gatekeeper).
     codesign --force --sign - "$app" >/dev/null 2>&1 || warn "codesign failed; the app may still run"
+    # Refresh Launchpad/Spotlight so they pick up the new build and icon.
+    "$LSREGISTER" -f "$app" >/dev/null 2>&1 || true
     info "app: $app (Launchpad, Spotlight, Dock)"
   else
     local share="${XDG_DATA_HOME:-$HOME/.local/share}"
