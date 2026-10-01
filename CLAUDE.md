@@ -103,6 +103,9 @@ main services the CFRunLoop for media keys).
 - **Managed yt-dlp first, PATH copy only as fallback**: a user's Linux
   distro yt-dlp lacked `--no-js-runtimes` and every track failed (log
   2026-10-01). Unknown-flag errors map to `ExtractorError::Outdated`.
+- **Linux output device**: prefer ALSA PCMs `pipewire`, then `pulse`, then
+  `default`. A user's `default` pointed at the raw card (`default:CARD=PCH`)
+  owned by PipeWire — silence (2026-10-01). Override: `audio_device`.
 - **Startup must not wait on yt-dlp**: `YtDlp::find` (no probe);
   `yt-dlp --version` costs 3–4 s.
 - **Sync never runs on a timer** to save quota.

@@ -67,8 +67,8 @@ cargo install --path . --locked
 ```
 
 Linux at runtime also needs a Secret Service provider (GNOME Keyring or
-KWallet) to store the sign-in; PulseAudio/PipeWire work through ALSA
-(`pipewire-alsa`).
+KWallet) to store the sign-in. Sound goes to PipeWire or PulseAudio through
+their ALSA plugins, picked automatically.
 
 ## Set up Google sign-in (once, ~5 minutes)
 
@@ -106,6 +106,7 @@ ytm                         # open the player; first start syncs your library
 ytm sync                    # refresh the library (unchanged playlists are skipped)
 ytm play <url|id>           # play a single track without the UI
 ytm status                  # config, sign-in and library state
+ytm devices                 # audio outputs (for `audio_device`)
 ytm import-client <json>    # set the OAuth client from Google's JSON
 ytm login [--device] | ytm logout
 ```
@@ -140,6 +141,7 @@ Volume, shuffle, repeat and the selected playlist are remembered.
 | `client_id`, `client_secret` | — | Google OAuth client (or `YTM_CLIENT_ID` / `YTM_CLIENT_SECRET`) |
 | `device_client_id`, `device_client_secret` | — | optional TV-type client for `ytm login --device` |
 | `media_controls` | `true` | media keys and system "Now Playing" (macOS, Linux) |
+| `audio_device` | `""` | output device name from `ytm devices`; empty = automatic (Linux: PipeWire, then PulseAudio, then ALSA default) |
 | `js_fallback` | `true` | if yt-dlp fails, retry with a JS runtime (system deno/node, or a ~2 MB QuickJS download). `false` = never run JS |
 | `ytdlp_extra_args` | `[]` | e.g. `["--cookies-from-browser", "firefox"]` for age-restricted tracks |
 | `liked_music_only` | `true` | keep only "Music"-category videos in the liked list |

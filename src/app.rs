@@ -53,6 +53,7 @@ pub struct Deps {
     pub liked_music_only: bool,
     pub volume: f32,
     pub media_controls: bool,
+    pub audio_device: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,7 +156,7 @@ pub async fn run(deps: Deps) -> Result<()> {
         .flatten()
         .and_then(|v| v.parse().ok())
         .unwrap_or(deps.volume);
-    let player = PlayerHandle::spawn(volume, player_tx)?;
+    let player = PlayerHandle::spawn(volume, deps.audio_device.clone(), player_tx)?;
     let media = if deps.media_controls {
         MediaControls::new(media_tx)
     } else {

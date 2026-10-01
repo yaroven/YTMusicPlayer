@@ -32,6 +32,10 @@ ytdlp_extra_args = []
 # Liked list: keep only videos in the YouTube "Music" category.
 liked_music_only = true
 
+# Audio output device; empty = automatic (on Linux: PipeWire, then
+# PulseAudio, then ALSA default). `ytm devices` lists the names.
+audio_device = ""
+
 # Startup volume, 0.0 - 1.0.
 volume = 0.8
 "#;
@@ -44,6 +48,7 @@ pub struct Settings {
     pub device_client_id: String,
     pub device_client_secret: String,
     pub media_controls: bool,
+    pub audio_device: String,
     pub js_fallback: bool,
     pub ytdlp_extra_args: Vec<String>,
     pub liked_music_only: bool,
@@ -58,6 +63,7 @@ impl Default for Settings {
             device_client_id: String::new(),
             device_client_secret: String::new(),
             media_controls: true,
+            audio_device: String::new(),
             js_fallback: true,
             ytdlp_extra_args: Vec::new(),
             liked_music_only: true,
@@ -109,6 +115,12 @@ impl Settings {
 
     pub fn has_oauth_client(&self) -> bool {
         !self.client_id.trim().is_empty()
+    }
+
+    /// `audio_device`, or `None` for automatic selection.
+    pub fn audio_device(&self) -> Option<String> {
+        let name = self.audio_device.trim();
+        (!name.is_empty()).then(|| name.to_owned())
     }
 
     pub fn has_device_client(&self) -> bool {

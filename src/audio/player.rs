@@ -65,7 +65,13 @@ pub struct PlayerHandle {
 impl PlayerHandle {
     /// Starts the audio thread. The device itself is opened lazily; failures
     /// to open it are reported as [`PlayerEvent::Error`] on the first load.
-    pub fn spawn(volume: f32, events: UnboundedSender<PlayerEvent>) -> Result<Self> {
+    /// `device`: output device name (see [`output_device_names`]); `None`
+    /// picks automatically.
+    pub fn spawn(
+        volume: f32,
+        device: Option<String>,
+        events: UnboundedSender<PlayerEvent>,
+    ) -> Result<Self> {
         let (tx, rx) = mpsc::channel();
         let (status_tx, status) = watch::channel(PlayerStatus {
             state: PlayState::Idle,
@@ -77,7 +83,7 @@ impl PlayerHandle {
             .name("audio".into())
             // Decoding needs little stack; the default 2 MiB is reserved per thread.
             .stack_size(256 * 1024)
-            .spawn(move || Engine::new(status_tx, events, volume).run(rx))?;
+            .spawn(move || Engine::new(status_tx, events, volume, device).run(rx))?;
         Ok(Self { tx, status })
     }
 
@@ -142,6 +148,7 @@ struct Engine {
     idle_since: Instant,
     status_tx: watch::Sender<PlayerStatus>,
     events: UnboundedSender<PlayerEvent>,
+    device: Option<String>,
 }
 
 impl Engine {
@@ -149,8 +156,10 @@ impl Engine {
         status_tx: watch::Sender<PlayerStatus>,
         events: UnboundedSender<PlayerEvent>,
         volume: f32,
+        device: Option<String>,
     ) -> Self {
         Self {
+            device,
             output: None,
             current: None,
             volume,
@@ -179,8 +188,7 @@ impl Engine {
 
     fn open_output(&mut self) -> Result<&Player, String> {
         if self.output.is_none() {
-            let mut sink = DeviceSinkBuilder::open_default_sink()
-                .map_err(|e| format!("cannot open audio output: {e}"))?;
+            let mut sink = open_sink(self.device.as_deref())?;
             // Default prints to stderr on drop, which would corrupt the TUI.
             sink.log_on_drop(false);
             let player = Player::connect_new(sink.mixer());
@@ -326,4 +334,59 @@ impl Engine {
             changed
         });
     }
+}
+
+/// Names of the available output devices, for the `audio_device` setting.
+pub fn output_device_names() -> Vec<String> {
+    use rodio::cpal::traits::HostTrait;
+    rodio::cpal::default_host()
+        .output_devices()
+        .map(|devices| devices.filter_map(|d| device_name(&d)).collect())
+        .unwrap_or_default()
+}
+
+fn device_name(device: &rodio::cpal::Device) -> Option<String> {
+    use rodio::cpal::traits::DeviceTrait;
+    // On ALSA this is the PCM id ("pipewire", "default:CARD=PCH"), which is
+    // what users see in `aplay -L`; `description()` would be less specific.
+    #[allow(deprecated)]
+    device.name().ok()
+}
+
+fn open_named(name: &str) -> Result<MixerDeviceSink, String> {
+    use rodio::cpal::traits::HostTrait;
+    let device = rodio::cpal::default_host()
+        .output_devices()
+        .map_err(|e| format!("cannot list audio devices: {e}"))?
+        .find(|d| device_name(d).as_deref() == Some(name))
+        .ok_or_else(|| format!("audio device {name:?} not found (see `ytm devices`)"))?;
+    DeviceSinkBuilder::from_device(device)
+        .and_then(|b| b.open_stream())
+        .map_err(|e| format!("cannot open audio device {name:?}: {e}"))
+}
+
+/// Opens the configured device, or picks one. On Linux, ALSA's `default`
+/// may point straight at a sound card that PipeWire/PulseAudio already owns
+/// (no `pipewire-alsa` installed) — silence. Their ALSA plugins are tried
+/// first so sound reaches the sound server either way.
+fn open_sink(configured: Option<&str>) -> Result<MixerDeviceSink, String> {
+    if let Some(name) = configured {
+        return open_named(name);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let available = output_device_names();
+        for server in ["pipewire", "pulse"] {
+            if available.iter().any(|n| n == server) {
+                match open_named(server) {
+                    Ok(sink) => {
+                        tracing::info!(device = server, "audio output");
+                        return Ok(sink);
+                    }
+                    Err(err) => tracing::warn!(%err, "falling back"),
+                }
+            }
+        }
+    }
+    DeviceSinkBuilder::open_default_sink().map_err(|e| format!("cannot open audio output: {e}"))
 }

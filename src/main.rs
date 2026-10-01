@@ -38,6 +38,7 @@ USAGE:
     ytm sync                    refresh the local library from YouTube
     ytm play <id|url>           play one track without the TUI
     ytm resolve <id> [--js]     print the direct audio URL (debug)
+    ytm devices                 list audio output devices (for `audio_device`)
     ytm config                  print config file location
     ytm status                  show setup state (config, sign-in, library)";
 
@@ -88,6 +89,12 @@ async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Resul
         ["resolve", id] => resolve(paths, settings, id, false).await,
         ["resolve", id, "--js"] => resolve(paths, settings, id, true).await,
         ["status"] => status(paths, settings).await,
+        ["devices"] => {
+            for name in ytm_player::audio::player::output_device_names() {
+                println!("{name}");
+            }
+            Ok(())
+        }
         ["config"] => {
             println!("{}", paths.config_file().display());
             Ok(())
@@ -198,6 +205,7 @@ async fn run_tui(paths: &AppPaths, settings: &Settings) -> Result<()> {
         liked_music_only: settings.liked_music_only,
         volume: settings.volume,
         media_controls: settings.media_controls,
+        audio_device: settings.audio_device(),
     })
     .await
 }
@@ -325,7 +333,7 @@ async fn play(paths: &AppPaths, settings: &Settings, input: &str) -> Result<()> 
     );
 
     let (events_tx, mut events) = tokio::sync::mpsc::unbounded_channel();
-    let player = PlayerHandle::spawn(settings.volume, events_tx)?;
+    let player = PlayerHandle::spawn(settings.volume, settings.audio_device(), events_tx)?;
     player.load(body, stream.duration, 1);
 
     let mut tick = tokio::time::interval(Duration::from_millis(500));
