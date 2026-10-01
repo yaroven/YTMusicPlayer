@@ -179,16 +179,32 @@ impl YouTubeClient {
             .collect())
     }
 
-    /// Liked videos; with `music_only`, only the "Music" category, which
-    /// approximates YouTube Music's "Liked music" (the API has no such list).
-    pub async fn liked_tracks(&self, music_only: bool) -> Result<Vec<Track>> {
+    /// The user's liked songs.
+    ///
+    /// Tries YouTube Music's own "Liked music" playlist (`LM`) first — exact,
+    /// but not officially documented for the Data API. Falls back to liked
+    /// YouTube videos, optionally filtered to the "Music" category.
+    pub async fn liked_tracks(&self, music_only: bool) -> Result<Liked> {
+        match self.playlist_tracks(LIKED_MUSIC_PLAYLIST).await {
+            Ok(mut tracks) if !tracks.is_empty() => {
+                self.fill_durations(&mut tracks).await;
+                return Ok(Liked {
+                    tracks,
+                    source: LikedSource::YouTubeMusic,
+                });
+            }
+            Ok(_) => tracing::info!("Liked music (LM) is empty; using liked videos"),
+            Err(err) => tracing::info!(%err, "Liked music (LM) unavailable; using liked videos"),
+        }
+
         let dtos: Vec<VideoDto> = self
             .list_all(
                 "videos",
                 &[("part", "snippet,contentDetails"), ("myRating", "like")],
             )
             .await?;
-        Ok(dtos
+        let total = dtos.len();
+        let tracks = dtos
             .into_iter()
             .filter(|v| !music_only || v.snippet.category_id.as_deref() == Some(MUSIC_CATEGORY))
             .map(|v| Track {
@@ -200,8 +216,66 @@ impl YouTubeClient {
                     .and_then(|c| c.duration)
                     .and_then(|d| parse_iso_duration(&d)),
             })
-            .collect())
+            .collect();
+        Ok(Liked {
+            tracks,
+            source: LikedSource::LikedVideos { total, music_only },
+        })
     }
+
+    /// Fills `duration_secs` from `videos.list` (1 unit per 50 tracks).
+    /// Best effort: durations are cosmetic, so errors are only logged.
+    async fn fill_durations(&self, tracks: &mut [Track]) {
+        for chunk in tracks.chunks_mut(50) {
+            let ids = chunk
+                .iter()
+                .map(|t| &*t.video_id)
+                .collect::<Vec<_>>()
+                .join(",");
+            let result: Result<Vec<VideoDto>> = async {
+                // `maxResults` can't be combined with `id`, so not via list_all.
+                let response = self
+                    .http
+                    .get(format!("{BASE}/videos"))
+                    .bearer_auth(self.auth.access_token().await?)
+                    .query(&[("part", "snippet,contentDetails"), ("id", ids.as_str())])
+                    .send()
+                    .await?;
+                self.units.fetch_add(1, Ordering::Relaxed);
+                let page: Page<VideoDto> = check(response, "videos").await?.json().await?;
+                Ok(page.items)
+            }
+            .await;
+            match result {
+                Ok(videos) => {
+                    for track in chunk.iter_mut() {
+                        track.duration_secs = videos
+                            .iter()
+                            .find(|v| *v.id == *track.video_id)
+                            .and_then(|v| v.content_details.as_ref()?.duration.as_deref())
+                            .and_then(parse_iso_duration);
+                    }
+                }
+                Err(err) => tracing::warn!(%err, "fetching durations"),
+            }
+        }
+    }
+}
+
+/// YouTube Music's "Liked music" playlist id.
+const LIKED_MUSIC_PLAYLIST: &str = "LM";
+
+pub struct Liked {
+    pub tracks: Vec<Track>,
+    pub source: LikedSource,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum LikedSource {
+    /// The exact YouTube Music "Liked music" list.
+    YouTubeMusic,
+    /// Liked YouTube videos (`total` before filtering).
+    LikedVideos { total: usize, music_only: bool },
 }
 
 impl YouTubeClient {

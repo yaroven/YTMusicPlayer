@@ -787,8 +787,12 @@ impl App {
                     Ok(r) => {
                         self.reload_playlists(None);
                         self.set_info(format!(
-                            "Synced {} playlists, {} tracks ({} unchanged, {} API units)",
-                            r.playlists, r.tracks, r.unchanged, r.quota_units
+                            "Synced {} playlists, {} tracks ({} unchanged, {} API units) · {}",
+                            r.playlists,
+                            r.tracks,
+                            r.unchanged,
+                            r.quota_units,
+                            r.liked_note()
                         ));
                     }
                     Err(err) => self.set_error(format!("Sync failed: {err:#}")),

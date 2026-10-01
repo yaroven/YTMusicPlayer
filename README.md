@@ -160,8 +160,9 @@ git tag v0.2.0 && git push origin v0.2.0
 
 ## Notes and limits
 
-- The "Liked music" list is your liked YouTube videos filtered to the Music
-  category; the API has no exact YouTube Music likes list.
+- "Liked music" comes from YouTube Music's own liked list (`LM`) when the API
+  returns it; otherwise from your liked YouTube videos, filtered to the Music
+  category unless `liked_music_only = false`. The sync message says which.
 - Audio is AAC ~128 kbps. Opus would need a C library (libopus via cmake) on
   every platform for no audible gain, so it's not used.
 - API quota: 10,000 units/day. A sync costs ~1 unit per 50 tracks, and

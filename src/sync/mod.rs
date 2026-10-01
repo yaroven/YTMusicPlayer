@@ -9,7 +9,7 @@ use anyhow::Result;
 
 use crate::{
     api::{
-        client::YouTubeClient,
+        client::{LikedSource, YouTubeClient},
         models::{LIKED_PLAYLIST_ID, Playlist},
     },
     storage::Library,
@@ -22,6 +22,25 @@ pub struct SyncReport {
     /// Playlists skipped because their ETag was unchanged.
     pub unchanged: usize,
     pub quota_units: u32,
+    pub liked: usize,
+    pub liked_source: LikedSource,
+}
+
+impl SyncReport {
+    /// One-line explanation of where the liked list came from.
+    pub fn liked_note(&self) -> String {
+        match self.liked_source {
+            LikedSource::YouTubeMusic => format!("{} liked (YouTube Music)", self.liked),
+            LikedSource::LikedVideos {
+                total,
+                music_only: true,
+            } => format!(
+                "{} of {total} liked videos are Music-category (liked_music_only = false keeps all)",
+                self.liked
+            ),
+            LikedSource::LikedVideos { .. } => format!("{} liked videos", self.liked),
+        }
+    }
 }
 
 pub async fn sync_library(
@@ -36,17 +55,24 @@ pub async fn sync_library(
     };
 
     let liked = client.liked_tracks(liked_music_only).await?;
+    let (liked_count, liked_source) = (liked.tracks.len(), liked.source);
     let mut all = vec![(
         Playlist {
             id: LIKED_PLAYLIST_ID.into(),
             title: "Liked music".into(),
-            item_count: liked.len() as u32,
+            item_count: liked_count as u32,
             etag: None,
         },
-        liked.into(),
+        liked.tracks.into(),
     )];
     let mut unchanged = 0;
-    for playlist in client.my_playlists().await? {
+    // "LM" may also be listed among the user's playlists; it's shown as Liked.
+    for playlist in client
+        .my_playlists()
+        .await?
+        .into_iter()
+        .filter(|p| p.id != "LM" && p.id != "LL")
+    {
         let same =
             playlist.etag.is_some() && playlist.etag.as_ref() == known_etags.get(&playlist.id);
         let tracks = if same {
@@ -63,6 +89,8 @@ pub async fn sync_library(
         tracks: all.iter().map(|(_, t)| t.len()).sum(),
         unchanged,
         quota_units: client.units_used() - start_units,
+        liked: liked_count,
+        liked_source,
     };
     tokio::task::spawn_blocking(move || library.replace_library(&all)).await??;
     Ok(report)

@@ -310,6 +310,7 @@ async fn sync(paths: &AppPaths, settings: &Settings) -> Result<()> {
         "Synced {} playlists, {} tracks ({} unchanged, {} API quota units).",
         report.playlists, report.tracks, report.unchanged, report.quota_units
     );
+    println!("Liked: {}.", report.liked_note());
     Ok(())
 }
 
