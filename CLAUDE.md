@@ -24,33 +24,44 @@ states a new rule, append it here (numbered, with a one-line reason).
 ## Commands
 
 ```bash
-cargo build                         # binary: target/*/ytm
+cargo build --release               # binary: target/release/ytm (~8 MB)
 cargo test                          # unit tests
 cargo test -- --ignored             # network tests (downloads yt-dlp)
-cargo run -- resolve <video_id>     # dev: resolve a direct audio URL
-cargo run -- resolve <video_id> --js
+ytm                                 # TUI;  ytm --help for all commands
+ytm play <id|url>                   # headless playback, good for testing audio
+ytm resolve <id> [--js]             # debug URL resolution
+ytm config                          # prints config.toml path
 ```
 
 Logs go to `<cache_dir>/logs/ytm.log` (filter: `YTM_LOG=debug`), never to
 stdout/stderr — the terminal belongs to the TUI.
 
+## Testing the TUI / audio without bothering the user
+
+- Set `volume = 0.0` in config.toml before playback tests; restore after.
+- No tmux here. Drive the TUI with Python `pty` + `pyte` (pip install
+  `--target` into the scratchpad), send keys, print `screen.display`.
+- Seed a fake library with `sqlite3` into `<data_dir>/library.sqlite3`
+  (real video ids), delete it afterwards — a real sync replaces it anyway.
+- OAuth login / sync need the user's Google account: the user tests those.
+
 ## Architecture
 
-Library crate (`src/lib.rs`) plus thin binary (`src/main.rs`).
+Library crate (`src/lib.rs`) plus thin binary (`src/main.rs`, CLI commands).
 
-| Module | Status | Role |
-|---|---|---|
-| `audio::extractor` | done | find/download yt-dlp, resolve direct audio URL |
-| `audio::resolver` | done | URL cache, dedup, max 2 yt-dlp procs, fallback ladder |
-| `audio::js_runtime` | done | optional JS runtime for yt-dlp (QuickJS-NG) |
-| `audio::install` | done | SHA-256-verified download, atomic rename |
-| `config::paths` | done | per-OS dirs via `directories` |
-| `audio::{player,queue,stream}` | stub | rodio thread, queue, HTTP Range reader |
-| `api::*` | stub | OAuth PKCE, keyring tokens, YouTube Data API v3, quota |
-| `storage::*` | stub | SQLite cache (rusqlite bundled) |
-| `sync`, `ui`, `app` | stub | sync service, ratatui TUI, main loop |
-
-Each stub file's doc comment describes its intended design.
+| Module | Role |
+|---|---|
+| `app` | state + `tokio::select!` loop: keys, background results, player events, 500 ms redraw tick |
+| `ui::{keymap, views}` | ratatui rendering (pure functions of `App`), key -> `Action` |
+| `audio::player` | rodio on its own thread; commands via channel, status via `watch`, events (ended/error) tagged with a load `generation` |
+| `audio::stream` | `Read + Seek` over googlevideo: 1 MiB Range chunks into memory, reads block until bytes arrive |
+| `audio::queue` | queue snapshot of the playlist the user started from |
+| `audio::{extractor, resolver, js_runtime, install}` | yt-dlp lookup/download, URL cache + prefetch + fallback ladder |
+| `audio::open_track` | resolve + open stream; on 403/410 re-resolve once |
+| `api::{auth, token_store, client, models}` | OAuth PKCE loopback, tokens in keyring, Data API v3, domain types |
+| `storage` | SQLite library (`replace_library` is one transaction) |
+| `sync` | API -> storage; only on empty library or `r` / `ytm sync` |
+| `config::{paths, settings}` | per-OS dirs; `config.toml` (template written on first run) |
 
 ## Decisions (with evidence — don't re-litigate without new data)
 
@@ -68,21 +79,25 @@ Each stub file's doc comment describes its intended design.
   Invidious/Piped (third-party servers).
 - yt-dlp child process: `stdin` null, `kill_on_drop`, timeouts,
   `--ignore-config`, `--` before URL, video id validated (11 chars).
-- Our own process: ~12 MB RSS; release binary 3.7 MB.
+- **Measured footprint** (2026-10-01, M1, release): ~14 MB idle/resolving,
+  20–25 MB RSS while playing, CPU ~0%. Binary 7.8 MB.
+- **Startup must not wait on yt-dlp**: `YtDlp::find` (no probe) is used;
+  running `yt-dlp --version` costs 3–4 s (PyInstaller unpack).
+- **Whole track buffered in RAM** (~1 MB/min): simple and seekable; revisit
+  for hour-long mixes.
+- **Sync never runs on a timer** to save quota; library is read from SQLite.
+- `client_secret` lives in `config.toml` (Google: not confidential for
+  Desktop clients); tokens live in the OS keyring.
 
 ## Planned design notes
 
-- Liked music: `videos.list?myRating=like` filtered by `categoryId == "10"`;
-  test `playlistItems.list?playlistId=LM|LL`.
-- OAuth: "Desktop app" client, PKCE + loopback redirect; device flow as
-  SSH fallback. Google project must be "In production" (Testing ⇒ refresh
-  tokens expire after 7 days). `client_secret` lives in keyring.
-- Quota: 10,000 units/day; use ETags (`If-None-Match`).
+- OAuth device flow as SSH/headless fallback.
+- ETags (`If-None-Match`) for cheaper re-syncs; test
+  `playlistItems.list?playlistId=LM|LL` for exact YT Music likes.
 
 ## Open TODOs
 
-- `js_fallback = true/false` in `config.toml` (user asked, pending).
 - Persist resolved-URL cache in SQLite.
-- README with per-OS build setup (system deps).
-- Player, TUI, auth, sync, storage implementations.
-- Measure real playback RAM once the player exists.
+- Shuffle/repeat, search within library, remember volume.
+- Stream from disk/ranges instead of full in-memory buffer for long tracks.
+- Verify builds on Linux and Windows (only macOS tested so far).

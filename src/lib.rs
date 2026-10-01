@@ -5,7 +5,6 @@ pub mod api;
 pub mod app;
 pub mod audio;
 pub mod config;
-pub mod error;
 pub mod storage;
 pub mod sync;
 pub mod ui;

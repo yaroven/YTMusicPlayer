@@ -170,6 +170,19 @@ impl YtDlp {
         managed_dir.join(executable_name())
     }
 
+    /// First existing candidate (`PATH`, then managed) without running it.
+    /// Instant, unlike [`locate`](Self::locate): starting yt-dlp takes seconds,
+    /// so interactive startup shouldn't wait for a probe.
+    pub fn find(managed_dir: &Path) -> Option<Self> {
+        if let Ok(path) = which::which("yt-dlp") {
+            return Some(Self::new(path, BinarySource::System));
+        }
+        let managed = Self::managed_path(managed_dir);
+        managed
+            .is_file()
+            .then(|| Self::new(managed, BinarySource::Managed))
+    }
+
     /// Finds a *working* yt-dlp (one that answers `--version`).
     pub async fn locate(managed_dir: &Path) -> Option<Self> {
         let mut candidates = Vec::with_capacity(2);

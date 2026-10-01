@@ -1,6 +1,219 @@
-//! Local SQLite cache (rusqlite, bundled) for playlists, tracks, ETags and
-//! quota usage. Accessed through `spawn_blocking` from async code.
+//! Local SQLite cache of the library, so startup and browsing cost no API
+//! quota. Calls are small (ms); async callers may wrap them in `spawn_blocking`.
 
-pub mod db;
-pub mod migrations;
-pub mod repo;
+use std::{path::Path, sync::Mutex};
+
+use anyhow::{Context, Result};
+use rusqlite::{Connection, OptionalExtension, params};
+
+use crate::api::models::{LIKED_PLAYLIST_ID, Playlist, Track};
+
+const SCHEMA_VERSION: i32 = 1;
+
+pub struct Library {
+    conn: Mutex<Connection>,
+}
+
+impl Library {
+    pub fn open(path: &Path) -> Result<Self> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let conn = Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
+        Self::init(conn)
+    }
+
+    pub fn open_in_memory() -> Result<Self> {
+        Self::init(Connection::open_in_memory()?)
+    }
+
+    fn init(conn: Connection) -> Result<Self> {
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA foreign_keys = ON;
+             PRAGMA busy_timeout = 2000;",
+        )?;
+        migrate(&conn)?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
+    }
+
+    fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Liked first, then the user's playlists in API order.
+    pub fn playlists(&self) -> Result<Vec<Playlist>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare("SELECT id, title, item_count FROM playlists ORDER BY id != ?1, position")?;
+        let rows = stmt.query_map([LIKED_PLAYLIST_ID], |r| {
+            Ok(Playlist {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                item_count: r.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT t.video_id, t.title, t.artist, t.duration_secs
+             FROM playlist_tracks pt JOIN tracks t ON t.video_id = pt.video_id
+             WHERE pt.playlist_id = ?1 ORDER BY pt.position",
+        )?;
+        let rows = stmt.query_map([playlist_id], |r| {
+            Ok(Track {
+                video_id: r.get(0)?,
+                title: r.get(1)?,
+                artist: r.get(2)?,
+                duration_secs: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn is_empty(&self) -> Result<bool> {
+        let count: i64 = self
+            .conn()
+            .query_row("SELECT COUNT(*) FROM playlists", [], |r| r.get(0))?;
+        Ok(count == 0)
+    }
+
+    /// Unix seconds of the last completed sync.
+    pub fn last_sync(&self) -> Result<Option<i64>> {
+        Ok(self
+            .conn()
+            .query_row("SELECT value FROM meta WHERE key = 'last_sync'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .optional()?
+            .and_then(|v| v.parse().ok()))
+    }
+
+    /// Replaces the whole library atomically: a failed sync leaves the old one.
+    pub fn replace_library(&self, playlists: &[(Playlist, Vec<Track>)]) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute_batch("DELETE FROM playlist_tracks; DELETE FROM playlists;")?;
+        {
+            let mut add_playlist = tx.prepare(
+                "INSERT INTO playlists (id, title, item_count, position) VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            // Keep a known duration if this listing lacks one.
+            let mut add_track = tx.prepare(
+                "INSERT INTO tracks (video_id, title, artist, duration_secs) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(video_id) DO UPDATE SET title = excluded.title,
+                   artist = excluded.artist,
+                   duration_secs = COALESCE(excluded.duration_secs, tracks.duration_secs)",
+            )?;
+            let mut link = tx.prepare(
+                "INSERT OR IGNORE INTO playlist_tracks (playlist_id, position, video_id) VALUES (?1, ?2, ?3)",
+            )?;
+            for (pos, (playlist, tracks)) in playlists.iter().enumerate() {
+                add_playlist.execute(params![
+                    playlist.id,
+                    playlist.title,
+                    tracks.len() as u32,
+                    pos as i64
+                ])?;
+                for (i, t) in tracks.iter().enumerate() {
+                    add_track.execute(params![t.video_id, t.title, t.artist, t.duration_secs])?;
+                    link.execute(params![playlist.id, i as i64, t.video_id])?;
+                }
+            }
+        }
+        tx.execute(
+            "INSERT INTO meta (key, value) VALUES ('last_sync', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            [chrono::Utc::now().timestamp().to_string()],
+        )?;
+        // Drop tracks no playlist references any more.
+        tx.execute(
+            "DELETE FROM tracks WHERE video_id NOT IN (SELECT video_id FROM playlist_tracks)",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+fn migrate(conn: &Connection) -> Result<()> {
+    let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version < 1 {
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE playlists (
+               id TEXT PRIMARY KEY, title TEXT NOT NULL,
+               item_count INTEGER NOT NULL, position INTEGER NOT NULL);
+             CREATE TABLE tracks (
+               video_id TEXT PRIMARY KEY, title TEXT NOT NULL,
+               artist TEXT NOT NULL, duration_secs INTEGER);
+             CREATE TABLE playlist_tracks (
+               playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+               position INTEGER NOT NULL,
+               video_id TEXT NOT NULL REFERENCES tracks(video_id),
+               PRIMARY KEY (playlist_id, position));
+             COMMIT;",
+        )?;
+    }
+    conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(id: &str, dur: Option<u32>) -> Track {
+        Track {
+            video_id: id.into(),
+            title: id.into(),
+            artist: "A".into(),
+            duration_secs: dur,
+        }
+    }
+
+    #[test]
+    fn replace_and_read_back() {
+        let lib = Library::open_in_memory().unwrap();
+        assert!(lib.is_empty().unwrap());
+        let mine = Playlist {
+            id: "PL1".into(),
+            title: "Mine".into(),
+            item_count: 0,
+        };
+        let liked = Playlist {
+            id: LIKED_PLAYLIST_ID.into(),
+            title: "Liked".into(),
+            item_count: 0,
+        };
+        lib.replace_library(&[
+            (
+                mine.clone(),
+                vec![track("aaaaaaaaaaa", None), track("bbbbbbbbbbb", None)],
+            ),
+            (liked, vec![track("aaaaaaaaaaa", Some(200))]),
+        ])
+        .unwrap();
+
+        let playlists = lib.playlists().unwrap();
+        assert_eq!(playlists[0].id, LIKED_PLAYLIST_ID, "liked sorts first");
+        assert_eq!(playlists[1].item_count, 2);
+        let tracks = lib.tracks("PL1").unwrap();
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(
+            tracks[0].duration_secs,
+            Some(200),
+            "duration kept from liked"
+        );
+        assert!(lib.last_sync().unwrap().is_some());
+
+        lib.replace_library(&[(mine, vec![])]).unwrap();
+        assert!(lib.tracks("PL1").unwrap().is_empty());
+    }
+}
