@@ -370,6 +370,21 @@ impl Session {
         self.play(tracks, start);
     }
 
+    /// Jumps to the `n`-th upcoming track (0 = next), as listed by
+    /// `queue.upcoming()`.
+    pub fn skip_ahead(&mut self, n: usize) {
+        let mut moved = false;
+        for _ in 0..=n {
+            if self.queue.advance().is_none() {
+                break;
+            }
+            moved = true;
+        }
+        if moved {
+            self.play_current();
+        }
+    }
+
     pub fn toggle_pause(&mut self) {
         self.player.toggle_pause();
     }

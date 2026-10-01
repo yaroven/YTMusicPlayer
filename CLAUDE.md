@@ -126,6 +126,15 @@ main services the CFRunLoop for media keys).
   per Retina frame): measured ~57 MB idle at 900x580, ~70 MB playing at
   980x640 (2026-10-01). Media glyphs (⏮⏸⏭) are missing from system fonts —
   transport icons are Slint `Path`s.
+- **GUI album art**: `i.ytimg.com` thumbnails (`mqdefault` for rows,
+  `sddefault`→`hqdefault` for the big cover), centre-square crop of the 16:9
+  picture, decoded with `image` (jpeg only) off the UI thread; thumb cache
+  capped at 120 (96x96 RGBA), one large cover. Window memory still dominates:
+  ~46 MB at 1280x760 idle, up to ~90 MB with art while playing.
+- **Slint responsive layout**: breakpoints read `win-width`, copied from
+  `width` in `changed` handlers — binding to `root.width` makes a layout
+  binding loop. A `max-width` on a child of a VerticalLayout caps the whole
+  column: put such items in their own HorizontalLayout with a spacer.
 - GUI testing on macOS: `swift` scripts with `CGWindowListCopyWindowInfo`
   (window id → `screencapture -l`) and `CGEvent` clicks (Accessibility is
   granted here); run with `HOME=<sandbox>`.

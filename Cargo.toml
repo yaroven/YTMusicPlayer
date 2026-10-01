@@ -14,7 +14,7 @@ path = "src/main.rs"
 [features]
 default = ["gui"]
 # Desktop window (`ytm gui`); off => terminal-only, smaller binary.
-gui = ["dep:slint"]
+gui = ["dep:slint", "dep:image"]
 
 [dependencies]
 # --- Async runtime -----------------------------------------------------------
@@ -109,6 +109,9 @@ slint = { version = "1.18", optional = true, default-features = false, features 
 # Process memory (macOS `proc_pid_rusage`), quiet SIGPIPE handling.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Album art (GUI): JPEG decode + scale of YouTube thumbnails only.
+image = { version = "0.25", optional = true, default-features = false, features = ["jpeg"] }
 
 # Media keys + "Now Playing" (MPRIS over pure-Rust zbus on Linux). Windows
 # needs a window handle, so it's left out there for now.

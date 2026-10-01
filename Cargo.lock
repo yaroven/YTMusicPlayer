@@ -8123,6 +8123,7 @@ dependencies = [
  "directories",
  "futures-util",
  "hex",
+ "image",
  "keyring",
  "libc",
  "oauth2",

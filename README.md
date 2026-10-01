@@ -129,8 +129,12 @@ ytm login [--device] | ytm logout
 library on the left, search box, playlist header with Play / Shuffle,
 track list (double-click to play), and a player bar with a red progress
 line, previous/play/next, the current track with a like button, volume,
-repeat, shuffle, play next and save to playlist. Album art is shown as a
-coloured tile with the title's initial (no image downloads, to save memory). Keys: `Space` play/pause, `n`/`p`
+repeat, shuffle, play next and save to playlist. Album art comes from the
+YouTube thumbnails, cropped to a square and fetched only for rows on screen
+(a small bounded cache). Click the playing track or ▲ to open the full-screen
+"now playing" view (big cover, "Up next" queue; Esc or ▼ closes it). The
+layout adapts to the window: narrower sidebar, then no sidebar (a playlist
+picker instead) and icon-only buttons on small windows. Keys: `Space` play/pause, `n`/`p`
 next/previous, `f` like, `/` filter. Set `ui = "gui"` to make it the
 default.
 

@@ -5,19 +5,31 @@
 //! with its own tokio runtime. The UI sends [`Cmd`]s; the core pushes a
 //! [`Snapshot`] back whenever player state changes. Library reads (playlists,
 //! tracks) happen on the UI thread straight from SQLite.
+//!
+//! Album art is fetched lazily for rows the list actually shows and kept in
+//! a small bounded cache ([`ArtCache`]); only the playing track gets a large
+//! cover.
 
+mod art;
 mod ui;
 
 use std::{
     cell::RefCell,
+    collections::{HashMap, HashSet, VecDeque},
     rc::Rc,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow};
-use slint::{ComponentHandle, Model, ModelNotify, ModelRc, ModelTracker, SharedString, VecModel};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use slint::{
+    Color, ComponentHandle, Image, Model, ModelNotify, ModelRc, ModelTracker, SharedString,
+    VecModel,
+};
+use tokio::sync::{
+    Semaphore,
+    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+};
 
 use crate::{
     api::models::{LIKED_PLAYLIST_ID, Playlist, Track},
@@ -27,11 +39,20 @@ use crate::{
     storage::Library,
     ui::fmt_time,
 };
+use art::ArtSize;
 use ui::{MainWindow, PlaylistRow, TrackRow};
+
+/// Decoded thumbnails kept in memory (~36 KB each at 96x96 RGBA).
+const THUMB_CACHE: usize = 120;
+/// Rows of the "Up next" list sent to the UI.
+const QUEUE_ROWS: usize = 200;
+/// Parallel thumbnail downloads.
+const ART_FETCHES: usize = 4;
 
 enum Cmd {
     Play(Arc<[Track]>, usize),
     ShufflePlay(Arc<[Track]>),
+    JumpTo(usize),
     TogglePause,
     Next,
     Prev,
@@ -43,6 +64,7 @@ enum Cmd {
     PlayNext(Track),
     AddTo(Playlist, Track),
     Sync,
+    FetchArt(Arc<str>, ArtSize),
     /// Save state (selected playlist id) and stop.
     Quit(Option<String>),
 }
@@ -61,10 +83,12 @@ struct Snapshot {
     syncing: bool,
     memory: String,
     changes: Changes,
+    /// Current track followed by what's next; only when it changed.
+    queue: Option<Arc<[Track]>>,
 }
 
 impl Snapshot {
-    fn of(session: &Session, changes: Changes) -> Self {
+    fn of(session: &Session, changes: Changes, queue: Option<Arc<[Track]>>) -> Self {
         let p = &session.player_status;
         Self {
             now: session.queue.current().cloned(),
@@ -82,21 +106,70 @@ impl Snapshot {
             syncing: session.syncing,
             memory: session.memory.clone(),
             changes,
+            queue,
         }
     }
 }
 
-/// Track list backed by the shared `Arc<[Track]>`: rows are built only when
-/// the (virtualized) ListView asks for them.
-#[derive(Default)]
+/// The playing track's big cover: id, image, average colour.
+type LargeArt = (Arc<str>, Image, (u8, u8, u8));
+
+/// Bounded cache of decoded album art (UI thread only).
+struct ArtCache {
+    thumbs: HashMap<Arc<str>, Image>,
+    order: VecDeque<Arc<str>>,
+    /// Requested and not yet answered, or failed: never re-requested.
+    requested: HashSet<Arc<str>>,
+    /// The single large cover (for the playing track).
+    large: Option<LargeArt>,
+    tx: UnboundedSender<Cmd>,
+}
+
+impl ArtCache {
+    fn thumb(&mut self, id: &Arc<str>) -> Option<Image> {
+        if let Some(image) = self.thumbs.get(id) {
+            return Some(image.clone());
+        }
+        if self.requested.insert(id.clone()) {
+            let _ = self.tx.send(Cmd::FetchArt(id.clone(), ArtSize::Thumb));
+        }
+        None
+    }
+
+    fn insert_thumb(&mut self, id: Arc<str>, image: Image) {
+        self.requested.remove(&id);
+        if self.thumbs.insert(id.clone(), image).is_none() {
+            self.order.push_back(id);
+        }
+        while self.order.len() > THUMB_CACHE {
+            if let Some(old) = self.order.pop_front() {
+                self.thumbs.remove(&old);
+            }
+        }
+    }
+}
+
+/// Track list backed by a shared `Arc<[Track]>`: rows (and their art
+/// requests) are built only when the virtualized ListView asks for them.
 struct TracksModel {
     tracks: RefCell<Arc<[Track]>>,
     visible: RefCell<Vec<u32>>,
     playing: RefCell<Option<Arc<str>>>,
+    art: Rc<RefCell<ArtCache>>,
     notify: ModelNotify,
 }
 
 impl TracksModel {
+    fn new(art: Rc<RefCell<ArtCache>>) -> Self {
+        Self {
+            tracks: RefCell::new(Arc::from([])),
+            visible: RefCell::default(),
+            playing: RefCell::default(),
+            art,
+            notify: ModelNotify::default(),
+        }
+    }
+
     fn set(&self, tracks: Arc<[Track]>, filter: &str) {
         filter_indices(&tracks, filter, &mut self.visible.borrow_mut());
         *self.tracks.borrow_mut() = tracks;
@@ -113,9 +186,29 @@ impl TracksModel {
     }
 
     fn set_playing(&self, id: Option<Arc<str>>) {
-        if *self.playing.borrow() != id {
-            *self.playing.borrow_mut() = id;
-            self.notify.reset();
+        if *self.playing.borrow() == id {
+            return;
+        }
+        let old = std::mem::replace(&mut *self.playing.borrow_mut(), id.clone());
+        for changed in [old, id].into_iter().flatten() {
+            self.rows_changed(&changed);
+        }
+    }
+
+    /// Re-renders rows showing `id` (art arrived, playing changed).
+    fn rows_changed(&self, id: &str) {
+        let tracks = self.tracks.borrow();
+        let rows: Vec<usize> = self
+            .visible
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| tracks.get(**i as usize).is_some_and(|t| &*t.video_id == id))
+            .map(|(row, _)| row)
+            .collect();
+        drop(tracks);
+        for row in rows {
+            self.notify.row_changed(row);
         }
     }
 
@@ -140,15 +233,10 @@ impl Model for TracksModel {
 
     fn row_data(&self, row: usize) -> Option<TrackRow> {
         let index = *self.visible.borrow().get(row)? as usize;
-        let tracks = self.tracks.borrow();
-        let t = tracks.get(index)?;
+        let t = self.tracks.borrow().get(index)?.clone();
         let playing = self.playing.borrow().as_ref() == Some(&t.video_id);
+        let art = self.art.borrow_mut().thumb(&t.video_id);
         Some(TrackRow {
-            num: if playing {
-                "▶".into()
-            } else {
-                (index + 1).to_string().into()
-            },
             initial: initial(&t.title),
             hue: hue(&t.artist),
             title: SharedString::from(&*t.title),
@@ -159,6 +247,8 @@ impl Model for TracksModel {
                 .unwrap_or_default()
                 .into(),
             playing,
+            has_art: art.is_some(),
+            art: art.unwrap_or_default(),
         })
     }
 
@@ -192,7 +282,9 @@ struct View {
     selected_playlist: Option<usize>,
     filter: String,
     tracks: Rc<TracksModel>,
+    queue: Rc<TracksModel>,
     playlist_rows: Rc<VecModel<PlaylistRow>>,
+    art: Rc<RefCell<ArtCache>>,
     /// The playing track (from the last snapshot).
     now: Option<Track>,
 }
@@ -200,6 +292,14 @@ struct View {
 impl View {
     fn reload_playlists(&mut self, ui: &MainWindow, prefer: Option<&str>) {
         let keep = prefer.map(str::to_owned).or_else(|| self.selected_id());
+        self.refresh_playlist_rows();
+        let index = keep
+            .and_then(|id| self.playlists.iter().position(|p| p.id == id))
+            .or((!self.playlists.is_empty()).then_some(0));
+        self.select_playlist(ui, index);
+    }
+
+    fn refresh_playlist_rows(&mut self) {
         self.playlists = self.library.playlists().unwrap_or_default();
         self.playlist_rows.set_vec(
             self.playlists
@@ -210,10 +310,6 @@ impl View {
                 })
                 .collect::<Vec<_>>(),
         );
-        let index = keep
-            .and_then(|id| self.playlists.iter().position(|p| p.id == id))
-            .or((!self.playlists.is_empty()).then_some(0));
-        self.select_playlist(ui, index);
     }
 
     fn select_playlist(&mut self, ui: &MainWindow, index: Option<usize>) {
@@ -223,6 +319,7 @@ impl View {
         let Some(p) = index.and_then(|i| self.playlists.get(i)) else {
             self.tracks.set(Arc::from([]), "");
             ui.set_tracks_title("".into());
+            ui.set_track_count(0);
             return;
         };
         let tracks = self.library.tracks(&p.id).unwrap_or_else(|_| Arc::from([]));
@@ -237,12 +334,67 @@ impl View {
             .map(|p| p.id.clone())
     }
 
+    fn selected_title(&self) -> String {
+        self.selected_playlist
+            .and_then(|i| self.playlists.get(i))
+            .map(|p| p.title.clone())
+            .unwrap_or_default()
+    }
+
     /// Selected row's track, else the playing track.
     fn target(&self, ui: &MainWindow, now: Option<Track>) -> Option<Track> {
         usize::try_from(ui.get_selected_track())
             .ok()
             .and_then(|row| self.tracks.track(row))
             .or(now)
+    }
+
+    /// Shows the playing track's covers, requesting them if needed.
+    fn show_now_art(&mut self, ui: &MainWindow) {
+        let Some(id) = self.now.as_ref().map(|t| t.video_id.clone()) else {
+            ui.set_now_has_art(false);
+            ui.set_now_has_thumb(false);
+            return;
+        };
+        let thumb = self.art.borrow_mut().thumb(&id);
+        ui.set_now_has_thumb(thumb.is_some());
+        ui.set_now_thumb(thumb.unwrap_or_default());
+
+        let mut art = self.art.borrow_mut();
+        match &art.large {
+            Some((large_id, image, tint)) if *large_id == id => {
+                ui.set_now_art(image.clone());
+                ui.set_now_has_art(true);
+                ui.set_now_tint(Color::from_rgb_u8(tint.0, tint.1, tint.2));
+            }
+            _ => {
+                ui.set_now_has_art(false);
+                ui.set_now_tint(Color::from_rgb_u8(0x30, 0x30, 0x30));
+                // Drop the old cover right away: only one large image lives.
+                art.large = None;
+                let _ = art.tx.send(Cmd::FetchArt(id, ArtSize::Large));
+            }
+        }
+    }
+
+    /// Art for `id` arrived on the UI thread.
+    fn art_arrived(&mut self, ui: &MainWindow, id: Arc<str>, size: ArtSize, art: art::Art) {
+        let image = Image::from_rgba8(art.pixels);
+        let is_now = self.now.as_ref().is_some_and(|t| t.video_id == id);
+        match size {
+            ArtSize::Thumb => {
+                self.art.borrow_mut().insert_thumb(id.clone(), image);
+                self.tracks.rows_changed(&id);
+                self.queue.rows_changed(&id);
+            }
+            ArtSize::Large if is_now => {
+                self.art.borrow_mut().large = Some((id.clone(), image, art.tint));
+            }
+            ArtSize::Large => return, // track changed meanwhile
+        }
+        if is_now {
+            self.show_now_art(ui);
+        }
     }
 }
 
@@ -270,19 +422,29 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps) -> Result<()> {
     let library = deps.library.clone();
     let (cmd_tx, cmd_rx) = unbounded_channel();
 
+    let art = Rc::new(RefCell::new(ArtCache {
+        thumbs: HashMap::new(),
+        order: VecDeque::new(),
+        requested: HashSet::new(),
+        large: None,
+        tx: cmd_tx.clone(),
+    }));
     let view = Rc::new(RefCell::new(View {
         library: library.clone(),
         playlists: Vec::new(),
         selected_playlist: None,
         filter: String::new(),
-        tracks: Rc::new(TracksModel::default()),
+        tracks: Rc::new(TracksModel::new(art.clone())),
+        queue: Rc::new(TracksModel::new(art.clone())),
         playlist_rows: Rc::new(VecModel::default()),
+        art,
         now: None,
     }));
     VIEW.with(|cell| *cell.borrow_mut() = Some(view.clone()));
     {
         let v = view.borrow();
         ui.set_tracks(ModelRc::from(v.tracks.clone()));
+        ui.set_queue_rows(ModelRc::from(v.queue.clone()));
         ui.set_playlists(ModelRc::from(v.playlist_rows.clone()));
     }
     let last = library.get_meta("playlist").ok().flatten();
@@ -325,6 +487,13 @@ fn wire_callbacks(ui: &MainWindow, view: &Rc<RefCell<View>>, cmd_tx: &UnboundedS
         }};
     }
 
+    // Starting playback from the list remembers where the queue came from.
+    let play_from_list =
+        |ui: &MainWindow, view: &RefCell<View>, cmd: Cmd, tx: &UnboundedSender<Cmd>| {
+            ui.set_queue_source(view.borrow().selected_title().into());
+            let _ = tx.send(cmd);
+        };
+
     on!(on_select_playlist, [tx, view, ui], |index| {
         view.borrow_mut()
             .select_playlist(ui, usize::try_from(index).ok());
@@ -333,21 +502,38 @@ fn wire_callbacks(ui: &MainWindow, view: &Rc<RefCell<View>>, cmd_tx: &UnboundedS
         .set_selected_track(row));
     on!(on_play_track, [tx, view, ui], |row| {
         ui.set_selected_track(row);
-        let v = view.borrow();
-        if let Some(index) = usize::try_from(row).ok().and_then(|r| v.tracks.index(r)) {
-            send(Cmd::Play(v.tracks.tracks.borrow().clone(), index), tx);
+        let cmd = {
+            let v = view.borrow();
+            usize::try_from(row)
+                .ok()
+                .and_then(|r| v.tracks.index(r))
+                .map(|index| Cmd::Play(v.tracks.tracks.borrow().clone(), index))
+        };
+        if let Some(cmd) = cmd {
+            play_from_list(ui, view, cmd, tx);
         }
     });
     on!(on_play_all, [tx, view, ui], || {
-        let v = view.borrow();
-        if let Some(index) = v.tracks.index(0) {
-            send(Cmd::Play(v.tracks.tracks.borrow().clone(), index), tx);
+        let cmd = {
+            let v = view.borrow();
+            v.tracks
+                .index(0)
+                .map(|index| Cmd::Play(v.tracks.tracks.borrow().clone(), index))
+        };
+        if let Some(cmd) = cmd {
+            play_from_list(ui, view, cmd, tx);
         }
     });
     on!(on_shuffle_play, [tx, view, ui], || {
         let tracks = view.borrow().tracks.tracks.borrow().clone();
         if !tracks.is_empty() {
-            send(Cmd::ShufflePlay(tracks), tx);
+            play_from_list(ui, view, Cmd::ShufflePlay(tracks), tx);
+        }
+    });
+    on!(on_jump, [tx, view, ui], |row| {
+        // Row 0 is the playing track itself.
+        if let Some(n) = usize::try_from(row).ok().and_then(|r| r.checked_sub(1)) {
+            send(Cmd::JumpTo(n), tx);
         }
     });
     on!(on_filter_changed, [tx, view, ui], |text| {
@@ -405,9 +591,13 @@ async fn core_loop(
     ui: slint::Weak<MainWindow>,
     library_empty: bool,
 ) -> Result<()> {
+    let http = deps.http.clone();
+    let fetches = Arc::new(Semaphore::new(ART_FETCHES));
     let mut session = Session::new(deps)?;
     session.startup(library_empty);
-    push(&ui, Snapshot::of(&session, Changes::default()));
+    let mut queue_key = None;
+    let queue = queue_update(&session, &mut queue_key);
+    push(&ui, Snapshot::of(&session, Changes::default(), queue));
 
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -423,6 +613,10 @@ async fn core_loop(
                         session.save_state(selected.as_deref());
                         break;
                     }
+                    Some(Cmd::FetchArt(id, size)) => {
+                        dirty = false;
+                        fetch_art(&http, &fetches, &ui, id, size);
+                    }
                     Some(cmd) => apply(&mut session, cmd),
                 }
             }
@@ -433,18 +627,72 @@ async fn core_loop(
             _ = tick.tick() => {}
         }
         dirty |= session.refresh_status();
-        if dirty {
-            push(&ui, Snapshot::of(&session, changes));
+        let queue = queue_update(&session, &mut queue_key);
+        if dirty || queue.is_some() {
+            push(&ui, Snapshot::of(&session, changes, queue));
         }
     }
     session.shutdown();
     Ok(())
 }
 
+/// What identifies the queue's contents: current id, position, shuffle, len.
+type QueueKey = (Option<Arc<str>>, Option<usize>, bool, usize);
+
+/// The "Up next" rows when the queue changed since `key` was taken.
+fn queue_update(session: &Session, key: &mut Option<QueueKey>) -> Option<Arc<[Track]>> {
+    let q = &session.queue;
+    let new_key = (
+        q.current().map(|t| t.video_id.clone()),
+        q.position(),
+        q.shuffle,
+        q.len(),
+    );
+    if key.as_ref() == Some(&new_key) {
+        return None;
+    }
+    *key = Some(new_key);
+    Some(
+        q.current()
+            .into_iter()
+            .chain(q.upcoming().take(QUEUE_ROWS))
+            .cloned()
+            .collect(),
+    )
+}
+
+/// Downloads and decodes art off the UI thread, then hands it over.
+fn fetch_art(
+    http: &reqwest::Client,
+    permits: &Arc<Semaphore>,
+    ui: &slint::Weak<MainWindow>,
+    id: Arc<str>,
+    size: ArtSize,
+) {
+    let (http, permits, ui) = (http.clone(), permits.clone(), ui.clone());
+    tokio::spawn(async move {
+        let _permit = permits.acquire_owned().await;
+        match art::fetch(&http, &id, size).await {
+            Ok(art) => {
+                let _ = ui.upgrade_in_event_loop(move |ui| {
+                    VIEW.with(|cell| {
+                        if let Some(view) = cell.borrow().clone() {
+                            view.borrow_mut().art_arrived(&ui, id, size, art);
+                        }
+                    });
+                });
+            }
+            // Stays in `requested`, so it isn't retried every repaint.
+            Err(err) => tracing::debug!(%err, %id, "album art"),
+        }
+    });
+}
+
 fn apply(session: &mut Session, cmd: Cmd) {
     match cmd {
         Cmd::Play(tracks, index) => session.play(tracks, index),
         Cmd::ShufflePlay(tracks) => session.play_shuffled(tracks),
+        Cmd::JumpTo(n) => session.skip_ahead(n),
         Cmd::TogglePause => session.toggle_pause(),
         Cmd::Next => session.skip(1),
         Cmd::Prev => session.skip(-1),
@@ -456,7 +704,7 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::PlayNext(track) => session.play_next(track),
         Cmd::AddTo(playlist, track) => session.add_to_playlist(playlist, track),
         Cmd::Sync => session.start_sync(),
-        Cmd::Quit(_) => {}
+        Cmd::FetchArt(..) | Cmd::Quit(_) => {}
     }
 }
 
@@ -503,10 +751,10 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
             None => {
                 ui.set_now_title("".into());
                 ui.set_now_artist("".into());
+                ui.set_expanded(false);
             }
         }
 
-        // Library-side refreshes need the View, reachable via user data.
         VIEW.with(|cell| {
             let Some(view) = cell.borrow().clone() else {
                 return;
@@ -517,35 +765,33 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
             } else if let Some(id) = &snap.changes.playlist {
                 let viewing = v.selected_id().as_deref() == Some(id.as_str());
                 let index = v.selected_playlist;
-                v.playlists = v.library.playlists().unwrap_or_default();
-                let rows: Vec<PlaylistRow> = v
-                    .playlists
-                    .iter()
-                    .map(|p| PlaylistRow {
-                        title: p.title.as_str().into(),
-                        count: p.item_count as i32,
-                    })
-                    .collect();
-                v.playlist_rows.set_vec(rows);
+                v.refresh_playlist_rows();
                 if viewing {
                     v.select_playlist(&ui, index);
                 }
             }
+            if let Some(queue) = snap.queue {
+                v.queue.set(queue, "");
+            }
             let now_id = snap.now.as_ref().map(|t| t.video_id.clone());
-            let old_id = v.now.as_ref().map(|t| t.video_id.clone());
-            if now_id != old_id || snap.changes.playlist.is_some() {
+            let changed = now_id != v.now.as_ref().map(|t| t.video_id.clone());
+            if changed || snap.changes.playlist.is_some() {
                 let liked = now_id
                     .as_ref()
                     .is_some_and(|id| v.library.contains(LIKED_PLAYLIST_ID, id).unwrap_or(false));
                 ui.set_liked(liked);
             }
-            v.tracks.set_playing(now_id);
+            v.tracks.set_playing(now_id.clone());
+            v.queue.set_playing(now_id);
             v.now = snap.now;
+            if changed {
+                v.show_now_art(&ui);
+            }
         });
     });
 }
 
 thread_local! {
-    /// The UI-thread view, for snapshot handlers queued from the core thread.
+    /// The UI-thread view, for handlers queued from the core thread.
     static VIEW: RefCell<Option<Rc<RefCell<View>>>> = const { RefCell::new(None) };
 }
