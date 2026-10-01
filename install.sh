@@ -143,22 +143,22 @@ install_linux_deps() {
   fi
 
   if command -v apt-get >/dev/null; then
-    pkgs=(build-essential pkg-config libasound2-dev curl git ca-certificates)
+    pkgs=(build-essential pkg-config libasound2-dev libfontconfig1-dev curl git ca-certificates)
     run "${sudo[@]}" apt-get update -q
     run "${sudo[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y -q "${pkgs[@]}"
   elif command -v dnf >/dev/null; then
-    pkgs=(gcc make pkgconf-pkg-config alsa-lib-devel curl git)
+    pkgs=(gcc make pkgconf-pkg-config alsa-lib-devel fontconfig-devel curl git)
     run "${sudo[@]}" dnf install -y "${pkgs[@]}"
   elif command -v pacman >/dev/null; then
-    pkgs=(base-devel alsa-lib curl git)
+    pkgs=(base-devel alsa-lib fontconfig curl git)
     # PipeWire systems need the ALSA bridge for sound to reach PipeWire.
     if pacman -Qq pipewire >/dev/null 2>&1; then pkgs+=(pipewire-alsa); fi
     run "${sudo[@]}" pacman -S --needed --noconfirm "${pkgs[@]}"
   elif command -v zypper >/dev/null; then
-    pkgs=(gcc make pkg-config alsa-devel curl git)
+    pkgs=(gcc make pkg-config alsa-devel fontconfig-devel curl git)
     run "${sudo[@]}" zypper --non-interactive install "${pkgs[@]}"
   else
-    warn "unknown package manager; install a C compiler, pkg-config and ALSA headers yourself"
+    warn "unknown package manager; install a C compiler, pkg-config, ALSA and fontconfig headers yourself"
   fi
 }
 

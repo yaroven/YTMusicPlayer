@@ -83,6 +83,7 @@ main services the CFRunLoop for media keys).
 | `storage` | SQLite: library, playlist ETags, stream URL cache, `meta` (UI state) |
 | `sync` | API -> storage; skips playlists with unchanged ETag |
 | `media` | souvlaki: media keys + Now Playing (macOS, Linux/MPRIS); stub on Windows |
+| `gui` (feature `gui`) | Slint window on the main thread; `Session` on a "core" thread with its own runtime; UI sends `Cmd`s, core pushes `Snapshot`s via `upgrade_in_event_loop`; `TracksModel` builds rows lazily over `Arc<[Track]>` |
 | `config::{paths, settings}` | per-OS dirs; `config.toml` (template on first run, `store_client` rewrites keys in place) |
 
 ## Decisions (with evidence — don't re-litigate without new data)
@@ -119,6 +120,13 @@ main services the CFRunLoop for media keys).
   read-only tokens still read, writes ask to re-login.
 - **App stays in Google "Testing"**: publishing needs a public homepage +
   privacy policy (user's call). Testing ⇒ 7-day login; the app says so.
+- **GUI memory is dominated by window pixel buffers** (software renderer, ~10 MB
+  per Retina frame): measured ~57 MB idle at 900x580, ~70 MB playing at
+  980x640 (2026-10-01). Media glyphs (⏮⏸⏭) are missing from system fonts —
+  transport icons are Slint `Path`s.
+- GUI testing on macOS: `swift` scripts with `CGWindowListCopyWindowInfo`
+  (window id → `screencapture -l`) and `CGEvent` clicks (Accessibility is
+  granted here); run with `HOME=<sandbox>`.
 - **Windows media keys skipped**: souvlaki needs an HWND.
 - **CI**: Linux only (fmt/clippy/test/shellcheck); no macOS on push (10x
   minutes on private repos). **Releases (user's choice, 2026-10-01): only

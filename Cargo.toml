@@ -11,6 +11,11 @@ publish = false
 name = "ytm"
 path = "src/main.rs"
 
+[features]
+default = ["gui"]
+# Desktop window (`ytm gui`); off => terminal-only, smaller binary.
+gui = ["dep:slint"]
+
 [dependencies]
 # --- Async runtime -----------------------------------------------------------
 tokio = { version = "1.47", features = [
@@ -87,6 +92,17 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2" # log to file: stdout belongs to the TUI
+
+# --- GUI (optional) -----------------------------------------------------------
+# Software renderer: no GPU stack; measured the lightest option (34 MB idle
+# vs 49 MB FLTK, 78 MB egui). Royalty-free license: keep the "Made with
+# Slint" attribution visible in the GUI.
+slint = { version = "1.18", optional = true, default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-software",
+] }
 
 # Media keys + "Now Playing" (MPRIS over pure-Rust zbus on Linux). Windows
 # needs a window handle, so it's left out there for now.

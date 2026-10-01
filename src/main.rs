@@ -30,7 +30,8 @@ const USAGE: &str = "\
 ytm — lightweight YouTube Music player
 
 USAGE:
-    ytm                         open the player (TUI)
+    ytm                         open the player (TUI, or the window if config has ui = gui)
+    ytm tui | ytm gui           open the terminal / window interface
     ytm login [--device]        sign in with Google (browser, or a code with --device)
     ytm logout                  forget the stored sign-in
     ytm import-client <json> [--device]
@@ -49,6 +50,17 @@ fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
+
+    let gui = matches!(args.as_slice(), ["gui"])
+        || (args.is_empty() && settings.ui.eq_ignore_ascii_case("gui"));
+    if gui {
+        return run_gui(&paths, &settings);
+    }
+    let args: Vec<&str> = if args.as_slice() == ["tui"] {
+        Vec::new()
+    } else {
+        args
+    };
 
     // macOS delivers media-key callbacks on the main thread's run loop, so
     // the TUI runs on a worker thread there while main services the loop.
@@ -190,14 +202,14 @@ async fn resolver(
     ))
 }
 
-async fn run_tui(paths: &AppPaths, settings: &Settings) -> Result<()> {
+/// Shared setup for both interfaces.
+async fn player_deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
     let http = http_client()?;
     let library = Arc::new(Library::open(&paths.database())?);
     let youtube = youtube_client(settings, paths, &http).await?;
     let resolver = resolver(paths, settings, &http, false, Some(library.clone())).await?;
     resolver.spawn_maintenance();
-
-    app::run(Deps {
+    Ok(Deps {
         library,
         resolver,
         http,
@@ -207,7 +219,23 @@ async fn run_tui(paths: &AppPaths, settings: &Settings) -> Result<()> {
         media_controls: settings.media_controls,
         audio_device: settings.audio_device(),
     })
-    .await
+}
+
+async fn run_tui(paths: &AppPaths, settings: &Settings) -> Result<()> {
+    app::run(player_deps(paths, settings).await?).await
+}
+
+#[cfg(feature = "gui")]
+fn run_gui(paths: &AppPaths, settings: &Settings) -> Result<()> {
+    // The window owns the main thread; the runtime moves to the core thread.
+    let rt = runtime()?;
+    let deps = rt.block_on(player_deps(paths, settings))?;
+    ytm_player::gui::run(rt, deps)
+}
+
+#[cfg(not(feature = "gui"))]
+fn run_gui(_paths: &AppPaths, _settings: &Settings) -> Result<()> {
+    bail!("this build has no GUI (rebuild with the `gui` feature)")
 }
 
 async fn login(paths: &AppPaths, settings: &Settings, device: bool) -> Result<()> {

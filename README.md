@@ -10,6 +10,8 @@ macOS, Linux and Windows.
   "Memory"), near-zero CPU. Memory doesn't grow with track length.
 - Search, shuffle/repeat, queue, like and add-to-playlist, mouse support,
   media keys and the system "Now Playing" widget (macOS, Linux).
+- Two interfaces: the terminal UI (default) or a desktop window
+  (`ytm gui`, or `ui = "gui"` in the config).
 
 ```
 ┌ Library ──────────────┐┌ Liked music · 120 ──────────────────────────────┐
@@ -58,13 +60,14 @@ Requires Rust 1.85+ ([rustup](https://rustup.rs)) plus a C toolchain
 | OS | Install first |
 |---|---|
 | macOS | `xcode-select --install` |
-| Debian/Ubuntu | `sudo apt install build-essential pkg-config libasound2-dev` |
-| Fedora | `sudo dnf install gcc pkgconf-pkg-config alsa-lib-devel` |
-| Arch | `sudo pacman -S base-devel alsa-lib` |
+| Debian/Ubuntu | `sudo apt install build-essential pkg-config libasound2-dev libfontconfig1-dev` |
+| Fedora | `sudo dnf install gcc pkgconf-pkg-config alsa-lib-devel fontconfig-devel` |
+| Arch | `sudo pacman -S base-devel alsa-lib fontconfig` |
 | Windows | Visual Studio Build Tools, workload "Desktop development with C++" |
 
 ```bash
-cargo install --path . --locked
+cargo install --path . --locked                       # terminal + window
+cargo install --path . --locked --no-default-features  # terminal only
 ```
 
 Linux at runtime also needs a Secret Service provider (GNOME Keyring or
@@ -112,6 +115,21 @@ ytm import-client <json>    # set the OAuth client from Google's JSON
 ytm login [--device] | ytm logout
 ```
 
+### Desktop window
+
+`ytm gui` opens the same player in a window: library on the left, filter
+box and track list (double-click to play), and a player bar with
+previous/play/next, like, play next, add to playlist, shuffle, repeat,
+volume and a clickable progress bar. Keys: `Space` play/pause, `n`/`p`
+next/previous, `f` like, `/` filter. Set `ui = "gui"` to make it the
+default.
+
+The window costs more memory than the terminal UI (~55–70 MB on macOS vs
+~15 MB; most of it is the window's pixel buffers, so it grows with window
+size). Builds without the `gui` cargo feature are terminal-only.
+
+### Terminal keys
+
 | Key | Action |
 |---|---|
 | `↑/↓` `k/j`, `PgUp/PgDn`, `g/G` | move |
@@ -141,6 +159,7 @@ Volume, shuffle, repeat and the selected playlist are remembered.
 |---|---|---|
 | `client_id`, `client_secret` | — | Google OAuth client (or `YTM_CLIENT_ID` / `YTM_CLIENT_SECRET`) |
 | `device_client_id`, `device_client_secret` | — | optional TV-type client for `ytm login --device` |
+| `ui` | `"tui"` | what `ytm` opens: `"tui"` or `"gui"` |
 | `media_controls` | `true` | media keys and system "Now Playing" (macOS, Linux) |
 | `audio_device` | `""` | output device name from `ytm devices`; empty = automatic (Linux: PipeWire, then PulseAudio, then ALSA default) |
 | `js_fallback` | `true` | if yt-dlp fails, retry with a JS runtime (system deno/node, or a ~2 MB QuickJS download). `false` = never run JS |
