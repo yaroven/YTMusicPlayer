@@ -140,9 +140,26 @@ run cargo install --path . --locked
 BIN="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin/ytm"
 [[ -x $BIN ]] || die "build finished but $BIN is missing"
 info "installed: $BIN"
+# Homebrew/distro Rust (unlike rustup) doesn't put ~/.cargo/bin on PATH.
 if [[ $(command -v ytm || true) != "$BIN" ]]; then
-  warn "$(dirname "$BIN") is not first in PATH; add to your shell profile:"
-  info "export PATH=\"$(dirname "$BIN"):\$PATH\""
+  bin_dir=$(dirname "$BIN")
+  case ${SHELL##*/} in
+    zsh) profile="$HOME/.zshrc" ;;
+    bash) [[ $OS == Darwin ]] && profile="$HOME/.bash_profile" || profile="$HOME/.bashrc" ;;
+    *) profile="$HOME/.profile" ;;
+  esac
+  line="export PATH=\"$bin_dir:\$PATH\""
+  # Also recognise the portable "$HOME/.cargo/bin" spelling.
+  if grep -qsF "$line" "$profile" ||
+    { [[ $bin_dir == "$HOME/.cargo/bin" ]] && grep -qsF "\$HOME/.cargo/bin" "$profile"; }; then
+    info "PATH is set in $profile; open a new terminal to use 'ytm'"
+  elif ask "Add $bin_dir to PATH in $profile?" y; then
+    printf '\n# ytm-player: cargo bin\n%s\n' "$line" >>"$profile"
+    info "added; open a new terminal (or run: source $profile)"
+  else
+    warn "$bin_dir is not on PATH; add to your shell profile: $line"
+  fi
+  export PATH="$bin_dir:$PATH"
 fi
 
 # --- 4. Credential store (Linux) --------------------------------------------------

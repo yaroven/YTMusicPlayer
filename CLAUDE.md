@@ -13,6 +13,9 @@ states a new rule, append it here (numbered, with a one-line reason).
 1. Never add AI attribution anywhere: no `Co-Authored-By: Claude ...`
    trailers, no "Generated with Claude Code" lines — not in commits, PR
    descriptions, code, comments or docs.
+2. Memory use must be as low as possible (it's the product's reason to
+   exist): bounded buffers, no needless clones/copies, measure RSS before and
+   after changes that touch audio, buffering, caching or the library model.
 
 ## Conventions
 
@@ -44,6 +47,9 @@ stdout/stderr — the terminal belongs to the TUI.
 - Seed a fake library with `sqlite3` into `<data_dir>/library.sqlite3`
   (real video ids), delete it afterwards — a real sync replaces it anyway.
 - OAuth login / sync need the user's Google account: the user tests those.
+- Linux: Docker is available. `ubuntu:24.04` + `./install.sh --yes --no-launch`
+  verified 2026-10-01 (build 1m49s, yt-dlp download + resolve OK; no audio
+  device / Secret Service in containers, so expect those two errors).
 
 ## Architecture
 
@@ -100,4 +106,4 @@ Library crate (`src/lib.rs`) plus thin binary (`src/main.rs`, CLI commands).
 - Persist resolved-URL cache in SQLite.
 - Shuffle/repeat, search within library, remember volume.
 - Stream from disk/ranges instead of full in-memory buffer for long tracks.
-- Verify builds on Linux and Windows (only macOS tested so far).
+- Verify the Windows build; Linux real-desktop test (audio, keyring) by user.

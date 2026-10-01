@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 const TEMPLATE: &str = r#"# ytm-player configuration
@@ -74,6 +74,15 @@ impl Settings {
         if let Ok(secret) = std::env::var("YTM_CLIENT_SECRET") {
             settings.client_secret = secret;
         }
+        settings.client_id = normalize_client_id(&settings.client_id);
+        settings.client_secret = settings.client_secret.trim().to_owned();
+        if settings.has_oauth_client() && !is_valid_client_id(&settings.client_id) {
+            bail!(
+                "client_id in {} doesn't look like a Google OAuth client ID \
+                 (expected `<digits>-<letters>.apps.googleusercontent.com`)",
+                path.display()
+            );
+        }
         settings.volume = settings.volume.clamp(0.0, 1.0);
         Ok(settings)
     }
@@ -83,9 +92,42 @@ impl Settings {
     }
 }
 
+/// Undoes copy-paste damage: terminals and editors sometimes turn the ID
+/// into a link (`http://…googleusercontent.com/`).
+fn normalize_client_id(raw: &str) -> String {
+    let id = raw.trim();
+    let id = id
+        .strip_prefix("https://")
+        .or_else(|| id.strip_prefix("http://"))
+        .unwrap_or(id);
+    id.trim_end_matches('/').to_owned()
+}
+
+fn is_valid_client_id(id: &str) -> bool {
+    id.strip_suffix(".apps.googleusercontent.com")
+        .and_then(|head| head.split_once('-'))
+        .is_some_and(|(num, rest)| {
+            !num.is_empty()
+                && num.bytes().all(|b| b.is_ascii_digit())
+                && !rest.is_empty()
+                && rest.bytes().all(|b| b.is_ascii_alphanumeric())
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_id_link_damage_is_repaired() {
+        let id = "859927131765-abc123.apps.googleusercontent.com";
+        assert_eq!(normalize_client_id(&format!("http://{id}/")), id);
+        assert_eq!(normalize_client_id(&format!(" https://{id} ")), id);
+        assert_eq!(normalize_client_id(id), id);
+        assert!(is_valid_client_id(id));
+        assert!(!is_valid_client_id("abc.apps.googleusercontent.com"));
+        assert!(!is_valid_client_id("859927131765-abc123"));
+    }
 
     #[test]
     fn template_parses_to_defaults() {
