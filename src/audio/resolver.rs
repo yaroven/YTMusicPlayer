@@ -196,7 +196,12 @@ impl StreamResolver {
     pub fn spawn_maintenance(&self) {
         let this = self.clone();
         tokio::spawn(async move {
-            match this.inner.ytdlp.update_if_stale(UPDATE_INTERVAL).await {
+            match this
+                .inner
+                .ytdlp
+                .update_if_stale(&this.inner.http, UPDATE_INTERVAL)
+                .await
+            {
                 Ok(true) => tracing::info!("yt-dlp updated"),
                 Ok(false) => {}
                 Err(err) => tracing::warn!(%err, "yt-dlp update failed"),

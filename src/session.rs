@@ -36,6 +36,8 @@ pub const VOLUME_STEP: f32 = 0.05;
 const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 /// How often memory use is re-measured for display.
 const MEMORY_SAMPLE: Duration = Duration::from_secs(2);
+/// Smallest memory change worth a redraw.
+const MEMORY_STEP: u64 = 2 << 20;
 
 pub struct Deps {
     pub library: Arc<Library>,
@@ -95,6 +97,7 @@ pub struct Session {
     /// "RAM 15 MB (+ yt-dlp …)", refreshed every [`MEMORY_SAMPLE`].
     pub memory: String,
     memory_at: Option<Instant>,
+    memory_usage: sysmem::Usage,
     generation: u64,
     failures: u32,
     tx: UnboundedSender<Background>,
@@ -141,6 +144,7 @@ impl Session {
             status: None,
             memory: String::new(),
             memory_at: None,
+            memory_usage: sysmem::Usage::default(),
             generation: 0,
             failures: 0,
             tx,
@@ -207,14 +211,19 @@ impl Session {
         if let Some(media) = &mut self.media {
             media.set_state(status.state, status.position, false);
         }
-        let mut changed = status != self.player_status;
+        // Redraws are full-window repaints in the GUI (softbuffer hands out
+        // a fresh buffer each frame on macOS), so only report what's visible:
+        // whole seconds, volume percent.
+        let mut changed = visible(&status) != visible(&self.player_status);
         self.player_status = status;
 
         if self.memory_at.is_none_or(|t| t.elapsed() >= MEMORY_SAMPLE) {
             self.memory_at = Some(Instant::now());
-            let label = sysmem::sample().label();
-            if label != self.memory {
-                self.memory = label;
+            let usage = sysmem::sample();
+            // Allocator noise moves the footprint by ~1 MB every sample.
+            if usage.differs_by(&self.memory_usage, MEMORY_STEP) {
+                self.memory_usage = usage;
+                self.memory = usage.label();
                 changed = true;
             }
         }
@@ -602,4 +611,14 @@ impl Session {
             is_error: true,
         });
     }
+}
+
+/// The parts of the player status the UIs actually show.
+fn visible(s: &PlayerStatus) -> (PlayState, u64, Option<u64>, u32) {
+    (
+        s.state,
+        s.position.as_secs(),
+        s.duration.map(|d| d.as_secs()),
+        (s.volume * 100.0).round() as u32,
+    )
 }

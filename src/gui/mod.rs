@@ -42,8 +42,9 @@ use crate::{
 use art::ArtSize;
 use ui::{MainWindow, PlaylistRow, TrackRow};
 
-/// Decoded thumbnails kept in memory (~36 KB each at 96x96 RGBA).
-const THUMB_CACHE: usize = 120;
+/// Decoded thumbnails kept in memory (~36 KB each at 96x96 RGBA): two
+/// screens of rows plus the queue panel on a tall window.
+const THUMB_CACHE: usize = 80;
 /// Rows of the "Up next" list sent to the UI.
 const QUEUE_ROWS: usize = 200;
 /// Parallel thumbnail downloads.

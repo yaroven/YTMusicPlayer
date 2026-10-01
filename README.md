@@ -5,7 +5,8 @@ macOS, Linux and Windows.
 
 - Your liked music and playlists, synced via the official YouTube Data API.
 - Streams audio through [yt-dlp](https://github.com/yt-dlp/yt-dlp) (downloaded
-  automatically on first run if it isn't installed).
+  automatically on first run; the unpacked "onedir" build starts in ~2 s
+  instead of ~7 s for the single-file one).
 - ~10 MB of memory idle, ~15 MB while playing (macOS, Activity Monitor
   "Memory"), near-zero CPU. Memory doesn't grow with track length.
 - Search, shuffle/repeat, queue, like and add-to-playlist, mouse support,

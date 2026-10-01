@@ -2,8 +2,13 @@
 //!
 //! Lookup order: `yt-dlp` in `PATH`, then the app-managed copy in
 //! `<data_dir>/bin`. If neither runs, [`YtDlp::ensure`] downloads the official
-//! standalone binary for the current OS/arch from GitHub releases and verifies
-//! it against the release's `SHA2-256SUMS` before making it executable.
+//! build for the current OS/arch from GitHub releases and verifies it against
+//! the release's `SHA2-256SUMS` before making it executable.
+//!
+//! On macOS and glibc Linux the "onedir" zip is preferred over the one-file
+//! binary: the one-file build unpacks ~90 MB of Python into a temp dir on
+//! every run. Measured 2026-10-01 on macOS: 6.2-7.8 s per resolve one-file vs
+//! 1.8-2.4 s onedir, same peak memory, +90 MB on disk.
 //!
 //! No JS runtime is passed by default: measured on 2026-10-01 (yt-dlp
 //! 2026.08.19), resolving without one took ~6 s / ~94 MB peak and still
@@ -174,9 +179,21 @@ impl YtDlp {
         self.source
     }
 
-    /// Path of the app-managed binary inside `managed_dir`.
+    /// Path of the app-managed one-file binary inside `managed_dir`.
     pub fn managed_path(managed_dir: &Path) -> PathBuf {
         managed_dir.join(executable_name())
+    }
+
+    /// Executable of the unpacked onedir build, where one exists.
+    fn onedir_path(managed_dir: &Path) -> Option<PathBuf> {
+        onedir_asset().map(|(_, exe)| managed_dir.join(ONEDIR).join(exe))
+    }
+
+    /// True for the one-file build that an onedir install would replace.
+    fn is_legacy_onefile(&self) -> bool {
+        self.source == BinarySource::Managed
+            && onedir_asset().is_some()
+            && self.path.file_name() == Some(executable_name().as_ref())
     }
 
     /// The app-managed copy, if installed. Instant (no probe): starting
@@ -187,6 +204,13 @@ impl YtDlp {
     /// may not know flags we pass (e.g. `--no-js-runtimes`).
     pub fn find(managed_dir: &Path) -> Option<Self> {
         let managed = Self::managed_path(managed_dir);
+        if let Some(exe) = Self::onedir_path(managed_dir).filter(|p| p.is_file()) {
+            // Left behind by a migration; nothing runs it any more.
+            if managed.is_file() {
+                let _ = std::fs::remove_file(&managed);
+            }
+            return Some(Self::new(exe, BinarySource::Managed));
+        }
         managed
             .is_file()
             .then(|| Self::new(managed, BinarySource::Managed))
@@ -220,9 +244,7 @@ impl YtDlp {
 
     /// Downloads the latest official build into `managed_dir`, verifying SHA-256.
     pub async fn download(client: &reqwest::Client, managed_dir: &Path) -> Result<Self> {
-        let asset = release_asset()?;
         tokio::fs::create_dir_all(managed_dir).await?;
-
         let sums = client
             .get(format!("{RELEASE_BASE}/SHA2-256SUMS"))
             .send()
@@ -230,6 +252,17 @@ impl YtDlp {
             .error_for_status()?
             .text()
             .await?;
+
+        if let Some((zip, exe)) = onedir_asset() {
+            match Self::download_onedir(client, managed_dir, &sums, zip, exe).await {
+                Ok(ytdlp) => return Ok(ytdlp),
+                Err(err) => {
+                    tracing::warn!(%err, "onedir yt-dlp install failed, using one-file build")
+                }
+            }
+        }
+
+        let asset = release_asset()?;
         let expected = find_checksum(&sums, asset).ok_or(ExtractorError::MissingChecksum(asset))?;
 
         let final_path = Self::managed_path(managed_dir);
@@ -244,6 +277,53 @@ impl YtDlp {
 
         tracing::info!(path = %final_path.display(), asset, "yt-dlp installed");
         Ok(Self::new(final_path, BinarySource::Managed))
+    }
+
+    /// Downloads and unpacks the onedir zip into `<managed_dir>/yt-dlp-dir`.
+    /// Unpacks next to the old copy and swaps directories, so a failure
+    /// leaves the previous install untouched.
+    async fn download_onedir(
+        client: &reqwest::Client,
+        managed_dir: &Path,
+        sums: &str,
+        zip: &'static str,
+        exe: &'static str,
+    ) -> Result<Self> {
+        let expected = find_checksum(sums, zip).ok_or(ExtractorError::MissingChecksum(zip))?;
+        let archive = managed_dir.join(zip);
+        download_verified(client, &format!("{RELEASE_BASE}/{zip}"), expected, &archive).await?;
+
+        let dir = managed_dir.join(ONEDIR);
+        let staging = managed_dir.join(format!("{ONEDIR}.part"));
+        let unpacked = {
+            let (archive, staging) = (archive.clone(), staging.clone());
+            tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+                let _ = std::fs::remove_dir_all(&staging);
+                let file = std::fs::File::open(&archive)?;
+                // `extract` rejects paths escaping `staging` and keeps unix modes.
+                zip::ZipArchive::new(file)
+                    .and_then(|mut z| z.extract(&staging))
+                    .map_err(std::io::Error::other)
+            })
+            .await
+            .map_err(std::io::Error::other)
+        };
+        let _ = tokio::fs::remove_file(&archive).await;
+        let exe_path = staging.join(exe);
+        if let Err(err) = unpacked.and_then(|r| r) {
+            let _ = tokio::fs::remove_dir_all(&staging).await;
+            return Err(err.into());
+        }
+        if !exe_path.is_file() {
+            let _ = tokio::fs::remove_dir_all(&staging).await;
+            return Err(std::io::Error::other(format!("{zip} has no {exe}")).into());
+        }
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        tokio::fs::rename(&staging, &dir).await?;
+        let ytdlp = Self::new(dir.join(exe), BinarySource::Managed);
+        mark_updated(&dir).await;
+        tracing::info!(path = %ytdlp.path.display(), zip, "yt-dlp (onedir) installed");
+        Ok(ytdlp)
     }
 
     pub async fn version(&self) -> Result<String> {
@@ -266,9 +346,31 @@ impl YtDlp {
 
     /// Runs [`update`](Self::update) if the managed binary wasn't updated
     /// within `max_age`. Returns `Ok(false)` when nothing had to be done.
-    pub async fn update_if_stale(&self, max_age: Duration) -> Result<bool> {
+    ///
+    /// A one-file install is replaced by the faster onedir build instead;
+    /// this session keeps using the old binary, the next start picks up the
+    /// new one (and deletes the old).
+    pub async fn update_if_stale(
+        &self,
+        client: &reqwest::Client,
+        max_age: Duration,
+    ) -> Result<bool> {
         if self.source != BinarySource::Managed {
             return Ok(false);
+        }
+        if self.is_legacy_onefile()
+            && let Some(dir) = self.path.parent()
+        {
+            let sums = client
+                .get(format!("{RELEASE_BASE}/SHA2-256SUMS"))
+                .send()
+                .await?
+                .error_for_status()?
+                .text()
+                .await?;
+            let (zip, exe) = onedir_asset().expect("checked by is_legacy_onefile");
+            Self::download_onedir(client, dir, &sums, zip, exe).await?;
+            return Ok(true);
         }
         let stamp = self.path.with_file_name(UPDATE_STAMP);
         let fresh = tokio::fs::metadata(&stamp)
@@ -381,6 +483,24 @@ fn executable_name() -> &'static str {
         "yt-dlp.exe"
     } else {
         "yt-dlp"
+    }
+}
+
+/// Directory (inside the managed `bin`) holding the unpacked onedir build.
+const ONEDIR: &str = "yt-dlp-dir";
+
+/// Onedir zip and the executable inside it, for targets that have one.
+/// Windows and musl builds stay one-file (not release targets, unmeasured).
+fn onedir_asset() -> Option<(&'static str, &'static str)> {
+    use std::env::consts::{ARCH, OS};
+    if cfg!(target_env = "musl") {
+        return None;
+    }
+    match (OS, ARCH) {
+        ("macos", "x86_64" | "aarch64") => Some(("yt-dlp_macos.zip", "yt-dlp_macos")),
+        ("linux", "x86_64") => Some(("yt-dlp_linux.zip", "yt-dlp_linux")),
+        ("linux", "aarch64") => Some(("yt-dlp_linux_aarch64.zip", "yt-dlp_linux_aarch64")),
+        _ => None,
     }
 }
 
@@ -621,5 +741,36 @@ cccc  yt-dlp_linux
         let stream = ytdlp.resolve("dQw4w9WgXcQ").await.unwrap();
         assert!(stream.url.starts_with("https://"));
         assert!(stream.is_fresh(Duration::from_secs(60)));
+    }
+
+    /// Network: an old one-file install migrates to the onedir build.
+    #[tokio::test]
+    #[ignore]
+    async fn migrates_onefile_to_onedir() {
+        if onedir_asset().is_none() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("ytm-migrate-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(YtDlp::managed_path(&dir), b"").unwrap();
+        let legacy = YtDlp::find(&dir).unwrap();
+        assert!(legacy.is_legacy_onefile());
+
+        let client = reqwest::Client::new();
+        assert!(
+            legacy
+                .update_if_stale(&client, Duration::ZERO)
+                .await
+                .unwrap()
+        );
+        // The running session's binary stays until the next start.
+        assert!(YtDlp::managed_path(&dir).is_file());
+
+        let onedir = YtDlp::find(&dir).unwrap();
+        assert!(!onedir.is_legacy_onefile());
+        assert!(!YtDlp::managed_path(&dir).exists());
+        assert!(onedir.version().await.unwrap().starts_with("20"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

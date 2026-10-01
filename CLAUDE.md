@@ -113,6 +113,17 @@ main services the CFRunLoop for media keys).
 - **Linux output device**: prefer ALSA PCMs `pipewire`, then `pulse`, then
   `default`. A user's `default` pointed at the raw card (`default:CARD=PCH`)
   owned by PipeWire — silence (2026-10-01). Override: `audio_device`.
+- **yt-dlp onedir zip, not one-file** (macOS, glibc Linux): one-file
+  unpacks ~90 MB of Python to a temp dir every run. Measured 2026-10-01:
+  macOS 6.2–7.8 s vs 1.8–2.4 s per resolve, Linux aarch64 1.7–1.8 s; same
+  peak RAM, +90 MB disk. Lives in `bin/yt-dlp-dir/`; `-U` works on it.
+  Old one-file installs migrate in the background (`update_if_stale`), the
+  old binary is deleted on the next start. Windows/musl stay one-file.
+- **Redraw only on visible changes** (`Session::refresh_status`): whole
+  seconds, volume %, memory moves ≥ 2 MB. Every GUI frame is a full-window
+  repaint (softbuffer on macOS hands out a new buffer each frame, ~15 MB at
+  Retina size). GUI CPU 2026-10-01: idle 1.7% → 0.4% (0 fps), playing
+  7.6% → 4.2%.
 - **Startup must not wait on yt-dlp**: `YtDlp::find` (no probe);
   `yt-dlp --version` costs 3–4 s.
 - **Sync never runs on a timer** to save quota.
@@ -129,7 +140,7 @@ main services the CFRunLoop for media keys).
 - **GUI album art**: `i.ytimg.com` thumbnails (`mqdefault` for rows,
   `sddefault`→`hqdefault` for the big cover), centre-square crop of the 16:9
   picture, decoded with `image` (jpeg only) off the UI thread; thumb cache
-  capped at 120 (96x96 RGBA), one large cover. Window memory still dominates:
+  capped at 80 (96x96 RGBA), one large cover. Window memory still dominates:
   ~46 MB at 1280x760 idle, up to ~90 MB with art while playing.
 - **Slint responsive layout**: breakpoints read `win-width`, copied from
   `width` in `changed` handlers — binding to `root.width` makes a layout

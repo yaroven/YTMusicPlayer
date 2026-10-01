@@ -105,6 +105,7 @@ slint = { version = "1.18", optional = true, default-features = false, features 
     # Window access to raise it when a second launch asks for it.
     "unstable-winit-030",
 ] }
+zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
 
 # Process memory (macOS `proc_pid_rusage`), quiet SIGPIPE handling.
 [target.'cfg(unix)'.dependencies]

@@ -14,6 +14,14 @@ pub struct Usage {
 }
 
 impl Usage {
+    /// True if either figure moved by at least `step` bytes, or a helper
+    /// appeared or exited.
+    pub fn differs_by(&self, other: &Self, step: u64) -> bool {
+        self.own.abs_diff(other.own) >= step
+            || self.helpers.abs_diff(other.helpers) >= step
+            || (self.helpers == 0) != (other.helpers == 0)
+    }
+
     /// "RAM 15 MB" or "RAM 15 MB + yt-dlp 93 MB".
     pub fn label(&self) -> String {
         if self.own == 0 {
@@ -140,5 +148,28 @@ mod tests {
             "RAM 15 MB + yt-dlp 93 MB"
         );
         assert_eq!(Usage::default().label(), "");
+    }
+
+    #[test]
+    fn ignores_small_changes() {
+        let mb = 1 << 20;
+        let a = Usage {
+            own: 70 * mb,
+            helpers: 0,
+        };
+        let b = Usage {
+            own: 71 * mb,
+            helpers: 0,
+        };
+        assert!(!a.differs_by(&b, 2 * mb));
+        assert!(a.differs_by(&Usage { own: 73 * mb, ..a }, 2 * mb));
+        assert!(a.differs_by(
+            &Usage {
+                helpers: mb / 2,
+                ..a
+            },
+            2 * mb
+        ));
+        assert!(Usage::default().differs_by(&a, 2 * mb));
     }
 }
