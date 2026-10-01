@@ -1,9 +1,11 @@
 [package]
 name = "ytm-player"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Lightweight cross-platform TUI music player synced with a YouTube Music account"
+description = "Lightweight cross-platform YouTube Music player: terminal UI and a desktop window"
+repository = "https://github.com/yaroven/YTMusicPlayer"
+homepage = "https://github.com/yaroven/YTMusicPlayer"
 license = "MIT OR Apache-2.0"
 publish = false
 
@@ -105,19 +107,24 @@ slint = { version = "1.18", optional = true, default-features = false, features 
     # Window access to raise it when a second launch asks for it.
     "unstable-winit-030",
 ] }
+# Album art (GUI): JPEG decode + scale of YouTube thumbnails only.
+image = { version = "0.25", optional = true, default-features = false, features = ["jpeg"] }
+
+# Unpacks the onedir yt-dlp zip.
 zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
 
 # Process memory (macOS `proc_pid_rusage`), quiet SIGPIPE handling.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# Album art (GUI): JPEG decode + scale of YouTube thumbnails only.
-image = { version = "0.25", optional = true, default-features = false, features = ["jpeg"] }
-
 # Media keys + "Now Playing" (MPRIS over pure-Rust zbus on Linux). Windows
 # needs a window handle, so it's left out there for now.
 [target.'cfg(not(windows))'.dependencies]
 souvlaki = { version = "0.8", default-features = false, features = ["use_zbus"] }
+
+# Hides the console window when the GUI is started from the Start menu.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 
 # Main-thread run loop for media key handlers.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -128,3 +135,49 @@ lto = "thin"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# --- Linux packages (release workflow) ----------------------------------------
+# `cargo deb` / `cargo generate-rpm` turn the release binary into .deb/.rpm.
+# Shared-library deps are detected automatically; the window's X11/Wayland
+# libraries are loaded at runtime, so they are listed by hand.
+[package.metadata.deb]
+maintainer = "yaroven <yaroven@users.noreply.github.com>"
+section = "sound"
+priority = "optional"
+depends = "$auto, fontconfig, libxkbcommon0"
+recommends = "libxkbcommon-x11-0, libwayland-client0, libxcursor1, libxi6, libxrandr2, pipewire-alsa | libasound2-plugins, gnome-keyring | kwalletmanager"
+extended-description = """\
+Plays your YouTube Music likes and playlists with a fraction of the memory
+of the browser tab. Terminal UI (`ytm`) and a desktop window (`ytm gui`)."""
+assets = [
+    ["target/release/ytm", "usr/bin/", "755"],
+    ["packaging/linux/ytm-player.desktop", "usr/share/applications/", "644"],
+    ["assets/ytm-player.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+    ["README.md", "usr/share/doc/ytm-player/", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "ytm-player"
+# Automatic detection runs `ldd` on the (Ubuntu) build host and lists
+# transitive libraries under Debian sonames (libbz2.so.1.0), which Fedora
+# lacks. The binary itself needs libc, libgcc_s, libasound, libfontconfig.
+auto-req = "no"
+assets = [
+    { source = "target/release/ytm", dest = "/usr/bin/ytm", mode = "755" },
+    { source = "packaging/linux/ytm-player.desktop", dest = "/usr/share/applications/ytm-player.desktop", mode = "644" },
+    { source = "assets/ytm-player.png", dest = "/usr/share/icons/hicolor/256x256/apps/ytm-player.png", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/ytm-player/README.md", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+glibc = ">= 2.35"
+libgcc = "*"
+alsa-lib = "*"
+fontconfig = "*"
+libxkbcommon = "*"
+
+[package.metadata.generate-rpm.recommends]
+libxkbcommon-x11 = "*"
+libwayland-client = "*"
+libXcursor = "*"
+pipewire-alsa = "*"

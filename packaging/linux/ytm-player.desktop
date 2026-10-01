@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ytm-player
+GenericName=Music Player
+Comment=Your YouTube Music library
+Exec=ytm gui
+Icon=ytm-player
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;youtube;player;
+StartupWMClass=ytm

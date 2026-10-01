@@ -28,5 +28,5 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
-      - name: Lint install script
-        run: shellcheck install.sh
+      - name: Lint shell scripts
+        run: shellcheck install.sh uninstall.sh packaging/macos/build-pkg.sh packaging/macos/scripts/postinstall

@@ -1,0 +1,17 @@
+#!/bin/bash
+# Runs as root after the payload is in place.
+app=/Applications/ytm-player.app
+mkdir -p /usr/local/bin
+ln -sf "$app/Contents/MacOS/ytm-player" /usr/local/bin/ytm
+
+# A per-user copy from install.sh would show up twice in Launchpad.
+user=$(stat -f%Su /dev/console 2>/dev/null || true)
+home=$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+old="$home/Applications/ytm-player.app"
+if [[ -n $user && $user != root && -d $old ]] &&
+  [[ $(defaults read "$old/Contents/Info" CFBundleIdentifier 2>/dev/null) == dev.ytm-player.app ]]; then
+  rm -rf "$old"
+fi
+
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" >/dev/null 2>&1 || true
+exit 0

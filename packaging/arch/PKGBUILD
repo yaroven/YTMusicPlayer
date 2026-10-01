@@ -1,0 +1,27 @@
+# Repackages the prebuilt Linux binary from the release workflow (built on
+# Ubuntu 22.04, glibc 2.35 — runs on current Arch). The workflow copies
+# `ytm`, the .desktop file and the icon next to this file and sets pkgver.
+pkgname=ytm-player
+pkgver=0.0.0
+pkgrel=1
+pkgdesc="Lightweight YouTube Music player (terminal and desktop window)"
+arch=('x86_64')
+url="https://github.com/yaroven/YTMusicPlayer"
+license=('MIT OR Apache-2.0')
+depends=('glibc' 'gcc-libs' 'alsa-lib' 'fontconfig' 'libxkbcommon')
+optdepends=(
+  'pipewire-alsa: sound on PipeWire systems'
+  'libxkbcommon-x11: desktop window on X11'
+  'libxcursor: desktop window on X11'
+  'wayland: desktop window on Wayland'
+  'gnome-keyring: remember the Google sign-in (or KWallet)'
+)
+options=('!strip' '!debug')
+source=('ytm' 'ytm-player.desktop' 'ytm-player.png')
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+package() {
+  install -Dm755 ytm "$pkgdir/usr/bin/ytm"
+  install -Dm644 ytm-player.desktop "$pkgdir/usr/share/applications/ytm-player.desktop"
+  install -Dm644 ytm-player.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/ytm-player.png"
+}

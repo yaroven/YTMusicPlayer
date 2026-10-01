@@ -1,7 +1,7 @@
 # ytm-player
 
-A lightweight terminal music player for your YouTube Music library.
-macOS, Linux and Windows.
+A lightweight music player for your YouTube Music library: terminal UI and
+a desktop window. macOS, Linux and Windows.
 
 - Your liked music and playlists, synced via the official YouTube Data API.
 - Streams audio through [yt-dlp](https://github.com/yt-dlp/yt-dlp) (downloaded
@@ -9,7 +9,8 @@ macOS, Linux and Windows.
   instead of ~7 s for the single-file one).
 - ~10 MB of memory idle, ~15 MB while playing (macOS, Activity Monitor
   "Memory"), near-zero CPU. Memory doesn't grow with track length.
-- Search, shuffle/repeat, queue, like and add-to-playlist, mouse support,
+- Search YouTube Music, filter your lists, shuffle/repeat, queue, like and
+  add-to-playlist, mouse support,
   media keys and the system "Now Playing" widget (macOS, Linux).
 - Two interfaces: the terminal UI (default) or a desktop window
   (`ytm gui`, or `ui = "gui"` in the config).
@@ -27,6 +28,36 @@ macOS, Linux and Windows.
 
 ## Install
 
+### Installers
+
+Download the file for your system from the
+[latest release](https://github.com/yaroven/YTMusicPlayer/releases/latest)
+(the repository is private: sign in to GitHub first, or use
+`gh release download --repo yaroven/YTMusicPlayer --pattern '<file>'`):
+
+| System | File | Install |
+|---|---|---|
+| Debian, Ubuntu, Mint | `ytm-player_<version>_amd64.deb` | `sudo apt install ./ytm-player_*_amd64.deb` |
+| Fedora | `ytm-player-<version>-1.x86_64.rpm` | `sudo dnf install ./ytm-player-*.x86_64.rpm` |
+| Arch, Manjaro | `ytm-player-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./ytm-player-*.pkg.tar.zst` |
+| Windows 10/11 | `ytm-player-<version>-setup-x64.exe` | run it (no admin rights needed) |
+| macOS 11+ (Apple Silicon and Intel) | `ytm-player-<version>-macos.pkg` | open it |
+
+Each one adds **ytm-player** to your applications (opens the window) and the
+`ytm` command (terminal UI and the commands below). Then set up Google
+sign-in once, from a terminal: see
+[Set up Google sign-in](#set-up-google-sign-in-once-5-minutes).
+
+The installers aren't signed with a paid developer certificate, so the
+system asks once:
+
+- **macOS**: "Apple could not verify…" → **System Settings → Privacy &
+  Security → Open Anyway** (for the .pkg, then it installs normally).
+- **Windows**: SmartScreen "Windows protected your PC" → **More info →
+  Run anyway**.
+
+### From the repository
+
 Linux, macOS:
 
 ```bash
@@ -43,9 +74,9 @@ cd YTMusicPlayer
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-The installers download a prebuilt binary from GitHub Releases when one
-exists for your platform (Debian/Ubuntu x86_64, macOS; Windows builds from
-source) (the repository is private, so this uses the
+The scripts download a prebuilt binary from GitHub Releases when one
+exists for your platform (Linux x86_64, macOS, Windows x86_64) (the
+repository is private, so this uses the
 [GitHub CLI](https://cli.github.com/) login), and otherwise build from source,
 installing build dependencies and Rust as needed. They then import your Google
 OAuth client (see below), sign you in and start the player. Re-run to update.
@@ -82,6 +113,43 @@ cargo install --path . --locked --no-default-features  # terminal only
 Linux at runtime also needs a Secret Service provider (GNOME Keyring or
 KWallet) to store the sign-in. Sound goes to PipeWire or PulseAudio through
 their ALSA plugins, picked automatically.
+
+## Uninstall
+
+Package installs remove like any other package, user data stays:
+
+| Installed with | Remove |
+|---|---|
+| `.deb` | `sudo apt remove ytm-player` |
+| `.rpm` | `sudo dnf remove ytm-player` |
+| Arch package | `sudo pacman -R ytm-player` |
+| Windows setup | **Settings → Apps → ytm-player → Uninstall** (asks whether to delete your library and sign-in) |
+
+For everything else — and to remove *all* traces, including the macOS .pkg,
+`install.sh` / `cargo install` copies, menu entries, the PATH line, your
+library, settings, logs and the stored Google sign-in — use the uninstaller:
+
+```bash
+ytm uninstall              # built into the app; asks before deleting your data
+ytm uninstall --purge -y   # also delete library, settings, logs and sign-in, no questions
+./uninstall.sh             # the same script, from the repository or the release
+```
+
+On Windows, `ytm uninstall` opens the setup program's uninstaller; for
+`install.ps1` installs run
+`powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 [-Purge]`.
+
+Removing things by hand: the binary (`/usr/bin/ytm`, `/usr/local/bin/ytm`,
+`~/.cargo/bin/ytm` or `%LOCALAPPDATA%\Programs\ytm-player`), the app
+(`/Applications` or `~/Applications/ytm-player.app`), and the data:
+
+| OS | Data |
+|---|---|
+| Linux | `~/.config/ytm-player`, `~/.local/share/ytm-player`, `~/.cache/ytm-player` |
+| macOS | `~/Library/Application Support/dev.ytm-player.ytm-player`, `~/Library/Caches/dev.ytm-player.ytm-player` |
+| Windows | `%APPDATA%\ytm-player`, `%LOCALAPPDATA%\ytm-player` |
+
+plus the sign-in in the system keychain (`ytm logout` removes it).
 
 ## Set up Google sign-in (once, ~5 minutes)
 
@@ -122,13 +190,16 @@ ytm status                  # config, sign-in and library state
 ytm devices                 # audio outputs (for `audio_device`)
 ytm import-client <json>    # set the OAuth client from Google's JSON
 ytm login [--device] | ytm logout
+ytm uninstall [--purge]     # remove the app (see Uninstall)
 ```
 
 ### Desktop window
 
 `ytm gui` opens the same player in a window styled after YouTube Music:
-library on the left, search box, playlist header with Play / Shuffle,
-track list (double-click to play), and a player bar with a red progress
+library on the left (drag its edge to resize, double-click the edge to
+reset), search box, playlist header with Play / Shuffle, track list
+(double-click to play; hovering a row shows save to playlist, play next and
+like), and a player bar with a red progress
 line, previous/play/next, the current track with a like button, volume,
 repeat, shuffle, play next and save to playlist. Album art comes from the
 YouTube thumbnails, cropped to a square and fetched only for rows on screen
@@ -136,8 +207,15 @@ YouTube thumbnails, cropped to a square and fetched only for rows on screen
 "now playing" view (big cover, "Up next" queue; Esc or ▼ closes it). The
 layout adapts to the window: narrower sidebar, then no sidebar (a playlist
 picker instead) and icon-only buttons on small windows. Keys: `Space` play/pause, `n`/`p`
-next/previous, `f` like, `/` filter. Set `ui = "gui"` to make it the
-default.
+next/previous, `f` like, `/` focus the search box. Set `ui = "gui"` to make
+it the default.
+
+**Search:** typing in the search box filters the list you're looking at;
+**Enter** searches YouTube Music. Results get their own entry at the top of
+the sidebar, and play, like and save to playlists like any other list.
+Signed in, search uses the YouTube Data API (100 of the 10,000 daily quota
+units per search, so ~90 searches a day next to normal use); without
+sign-in, or when the quota is used up, it falls back to yt-dlp (~2 s).
 
 Only one player runs at a time: launching it again brings the open window
 to the front. The status bar shows the player's memory use, plus yt-dlp's
@@ -160,6 +238,7 @@ size). Builds without the `gui` cargo feature are terminal-only.
 | `←` / `→`, click the bar | seek |
 | `+` / `-` | volume |
 | `/` | filter tracks (`Esc` clears) |
+| `o` | search YouTube Music (results replace the track list) |
 | `s` / `e` | shuffle / repeat (off → all → one) |
 | `v` | show the queue |
 | `u` | play the selected track next |
@@ -191,12 +270,17 @@ Logs: the OS cache directory under `ytm-player/logs` (`YTM_LOG=debug` for more).
 
 ## Releases
 
-Push a tag to build binaries for Debian/Ubuntu (x86_64, Debian 12+) and
-macOS (Apple Silicon, Intel) and publish them as a GitHub Release:
+Push a tag to build the installers above (plus plain binaries for the
+install scripts) and publish them as a GitHub Release; the workflow also
+installs each package in a clean Debian, Ubuntu, Fedora, Arch, Windows and
+macOS environment and runs it:
 
 ```bash
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.3.0 && git push origin v0.3.0
 ```
+
+**Actions → Release → Run workflow** builds everything as workflow
+artifacts without publishing.
 
 ## Notes and limits
 
@@ -206,6 +290,6 @@ git tag v0.2.0 && git push origin v0.2.0
 - Audio is AAC ~128 kbps. Opus would need a C library (libopus via cmake) on
   every platform for no audible gain, so it's not used.
 - API quota: 10,000 units/day. A sync costs ~1 unit per 50 tracks, and
-  playlists that didn't change are skipped; a like or add costs 50.
-  Browsing and playing never use quota.
+  playlists that didn't change are skipped; a like or add costs 50, a
+  search 100. Browsing and playing never use quota.
 - Media keys aren't supported on Windows yet (they need a window handle).

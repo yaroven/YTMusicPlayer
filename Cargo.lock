@@ -8120,7 +8120,7 @@ dependencies = [
 
 [[package]]
 name = "ytm-player"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -8151,6 +8151,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "which",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

@@ -1,6 +1,7 @@
 # ytm-player
 
-Lightweight cross-platform (macOS, Linux, Windows) TUI music player in Rust,
+Lightweight cross-platform (macOS, Linux, Windows) music player in Rust (TUI
+and a Slint desktop window),
 synced with a YouTube Music account. Its reason to exist is being a much
 lighter alternative to the YouTube Music browser tab: RAM, CPU and disk
 footprint are first-class requirements. Measure, don't guess.
@@ -86,6 +87,7 @@ main services the CFRunLoop for media keys).
 | `sysmem` | own + child (yt-dlp) memory for the status bar: macOS `proc_pid_rusage` phys_footprint, Linux `smaps_rollup` Pss |
 | `media` | souvlaki: media keys + Now Playing (macOS, Linux/MPRIS); stub on Windows |
 | `gui` (feature `gui`) | Slint window on the main thread; `Session` on a "core" thread with its own runtime; UI sends `Cmd`s, core pushes `Snapshot`s via `upgrade_in_event_loop`; `TracksModel` builds rows lazily over `Arc<[Track]>` |
+| `packaging/` | Linux .desktop, Arch PKGBUILD, Inno Setup script, macOS pkg builder |
 | `config::{paths, settings}` | per-OS dirs; `config.toml` (template on first run, `store_client` rewrites keys in place) |
 
 ## Decisions (with evidence — don't re-litigate without new data)
@@ -163,9 +165,33 @@ main services the CFRunLoop for media keys).
   socket is per user, not per HOME) or they find the user's running player.
 - **Windows media keys skipped**: souvlaki needs an HWND.
 - **CI**: Linux only (fmt/clippy/test/shellcheck); no macOS on push (10x
-  minutes on private repos). **Releases (user's choice, 2026-10-01): only
-  Debian/Linux x86_64 (ubuntu-22.04, glibc 2.35) and macOS arm64 + x86_64.**
-  Windows code/install.ps1 stay but are untested in CI.
+  minutes on private repos).
+- **Release installers (user's request, 2026-10-01)**: `.deb` (cargo-deb),
+  `.rpm` (cargo-generate-rpm) and Arch `.pkg.tar.zst` (makepkg in an
+  `archlinux` container, repackaging the binary) all from one ubuntu-22.04
+  x86_64 build; Windows Inno Setup `.exe` (per-user, no admin, PATH +
+  Start menu, uninstaller asks about data); macOS universal `.pkg`
+  (`packaging/macos/build-pkg.sh`: lipo, ad-hoc signed app in
+  /Applications, `/usr/local/bin/ytm` symlink, `BundleIsRelocatable=NO` so
+  Installer doesn't update an older ~/Applications copy). The workflow
+  installs and runs each one (Debian 12, Ubuntu 24.04, Fedora, Arch,
+  Windows silent install/uninstall, macOS `installer`). No paid signing:
+  Gatekeeper / SmartScreen ask once (documented in README). Plain
+  tarballs/zip stay for install.sh / install.ps1.
+- **Uninstall**: one script, `uninstall.sh`, also embedded in the binary
+  (`ytm uninstall` writes it to temp and execs bash). Never test `--purge`
+  with the real HOME on this Mac: `ytm logout` hits the real Keychain entry
+  (Keychain isn't per-HOME). Windows: Inno uninstaller / `uninstall.ps1`.
+- **Windows console**: `ytm` is a console program (TUI/CLI); `ytm gui` frees
+  the console when it owns it alone (started from the Start menu).
+- **Bundle detection**: the app binary opens the GUI only when stdin isn't a
+  TTY, so `/usr/local/bin/ytm` (link into the bundle) still opens the TUI.
+- **Search**: Data API `search.list` (100 units, music category, 25 hits,
+  +1 unit for durations) only on Enter / `o`, never as-you-type; falls back
+  to yt-dlp `ytsearch25:` with `--flat-playlist` (~2 s, no quota) when not
+  signed in or the API fails. Shares the one-yt-dlp permit.
+- **Per-row liked state** is an indexed SQLite lookup per rendered row, not
+  an in-memory id set.
 - **GUI toolkit: Slint (software renderer)** — measured idle footprint with
   a 2000-row list: Slint 34 MB, FLTK 49 MB, egui/glow 78 MB. Royalty-free
   license requires a visible "Made with Slint" attribution.

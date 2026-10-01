@@ -42,7 +42,8 @@ USAGE:
     ytm resolve <id> [--js]     print the direct audio URL (debug)
     ytm devices                 list audio output devices (for `audio_device`)
     ytm config                  print config file location
-    ytm status                  show setup state (config, sign-in, library)";
+    ytm status                  show setup state (config, sign-in, library)
+    ytm uninstall [--purge]     remove ytm-player (asks about your library and sign-in)";
 
 fn main() -> Result<()> {
     // Like other Unix tools, exit quietly when output is piped into
@@ -69,6 +70,8 @@ fn main() -> Result<()> {
         let Some(_instance) = single_instance(&paths, "gui")? else {
             return Ok(());
         };
+        #[cfg(windows)]
+        detach_console();
         return run_gui(&paths, &settings);
     }
     let args: Vec<&str> = if args.as_slice() == ["tui"] {
@@ -97,9 +100,27 @@ fn main() -> Result<()> {
     runtime()?.block_on(dispatch(&paths, &settings, &args))
 }
 
+/// Started from the Start menu, Windows gave this console program a console
+/// window of its own: close it, the GUI doesn't use it. A console shared
+/// with a shell (`ytm gui` typed in a terminal) stays.
+#[cfg(windows)]
+fn detach_console() {
+    use windows_sys::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
+    let mut pids = [0u32; 2];
+    let attached = unsafe { GetConsoleProcessList(pids.as_mut_ptr(), pids.len() as u32) };
+    if attached == 1 {
+        unsafe { FreeConsole() };
+    }
+}
+
 /// Started from `ytm-player.app` (Finder, Dock, Spotlight): open the window.
+/// From a terminal (e.g. the `/usr/local/bin/ytm` link the .pkg installs)
+/// stdin is a TTY and the TUI opens as usual.
 fn in_app_bundle() -> bool {
-    std::env::current_exe().is_ok_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/"))
+    use std::io::IsTerminal;
+    !std::io::stdin().is_terminal()
+        && std::env::current_exe()
+            .is_ok_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/"))
 }
 
 /// Claims the single player instance. `None`: another player is running
@@ -157,6 +178,7 @@ async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Resul
             }
             Ok(())
         }
+        ["uninstall", options @ ..] => uninstall(options),
         ["config"] => {
             println!("{}", paths.config_file().display());
             Ok(())
@@ -167,6 +189,44 @@ async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Resul
         }
         _ => bail!("unknown command\n\n{USAGE}"),
     }
+}
+
+/// Runs the bundled `uninstall.sh` (the same script as in the repository and
+/// the release assets), replacing this process.
+#[cfg(unix)]
+fn uninstall(options: &[&str]) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+    const SCRIPT: &str = include_str!("../uninstall.sh");
+    let path = std::env::temp_dir().join(format!("ytm-uninstall-{}.sh", std::process::id()));
+    std::fs::write(&path, SCRIPT).context("writing the uninstall script")?;
+    let err = std::process::Command::new("bash")
+        .arg(&path)
+        .args(options)
+        // Lets the script delete itself when done.
+        .env("YTM_UNINSTALL_TMP", &path)
+        .exec();
+    Err(err).context("starting bash")
+}
+
+/// Opens the installer's uninstaller ("Apps & features" runs the same one).
+#[cfg(windows)]
+fn uninstall(_options: &[&str]) -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let uninstaller = exe.with_file_name("unins000.exe");
+    if uninstaller.is_file() {
+        std::process::Command::new(&uninstaller)
+            .spawn()
+            .context("starting the uninstaller")?;
+        println!("Opened the uninstaller.");
+    } else {
+        println!(
+            "Not installed with the setup program. To remove ytm-player run\n    \
+             powershell -ExecutionPolicy Bypass -File uninstall.ps1\n\
+             from the repository, or delete {} and %APPDATA%\\ytm-player.",
+            exe.display()
+        );
+    }
+    Ok(())
 }
 
 fn http_client() -> Result<reqwest::Client> {

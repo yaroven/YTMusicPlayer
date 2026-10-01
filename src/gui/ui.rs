@@ -386,6 +386,8 @@ slint::slint! {
 
     export component MainWindow inherits Window {
         title: "ytm-player";
+        // Taskbar / window-switcher icon on Windows and X11 (macOS uses the bundle's).
+        icon: @image-url("../../assets/ytm-player-64.png");
         // The window's pixel buffers dominate GUI memory; keep the default modest.
         preferred-width: 1040px;
         preferred-height: 660px;
