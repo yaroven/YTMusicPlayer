@@ -19,7 +19,20 @@ macOS, Linux and Windows.
 └──────────────────────────────────────────────────────────────────── 1/120 ┘
 ```
 
-## Build
+## Quick install (Linux, macOS)
+
+```bash
+git clone https://github.com/yaroven/YTMusicPlayer.git
+cd YTMusicPlayer
+./install.sh
+```
+
+The script installs build dependencies (apt, dnf, pacman, zypper or Xcode
+tools) and Rust if missing, builds `ytm`, asks for your Google OAuth client
+(see below), signs you in and starts the player. Re-run it after `git pull`
+to update. Options: `--yes` (no questions), `--no-deps`, `--no-launch`.
+
+## Build manually
 
 Requires Rust 1.85+ ([rustup](https://rustup.rs)) plus a C toolchain
 (SQLite is compiled in).
@@ -69,6 +82,7 @@ third party ever sees your account.
 ytm                 # open the player; first start syncs your library
 ytm sync            # refresh the library
 ytm play <url|id>   # play a single track without the UI
+ytm status          # config, sign-in and library state
 ytm logout
 ```
 

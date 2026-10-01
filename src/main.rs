@@ -35,7 +35,8 @@ USAGE:
     ytm sync                refresh the local library from YouTube
     ytm play <id|url>       play one track without the TUI
     ytm resolve <id> [--js] print the direct audio URL (debug)
-    ytm config              print config file location";
+    ytm config              print config file location
+    ytm status              show setup state (config, sign-in, library)";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -57,6 +58,7 @@ async fn main() -> Result<()> {
         ["play", input] => play(&paths, &settings, input).await,
         ["resolve", id] => resolve(&paths, &settings, id, false).await,
         ["resolve", id, "--js"] => resolve(&paths, &settings, id, true).await,
+        ["status"] => status(&paths, &settings).await,
         ["config"] => {
             println!("{}", paths.config_file().display());
             Ok(())
@@ -159,6 +161,43 @@ async fn login(paths: &AppPaths, settings: &Settings) -> Result<()> {
     }
     token_store::save(&token).await?;
     println!("Signed in. Run `ytm sync` or just `ytm`.");
+    Ok(())
+}
+
+async fn status(paths: &AppPaths, settings: &Settings) -> Result<()> {
+    let client = if settings.has_oauth_client() {
+        "set"
+    } else {
+        "missing"
+    };
+    println!(
+        "config:     {} (OAuth client: {client})",
+        paths.config_file().display()
+    );
+    let signed_in = match token_store::load().await {
+        Ok(Some(_)) => "yes".to_owned(),
+        Ok(None) => "no".to_owned(),
+        Err(err) => format!("unknown ({err:#})"),
+    };
+    println!("signed in:  {signed_in}");
+    let library = Library::open(&paths.database())?;
+    let playlists = library.playlists()?;
+    let tracks: u32 = playlists.iter().map(|p| p.item_count).sum();
+    let last_sync = library
+        .last_sync()?
+        .and_then(|t| chrono::DateTime::from_timestamp(t, 0))
+        .map_or("never".to_owned(), |t| {
+            t.format("%Y-%m-%d %H:%M UTC").to_string()
+        });
+    println!(
+        "library:    {} playlists, {tracks} tracks (last sync: {last_sync})",
+        playlists.len()
+    );
+    match YtDlp::find(&paths.bin_dir()) {
+        Some(y) => println!("yt-dlp:     {} ({:?})", y.path().display(), y.source()),
+        None => println!("yt-dlp:     not installed (downloaded on first play)"),
+    }
+    println!("logs:       {}", paths.log_dir().display());
     Ok(())
 }
 
