@@ -5,6 +5,10 @@
 //! - < 820 px: no sidebar (playlist picker under the title);
 //! - < 620 px: icon-only buttons, no time / modes in the bar.
 //!
+//! The sidebar is resized by dragging its right edge (double-click resets).
+//! The search field filters the list as you type; Enter searches YouTube
+//! Music.
+//!
 //! Declarative only; behaviour lives in `gui::run`.
 
 slint::slint! {
@@ -24,6 +28,7 @@ slint::slint! {
         hue: float,
         art: image,
         has-art: bool,
+        liked: bool,
     }
 
     global Yt {
@@ -73,6 +78,7 @@ slint::slint! {
         in property <length> icon-size: 24px;
         in property <bool> active;
         in property <color> tint: root.active ? Yt.text : Yt.secondary;
+        out property <bool> hovered: touch.has-hover;
         callback clicked();
         width: root.size;
         height: root.size;
@@ -232,11 +238,17 @@ slint::slint! {
     }
 
     // Two-line row: art, title over artist, duration (as in YT Music lists).
+    // On hover: save to playlist, play next, like (a liked heart stays).
     component TrackItem inherits Rectangle {
         in property <TrackRow> track;
         in property <bool> selected;
+        in property <bool> actions: true;
         callback clicked();
         callback double-clicked();
+        callback like();
+        callback play-next();
+        callback add-to();
+        property <bool> hovered: touch.has-hover || like-btn.hovered || next-btn.hovered || add-btn.hovered;
         height: 64px;
         border-radius: 4px;
         background: root.selected ? Yt.raised : touch.has-hover ? Yt.hover : transparent;
@@ -253,7 +265,7 @@ slint::slint! {
                 has-art: root.track.has-art;
                 initial: root.track.initial;
                 hue: root.track.hue;
-                show-play: touch.has-hover || root.track.playing;
+                show-play: root.hovered || root.track.playing;
                 y: (parent.height - self.height) / 2;
             }
             VerticalLayout {
@@ -262,6 +274,31 @@ slint::slint! {
                 horizontal-stretch: 1;
                 Text { text: root.track.title; overflow: elide; color: root.track.playing ? Yt.red : Yt.text; font-weight: 500; font-size: 15px; }
                 Text { text: root.track.artist; overflow: elide; color: Yt.secondary; }
+            }
+            add-btn := IconButton {
+                visible: root.actions && root.hovered;
+                icon: "playlist-add";
+                size: 36px;
+                icon-size: 22px;
+                y: (parent.height - self.height) / 2;
+                clicked => { root.add-to(); }
+            }
+            next-btn := IconButton {
+                visible: root.actions && root.hovered;
+                icon: "queue-next";
+                size: 36px;
+                icon-size: 22px;
+                y: (parent.height - self.height) / 2;
+                clicked => { root.play-next(); }
+            }
+            like-btn := IconButton {
+                visible: root.actions && (root.hovered || root.track.liked);
+                icon: root.track.liked ? "heart" : "heart-outline";
+                active: root.track.liked;
+                size: 36px;
+                icon-size: 22px;
+                y: (parent.height - self.height) / 2;
+                clicked => { root.like(); }
             }
             Text { text: root.track.time; horizontal-alignment: right; vertical-alignment: center; color: Yt.secondary; min-width: 40px; }
         }
@@ -321,6 +358,7 @@ slint::slint! {
         ListView {
             for t[i] in root.rows: TrackItem {
                 track: t;
+                actions: false;
                 selected: t.playing;
                 clicked => { root.jump(i); }
                 double-clicked => { root.jump(i); }
@@ -384,6 +422,14 @@ slint::slint! {
         in property <string> status-text;
         in property <bool> status-error;
         in property <bool> syncing;
+        in property <bool> searching;
+        // Last online search ("" = none); `showing-results` while it's listed.
+        in property <string> search-query;
+        in property <bool> showing-results;
+        // Bumped to empty the search field.
+        in property <int> clear-search;
+        // Sidebar width set by dragging its edge (0 = automatic).
+        in-out property <length> sidebar-width: 0px;
         in property <string> memory-text;
 
         in-out property <bool> expanded;
@@ -425,6 +471,10 @@ slint::slint! {
         callback add-to(int);
         callback sync();
         callback jump(int);
+        callback search-online(string);
+        callback show-results();
+        callback like-row(int);
+        callback sidebar-resized(length);
 
         forward-focus: keys;
         keys := FocusScope {
@@ -446,12 +496,29 @@ slint::slint! {
                     if !root.expanded: HorizontalLayout {
                         // Sidebar
                         if !root.narrow: Rectangle {
-                            width: root.compact ? 210px : 260px;
-                            Rectangle { x: parent.width - 1px; width: 1px; background: Yt.divider; }
+                            width: root.sidebar-width > 0 ? clamp(root.sidebar-width, 180px, max(180px, root.win-width * 0.5)) : (root.compact ? 210px : 260px);
+                            Rectangle { x: parent.width - 1px; width: 1px; background: resize.has-hover || resize.pressed ? #ffffff55 : Yt.divider; }
                             VerticalLayout {
                                 padding: 12px;
                                 padding-top: 20px;
                                 spacing: 4px;
+                                if root.search-query != "": Rectangle {
+                                    height: 52px;
+                                    border-radius: Yt.radius;
+                                    background: root.showing-results ? Yt.raised : results-touch.has-hover ? Yt.hover : transparent;
+                                    results-touch := TouchArea { clicked => { root.show-results(); keys.focus(); } }
+                                    HorizontalLayout {
+                                        padding-left: 12px;
+                                        padding-right: 12px;
+                                        spacing: 10px;
+                                        Icon { name: "search"; color: Yt.secondary; width: 20px; height: 20px; y: (parent.height - self.height) / 2; }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Text { text: "Search results"; color: Yt.text; font-weight: root.showing-results ? 600 : 400; }
+                                            Text { text: root.search-query; color: Yt.secondary; font-size: 12px; overflow: elide; }
+                                        }
+                                    }
+                                }
                                 Text { text: "Library"; color: Yt.secondary; font-size: 12px; font-weight: 600; height: 24px; vertical-alignment: center; x: 12px; }
                                 ListView {
                                     for p[i] in root.playlists: PlaylistItem {
@@ -492,6 +559,24 @@ slint::slint! {
                                     }
                                 }
                             }
+                            // Drag the right edge to resize; double-click resets.
+                            resize := TouchArea {
+                                x: parent.width - 4px;
+                                width: 8px;
+                                mouse-cursor: ew-resize;
+                                moved => {
+                                    if (self.pressed) {
+                                        root.sidebar-width = clamp(parent.width + self.mouse-x - self.pressed-x, 180px, max(180px, root.win-width * 0.5));
+                                    }
+                                }
+                                pointer-event(e) => {
+                                    if (e.kind == PointerEventKind.up) { root.sidebar-resized(root.sidebar-width); }
+                                }
+                                double-clicked => {
+                                    root.sidebar-width = 0px;
+                                    root.sidebar-resized(0px);
+                                }
+                            }
                         }
 
                         // Content
@@ -517,7 +602,7 @@ slint::slint! {
                                         horizontal-stretch: 1;
                                         if search.text == "": Text {
                                             x: 8px;
-                                            text: "Search in playlist";
+                                            text: root.tiny ? "Search" : "Search YouTube Music, or type to filter";
                                             color: Yt.secondary;
                                             vertical-alignment: center;
                                             height: parent.height;
@@ -525,15 +610,24 @@ slint::slint! {
                                         search := TextInput {
                                             property <int> focus-request: root.focus-search;
                                             changed focus-request => { self.focus(); }
+                                            property <int> clear-request: root.clear-search;
+                                            changed clear-request => { self.text = ""; }
                                             x: 8px;
                                             width: parent.width - 16px;
                                             color: Yt.text;
                                             vertical-alignment: center;
                                             single-line: true;
                                             edited => { root.filter-changed(self.text); }
-                                            accepted => { keys.focus(); }
+                                            accepted => { root.search-online(self.text); keys.focus(); }
                                         }
                                     }
+                                    if (search.text != "" && !root.tiny) || root.searching: Text {
+                                        text: root.searching ? "Searching…" : "Enter ↵ search";
+                                        color: Yt.secondary;
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                    }
+                                    Rectangle { width: 8px; }
                                 }
                             }
                             Rectangle { horizontal-stretch: 0.0001; }
@@ -552,7 +646,7 @@ slint::slint! {
                                         font-weight: 700;
                                         overflow: elide;
                                     }
-                                    Text { text: root.track-count + " songs"; color: Yt.secondary; }
+                                    Text { text: root.track-count + (root.showing-results ? " results" : " songs"); color: Yt.secondary; }
                                 }
                                 Pill { text: "Play"; icon: "play"; filled: true; compact: root.tiny; y: (parent.height - self.height) / 2; clicked => { root.play-all(); keys.focus(); } }
                                 Pill { text: "Shuffle"; icon: "shuffle"; compact: root.tiny; y: (parent.height - self.height) / 2; clicked => { root.shuffle-play(); keys.focus(); } }
@@ -573,7 +667,8 @@ slint::slint! {
                             }
                             Rectangle { height: 1px; background: Yt.divider; }
                             if root.tracks.length == 0: Text {
-                                text: search.text != "" ? "No songs match \"" + search.text + "\"" : "This playlist is empty";
+                                text: search.text != "" ? "No songs match \"" + search.text + "\" — Enter searches YouTube Music"
+                                    : root.showing-results ? "Nothing found" : "This playlist is empty";
                                 color: Yt.secondary;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -586,6 +681,9 @@ slint::slint! {
                                     selected: i == root.selected-track;
                                     clicked => { root.select-track(i); keys.focus(); }
                                     double-clicked => { root.play-track(i); }
+                                    like => { root.like-row(i); keys.focus(); }
+                                    play-next => { root.selected-track = i; root.play-next(); keys.focus(); }
+                                    add-to => { root.selected-track = i; add-popup.show(); }
                                 }
                             }
                         }
@@ -760,17 +858,24 @@ slint::slint! {
             x: 12px;
             y: 150px;
             width: min(320px, root.win-width - 24px);
-            height: min(root.win-height - 240px, 16px + 52px * root.playlists.length);
+            height: min(root.win-height - 240px, 16px + 52px * (root.playlists.length + (root.search-query != "" ? 1 : 0)));
             Rectangle {
                 background: #282828;
                 border-radius: Yt.radius;
                 drop-shadow-blur: 16px;
                 drop-shadow-color: #00000099;
-                ListView {
-                    for p[i] in root.playlists: PlaylistItem {
-                        playlist: p;
-                        selected: i == root.selected-playlist;
-                        clicked => { root.select-playlist(i); playlists-popup.close(); keys.focus(); }
+                VerticalLayout {
+                    if root.search-query != "": PlaylistItem {
+                        playlist: { title: "Search: " + root.search-query, count: 0 };
+                        selected: root.showing-results;
+                        clicked => { root.show-results(); playlists-popup.close(); keys.focus(); }
+                    }
+                    ListView {
+                        for p[i] in root.playlists: PlaylistItem {
+                            playlist: p;
+                            selected: i == root.selected-playlist;
+                            clicked => { root.select-playlist(i); playlists-popup.close(); keys.focus(); }
+                        }
                     }
                 }
             }

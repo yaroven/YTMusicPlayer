@@ -61,7 +61,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             frame.render_widget(Clear, area);
             frame.render_stateful_widget(list, area, state);
         }
-        Mode::Normal | Mode::Search => {}
+        Mode::Normal | Mode::Search | Mode::Find(_) => {}
     }
 }
 

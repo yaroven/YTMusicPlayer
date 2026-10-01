@@ -83,8 +83,11 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
-    let hint_text = match app.mode {
+    let hint_text = match &app.mode {
         Mode::Search => " type to filter · Enter keep · Esc clear ".to_owned(),
+        Mode::Find(query) => {
+            format!(" search YouTube Music: {query}▏ · Enter search · Esc cancel ")
+        }
         _ if app.session.memory.is_empty() => " ? help · q quit ".to_owned(),
         _ => format!(" {} · ? help · q quit ", app.session.memory),
     };

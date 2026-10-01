@@ -65,6 +65,7 @@ enum Cmd {
     PlayNext(Track),
     AddTo(Playlist, Track),
     Sync,
+    Search(String),
     FetchArt(Arc<str>, ArtSize),
     /// Save state (selected playlist id) and stop.
     Quit(Option<String>),
@@ -82,8 +83,11 @@ struct Snapshot {
     repeat: Repeat,
     status: Option<(String, bool)>,
     syncing: bool,
+    searching: bool,
     memory: String,
     changes: Changes,
+    /// The latest search, when `changes.search`.
+    search: Option<(String, Arc<[Track]>)>,
     /// Current track followed by what's next; only when it changed.
     queue: Option<Arc<[Track]>>,
 }
@@ -105,7 +109,13 @@ impl Snapshot {
                 .as_ref()
                 .map(|s| (s.text.clone(), s.is_error)),
             syncing: session.syncing,
+            searching: session.searching,
             memory: session.memory.clone(),
+            search: session
+                .search
+                .as_ref()
+                .filter(|_| changes.search)
+                .map(|r| (r.query.clone(), r.tracks.clone())),
             changes,
             queue,
         }
@@ -157,16 +167,20 @@ struct TracksModel {
     visible: RefCell<Vec<u32>>,
     playing: RefCell<Option<Arc<str>>>,
     art: Rc<RefCell<ArtCache>>,
+    /// For the per-row heart: an indexed lookup per shown row, no id set
+    /// kept in memory.
+    library: Arc<Library>,
     notify: ModelNotify,
 }
 
 impl TracksModel {
-    fn new(art: Rc<RefCell<ArtCache>>) -> Self {
+    fn new(art: Rc<RefCell<ArtCache>>, library: Arc<Library>) -> Self {
         Self {
             tracks: RefCell::new(Arc::from([])),
             visible: RefCell::default(),
             playing: RefCell::default(),
             art,
+            library,
             notify: ModelNotify::default(),
         }
     }
@@ -237,7 +251,12 @@ impl Model for TracksModel {
         let t = self.tracks.borrow().get(index)?.clone();
         let playing = self.playing.borrow().as_ref() == Some(&t.video_id);
         let art = self.art.borrow_mut().thumb(&t.video_id);
+        let liked = self
+            .library
+            .contains(LIKED_PLAYLIST_ID, &t.video_id)
+            .unwrap_or(false);
         Some(TrackRow {
+            liked,
             initial: initial(&t.title),
             hue: hue(&t.artist),
             title: SharedString::from(&*t.title),
@@ -282,6 +301,10 @@ struct View {
     playlists: Vec<Playlist>,
     selected_playlist: Option<usize>,
     filter: String,
+    /// Last online search: query and results.
+    search: Option<(String, Arc<[Track]>)>,
+    /// The track list shows `search` rather than a playlist.
+    showing_results: bool,
     tracks: Rc<TracksModel>,
     queue: Rc<TracksModel>,
     playlist_rows: Rc<VecModel<PlaylistRow>>,
@@ -314,6 +337,8 @@ impl View {
     }
 
     fn select_playlist(&mut self, ui: &MainWindow, index: Option<usize>) {
+        self.showing_results = false;
+        ui.set_showing_results(false);
         self.selected_playlist = index;
         ui.set_selected_playlist(index.map_or(-1, |i| i as i32));
         ui.set_selected_track(-1);
@@ -329,6 +354,24 @@ impl View {
         self.tracks.set(tracks, &self.filter);
     }
 
+    /// Lists the last search's results in place of a playlist.
+    fn show_results(&mut self, ui: &MainWindow) {
+        let Some((query, tracks)) = self.search.clone() else {
+            return;
+        };
+        self.showing_results = true;
+        self.selected_playlist = None;
+        ui.set_showing_results(true);
+        ui.set_selected_playlist(-1);
+        ui.set_selected_track(-1);
+        ui.set_tracks_title(format!("“{query}”").into());
+        ui.set_track_count(tracks.len() as i32);
+        // A new list starts unfiltered.
+        self.filter.clear();
+        ui.set_clear_search(ui.get_clear_search().wrapping_add(1));
+        self.tracks.set(tracks, "");
+    }
+
     fn selected_id(&self) -> Option<String> {
         self.selected_playlist
             .and_then(|i| self.playlists.get(i))
@@ -336,6 +379,13 @@ impl View {
     }
 
     fn selected_title(&self) -> String {
+        if self.showing_results {
+            return self
+                .search
+                .as_ref()
+                .map(|(q, _)| format!("Search: {q}"))
+                .unwrap_or_default();
+        }
         self.selected_playlist
             .and_then(|i| self.playlists.get(i))
             .map(|p| p.title.clone())
@@ -435,8 +485,10 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps) -> Result<()> {
         playlists: Vec::new(),
         selected_playlist: None,
         filter: String::new(),
-        tracks: Rc::new(TracksModel::new(art.clone())),
-        queue: Rc::new(TracksModel::new(art.clone())),
+        search: None,
+        showing_results: false,
+        tracks: Rc::new(TracksModel::new(art.clone(), library.clone())),
+        queue: Rc::new(TracksModel::new(art.clone(), library.clone())),
         playlist_rows: Rc::new(VecModel::default()),
         art,
         now: None,
@@ -447,6 +499,14 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps) -> Result<()> {
         ui.set_tracks(ModelRc::from(v.tracks.clone()));
         ui.set_queue_rows(ModelRc::from(v.queue.clone()));
         ui.set_playlists(ModelRc::from(v.playlist_rows.clone()));
+    }
+    if let Some(width) = library
+        .get_meta("sidebar_width")
+        .ok()
+        .flatten()
+        .and_then(|w| w.parse::<f32>().ok())
+    {
+        ui.set_sidebar_width(width);
     }
     let last = library.get_meta("playlist").ok().flatten();
     view.borrow_mut().reload_playlists(&ui, last.as_deref());
@@ -571,6 +631,29 @@ fn wire_callbacks(ui: &MainWindow, view: &Rc<RefCell<View>>, cmd_tx: &UnboundedS
         let v = view.borrow();
         if let Some(track) = v.target(ui, v.now.clone()) {
             send(Cmd::PlayNext(track), tx);
+        }
+    });
+    on!(on_search_online, [tx, view, ui], |text| {
+        let query = text.trim();
+        if !query.is_empty() {
+            send(Cmd::Search(query.to_owned()), tx);
+        }
+    });
+    on!(on_show_results, [tx, view, ui], || view
+        .borrow_mut()
+        .show_results(ui));
+    on!(on_like_row, [tx, view, ui], |row| {
+        let track = usize::try_from(row)
+            .ok()
+            .and_then(|r| view.borrow().tracks.track(r));
+        if let Some(track) = track {
+            send(Cmd::Like(track), tx);
+        }
+    });
+    on!(on_sidebar_resized, [tx, view, ui], |width| {
+        let library = view.borrow().library.clone();
+        if let Err(err) = library.set_meta("sidebar_width", &format!("{width:.0}")) {
+            tracing::warn!(%err, "saving sidebar width");
         }
     });
     on!(on_add_to, [tx, view, ui], |index| {
@@ -705,6 +788,7 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::PlayNext(track) => session.play_next(track),
         Cmd::AddTo(playlist, track) => session.add_to_playlist(playlist, track),
         Cmd::Sync => session.start_sync(),
+        Cmd::Search(query) => session.search(&query),
         Cmd::FetchArt(..) | Cmd::Quit(_) => {}
     }
 }
@@ -722,6 +806,7 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
             Repeat::One => 2,
         });
         ui.set_syncing(snap.syncing);
+        ui.set_searching(snap.searching);
         ui.set_memory_text(snap.memory.as_str().into());
         let (text, error) = snap.status.unwrap_or_default();
         ui.set_status_text(text.into());
@@ -761,10 +846,19 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
                 return;
             };
             let mut v = view.borrow_mut();
+            if let Some(search) = snap.search {
+                ui.set_search_query(search.0.as_str().into());
+                v.search = Some(search);
+                v.show_results(&ui);
+            }
+            if let Some(id) = &snap.changes.liked {
+                v.tracks.rows_changed(id);
+                v.queue.rows_changed(id);
+            }
             if snap.changes.library {
                 v.reload_playlists(&ui, None);
             } else if let Some(id) = &snap.changes.playlist {
-                let viewing = v.selected_id().as_deref() == Some(id.as_str());
+                let viewing = !v.showing_results && v.selected_id().as_deref() == Some(id.as_str());
                 let index = v.selected_playlist;
                 v.refresh_playlist_rows();
                 if viewing {

@@ -1,5 +1,6 @@
 //! Typed YouTube Data API v3 client. Quota (10,000 units/day): each `*.list`
-//! page costs 1 unit, `videos.rate` and `playlistItems.insert` 50 each;
+//! page costs 1 unit, `videos.rate` and `playlistItems.insert` 50 each,
+//! `search.list` 100;
 //! [`YouTubeClient::units_used`] counts them for this process.
 
 use std::sync::{
@@ -67,6 +68,23 @@ struct ItemSnippet {
 #[serde(rename_all = "camelCase")]
 struct ItemContent {
     video_id: String,
+}
+
+#[derive(Deserialize)]
+struct SearchItemDto {
+    id: SearchId,
+    snippet: SearchSnippet,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchId {
+    video_id: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchSnippet {
+    title: String,
+    channel_title: String,
 }
 
 #[derive(Deserialize)]
@@ -262,6 +280,55 @@ impl YouTubeClient {
     }
 }
 
+impl YouTubeClient {
+    /// Searches music videos. 100 units (+1 for durations), so only on an
+    /// explicit request, never as-you-type.
+    pub async fn search(&self, query: &str, max: u8) -> Result<Vec<Track>> {
+        let max = max.clamp(1, 50).to_string();
+        let response = self
+            .http
+            .get(format!("{BASE}/search"))
+            .bearer_auth(self.auth.access_token().await?)
+            .query(&[
+                ("part", "snippet"),
+                ("type", "video"),
+                ("videoCategoryId", MUSIC_CATEGORY),
+                ("maxResults", max.as_str()),
+                ("q", query),
+            ])
+            .send()
+            .await?;
+        self.units.fetch_add(100, Ordering::Relaxed);
+        let page: Page<SearchItemDto> = check(response, "search").await?.json().await?;
+        let mut tracks: Vec<Track> = page
+            .items
+            .into_iter()
+            .filter_map(|i| {
+                Some(Track {
+                    video_id: i.id.video_id?.into(),
+                    title: unescape_html(&i.snippet.title).into(),
+                    artist: clean_artist(&unescape_html(&i.snippet.channel_title)),
+                    duration_secs: None,
+                })
+            })
+            .collect();
+        self.fill_durations(&mut tracks).await;
+        Ok(tracks)
+    }
+}
+
+/// `search.list` snippets come HTML-escaped (`&amp;`, `&#39;`, `&quot;`).
+fn unescape_html(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_owned();
+    }
+    s.replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
 /// YouTube Music's "Liked music" playlist id.
 const LIKED_MUSIC_PLAYLIST: &str = "LM";
 
@@ -360,6 +427,22 @@ mod tests {
         assert_eq!(page.next_page_token.as_deref(), Some("abc"));
         assert_eq!(page.items.len(), 2);
         assert!(page.items[1].snippet.video_owner_channel_title.is_none());
+    }
+
+    #[test]
+    fn decodes_search_page() {
+        let json = r#"{"items": [
+            {"id": {"kind": "youtube#video", "videoId": "fJ9rUzIMcZQ"},
+             "snippet": {"title": "Queen &amp; friends &#39;live&#39;", "channelTitle": "Queen - Topic"}},
+            {"id": {"kind": "youtube#channel"}, "snippet": {"title": "x", "channelTitle": "x"}}
+        ]}"#;
+        let page: Page<SearchItemDto> = serde_json::from_str(json).unwrap();
+        assert_eq!(page.items.len(), 2);
+        assert!(page.items[1].id.video_id.is_none());
+        assert_eq!(
+            unescape_html(&page.items[0].snippet.title),
+            "Queen & friends 'live'"
+        );
     }
 
     #[test]

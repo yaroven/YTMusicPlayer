@@ -36,6 +36,8 @@ pub const VOLUME_STEP: f32 = 0.05;
 const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 /// How often memory use is re-measured for display.
 const MEMORY_SAMPLE: Duration = Duration::from_secs(2);
+/// Results per online search (one API page).
+const SEARCH_RESULTS: u8 = 25;
 /// Smallest memory change worth a redraw.
 const MEMORY_STEP: u64 = 2 << 20;
 
@@ -63,6 +65,16 @@ pub struct Changes {
     pub library: bool,
     /// Tracks of this playlist changed (like, add to playlist).
     pub playlist: Option<String>,
+    /// This video was liked or unliked.
+    pub liked: Option<Arc<str>>,
+    /// New online search results are in [`Session::search`].
+    pub search: bool,
+}
+
+/// The last online search.
+pub struct SearchResults {
+    pub query: String,
+    pub tracks: Arc<[Track]>,
 }
 
 enum Background {
@@ -81,6 +93,11 @@ enum Background {
         track: Track,
         result: Result<()>,
     },
+    Searched {
+        generation: u64,
+        query: String,
+        result: Result<Vec<Track>>,
+    },
 }
 
 pub struct Session {
@@ -91,6 +108,10 @@ pub struct Session {
     /// Set while the current queue entry is being resolved/buffered.
     pub loading: bool,
     pub syncing: bool,
+    /// Set while an online search runs.
+    pub searching: bool,
+    pub search: Option<SearchResults>,
+    search_generation: u64,
     pub logged_in: bool,
     pub status: Option<Status>,
     pub player_status: PlayerStatus,
@@ -141,6 +162,9 @@ impl Session {
             queue,
             loading: false,
             syncing: false,
+            searching: false,
+            search: None,
+            search_generation: 0,
             status: None,
             memory: String::new(),
             memory_at: None,
@@ -305,6 +329,7 @@ impl Session {
                         tracing::warn!(%err, "updating local likes");
                     }
                     changes.playlist = Some(LIKED_PLAYLIST_ID.into());
+                    changes.liked = Some(track.video_id.clone());
                     let verb = if liked { "♥ Liked" } else { "Removed like:" };
                     self.set_info(format!("{verb} {}", track.title));
                 }
@@ -324,6 +349,25 @@ impl Session {
                 }
                 Err(err) => self.set_error(format!("{err:#}")),
             },
+            Background::Searched {
+                generation,
+                query,
+                result,
+            } if generation == self.search_generation => {
+                self.searching = false;
+                match result {
+                    Ok(tracks) => {
+                        self.set_info(format!("{} results for “{query}”", tracks.len()));
+                        self.search = Some(SearchResults {
+                            query,
+                            tracks: tracks.into(),
+                        });
+                        changes.search = true;
+                    }
+                    Err(err) => self.set_error(format!("Search failed: {err:#}")),
+                }
+            }
+            Background::Searched { .. } => {} // a newer search replaced it
         }
         changes
     }
@@ -543,6 +587,48 @@ impl Session {
         tokio::spawn(async move {
             let result = sync_library(&youtube, library, music_only).await;
             let _ = tx.send(Background::Synced(result));
+        });
+    }
+
+    /// Searches YouTube for music: the Data API when logged in (100 quota
+    /// units), else — or when that fails, e.g. quota exhausted — yt-dlp.
+    pub fn search(&mut self, query: &str) {
+        let query = query.trim().to_owned();
+        if query.is_empty() {
+            return;
+        }
+        self.search_generation += 1;
+        self.searching = true;
+        self.set_info(format!("Searching “{query}”…"));
+        let (youtube, resolver, tx, generation) = (
+            self.deps.youtube.clone(),
+            self.deps.resolver.clone(),
+            self.tx.clone(),
+            self.search_generation,
+        );
+        tokio::spawn(async move {
+            let api = match &youtube {
+                Some(yt) => match yt.search(&query, SEARCH_RESULTS).await {
+                    Ok(tracks) => Some(tracks),
+                    Err(err) => {
+                        tracing::warn!(%err, "API search failed; using yt-dlp");
+                        None
+                    }
+                },
+                None => None,
+            };
+            let result = match api {
+                Some(tracks) => Ok(tracks),
+                None => resolver
+                    .search(&query, SEARCH_RESULTS)
+                    .await
+                    .map_err(Into::into),
+            };
+            let _ = tx.send(Background::Searched {
+                generation,
+                query,
+                result,
+            });
         });
     }
 

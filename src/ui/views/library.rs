@@ -64,14 +64,18 @@ pub fn draw_playlists(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_stateful_widget(list, area, &mut app.playlist_state);
 }
 
-fn track_row(marker: String, t: &Track, playing: bool) -> Row<'_> {
+fn track_row(marker: String, t: &Track, playing: bool, liked: bool) -> Row<'_> {
     let time = t
         .duration_secs
         .map(|s| fmt_time(Duration::from_secs(s.into())))
         .unwrap_or_default();
     let row = Row::new([
         Cell::from(Line::from(marker).right_aligned()),
-        Cell::from(&*t.title),
+        Cell::from(if liked {
+            Line::from(vec![Span::raw("♥ ").fg(ACCENT), Span::raw(&*t.title)])
+        } else {
+            Line::from(&*t.title)
+        }),
         Cell::from(&*t.artist),
         Cell::from(Line::from(time).right_aligned()),
     ]);
@@ -94,11 +98,15 @@ pub fn draw_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
 
 fn draw_playlist_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Tracks;
-    let name = app
-        .playlist_state
-        .selected()
-        .and_then(|i| app.playlists.get(i))
-        .map_or("Tracks", |p| p.title.as_str());
+    let results = app.results.as_ref().map(|q| format!("Search: {q}"));
+    let name = match &results {
+        Some(title) => title.as_str(),
+        None => app
+            .playlist_state
+            .selected()
+            .and_then(|i| app.playlists.get(i))
+            .map_or("Tracks", |p| p.title.as_str()),
+    };
     let mut title = vec![Span::raw(format!(" {name} · {} ", app.visible.len()))];
     let searching = matches!(app.mode, Mode::Search);
     if searching || !app.filter.is_empty() {
@@ -109,7 +117,9 @@ fn draw_playlist_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.visible.is_empty() {
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let hint = if app.filter.is_empty() {
+        let hint = if app.results.is_some() {
+            "nothing found"
+        } else if app.filter.is_empty() {
             "no tracks"
         } else {
             "no matches"
@@ -136,7 +146,8 @@ fn draw_playlist_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
         } else {
             (i + 1).to_string()
         };
-        track_row(marker, t, playing)
+        // Indexed lookup for on-screen rows only.
+        track_row(marker, t, playing, app.session.is_liked(&t.video_id))
     });
     let table = Table::new(rows, WIDTHS)
         .header(Row::new(["#", "Title", "Artist", "Time"]).dark_gray())
@@ -160,13 +171,13 @@ fn draw_queue(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     };
     let height = area.height.saturating_sub(3) as usize;
-    let rows = std::iter::once(track_row("▶".into(), current, true)).chain(
+    let rows = std::iter::once(track_row("▶".into(), current, true, false)).chain(
         app.session
             .queue
             .upcoming()
             .take(height.saturating_sub(1))
             .enumerate()
-            .map(|(i, t)| track_row((i + 1).to_string(), t, false)),
+            .map(|(i, t)| track_row((i + 1).to_string(), t, false, false)),
     );
     let table = Table::new(rows, WIDTHS)
         .header(Row::new(["", "Up next", "Artist", "Time"]).dark_gray())

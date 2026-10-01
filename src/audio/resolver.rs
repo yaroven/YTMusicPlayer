@@ -20,7 +20,7 @@ use std::{
 
 use tokio::sync::{OnceCell, Semaphore};
 
-use crate::storage::Library;
+use crate::{api::models::Track, storage::Library};
 
 use super::{
     extractor::{AudioStream, ExtractorError, Result, YtDlp},
@@ -161,6 +161,18 @@ impl StreamResolver {
         if let Err(err) = result {
             tracing::warn!(%err, "persisting stream URL");
         }
+    }
+
+    /// Searches YouTube through yt-dlp (no API quota). Shares the
+    /// one-yt-dlp-at-a-time permit with resolves.
+    pub async fn search(&self, query: &str, max: u8) -> Result<Vec<Track>> {
+        let _permit = self
+            .inner
+            .permits
+            .acquire()
+            .await
+            .expect("semaphore never closed");
+        self.inner.ytdlp.search(query, max).await
     }
 
     /// Warms the cache for the next queued track; errors are only logged.

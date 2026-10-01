@@ -44,6 +44,8 @@ pub enum Mode {
     Normal,
     /// Typing a filter for the track list.
     Search,
+    /// Typing an online search query.
+    Find(String),
     /// Choosing a playlist to add `track` to.
     AddTo {
         track: Track,
@@ -69,6 +71,8 @@ pub struct App {
     /// Indices into `tracks` matching the filter (all when no filter).
     pub(crate) visible: Vec<u32>,
     pub(crate) filter: String,
+    /// Query whose results the track pane shows instead of a playlist.
+    pub(crate) results: Option<String>,
     /// Selected row in `visible`, and the first row on screen.
     pub(crate) track_selected: Option<usize>,
     pub(crate) track_offset: usize,
@@ -88,6 +92,7 @@ pub async fn run(deps: Deps) -> Result<()> {
         tracks: Arc::from([]),
         visible: Vec::new(),
         filter: String::new(),
+        results: None,
         track_selected: None,
         track_offset: 0,
         focus: Focus::Playlists,
@@ -156,6 +161,22 @@ impl App {
         if let Some(id) = changes.playlist {
             self.refresh_after_edit(&id);
         }
+        if changes.search {
+            self.show_results();
+        }
+    }
+
+    /// Lists the last online search's results in the track pane.
+    fn show_results(&mut self) {
+        let Some(search) = &self.session.search else {
+            return;
+        };
+        self.tracks = search.tracks.clone();
+        self.results = Some(search.query.clone());
+        self.view = TracksView::Playlist;
+        self.focus = Focus::Tracks;
+        self.filter.clear();
+        self.apply_filter();
     }
 
     // --- input -----------------------------------------------------------------
@@ -184,6 +205,22 @@ impl App {
                     _ => return,
                 }
                 self.apply_filter();
+                return;
+            }
+            Mode::Find(query) => {
+                match key.code {
+                    KeyCode::Esc => self.mode = Mode::Normal,
+                    KeyCode::Enter => {
+                        let query = std::mem::take(query);
+                        self.mode = Mode::Normal;
+                        self.session.search(&query);
+                    }
+                    KeyCode::Backspace => {
+                        query.pop();
+                    }
+                    KeyCode::Char(c) => query.push(c),
+                    _ => {}
+                }
                 return;
             }
             Mode::AddTo { state, .. } => {
@@ -243,6 +280,7 @@ impl App {
                 self.view = TracksView::Playlist;
                 self.mode = Mode::Search;
             }
+            Action::FindOnline => self.mode = Mode::Find(String::new()),
             Action::Shuffle => s.toggle_shuffle(),
             Action::Repeat => s.cycle_repeat(),
             Action::ToggleQueue => {
@@ -403,6 +441,7 @@ impl App {
     }
 
     fn load_tracks(&mut self) {
+        self.results = None;
         let Some(id) = self.selected_playlist().map(|p| p.id.clone()) else {
             self.tracks = Arc::from([]);
             self.apply_filter();
@@ -466,9 +505,10 @@ impl App {
 
     /// Reloads counts, and the track list if it shows the edited playlist.
     fn refresh_after_edit(&mut self, playlist_id: &str) {
-        let viewing = self
-            .selected_playlist()
-            .is_some_and(|p| p.id == playlist_id);
+        let viewing = self.results.is_none()
+            && self
+                .selected_playlist()
+                .is_some_and(|p| p.id == playlist_id);
         if let Ok(playlists) = self.session.library().playlists() {
             self.playlists = playlists;
         }

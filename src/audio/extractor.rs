@@ -28,6 +28,7 @@ use super::{
     install::{InstallError, download_verified},
     js_runtime::JsRuntime,
 };
+use crate::api::models::{Track, clean_artist};
 
 const RELEASE_BASE: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download";
 
@@ -427,6 +428,28 @@ impl YtDlp {
         parse_stream(video_id, &stdout)
     }
 
+    /// YouTube search without the Data API (no quota): `ytsearchN:` with a
+    /// flat playlist, so no video page is fetched. ~2 s.
+    pub async fn search(&self, query: &str, max: u8) -> Result<Vec<Track>> {
+        let target = format!("ytsearch{}:{}", max.clamp(1, 50), query.trim());
+        let stdout = self
+            .run(
+                &[
+                    "--ignore-config",
+                    "--no-warnings",
+                    "--flat-playlist",
+                    "--no-js-runtimes",
+                    "--print",
+                    SEARCH_TEMPLATE,
+                    "--",
+                    &target,
+                ],
+                RESOLVE_TIMEOUT,
+            )
+            .await?;
+        Ok(parse_search(&stdout))
+    }
+
     async fn run(&self, args: &[&str], timeout: Duration) -> Result<String> {
         let mut cmd = Command::new(&self.path);
         cmd.args(args)
@@ -484,6 +507,27 @@ fn executable_name() -> &'static str {
     } else {
         "yt-dlp"
     }
+}
+
+/// One tab-separated line per search hit; tabs/newlines can't occur in the
+/// fields yt-dlp prints here.
+const SEARCH_TEMPLATE: &str = "%(id)s\t%(title)s\t%(channel,uploader)s\t%(duration)s";
+
+fn parse_search(stdout: &str) -> Vec<Track> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let mut f = line.split('\t');
+            let (id, title, channel, duration) = (f.next()?, f.next()?, f.next()?, f.next()?);
+            validate_video_id(id).ok()?;
+            Some(Track {
+                video_id: id.into(),
+                title: title.into(),
+                artist: clean_artist(if channel == "NA" { "" } else { channel }),
+                duration_secs: duration.parse::<f64>().ok().map(|d| d as u32),
+            })
+        })
+        .collect()
 }
 
 /// Directory (inside the managed `bin`) holding the unpacked onedir build.
@@ -718,6 +762,19 @@ cccc  yt-dlp_linux
         std::fs::write(YtDlp::managed_path(&dir), b"").unwrap();
         assert_eq!(YtDlp::find(&dir).unwrap().source(), BinarySource::Managed);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parses_search_lines() {
+        let out = "fJ9rUzIMcZQ\tBohemian Rhapsody\tQueen - Topic\t360.0\n\
+                   bad\tx\ty\t1\n\
+                   vbvyNnw8Qjg\tLive Aid\tNA\tNA\n";
+        let tracks = parse_search(out);
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(&*tracks[0].artist, "Queen");
+        assert_eq!(tracks[0].duration_secs, Some(360));
+        assert_eq!(&*tracks[1].artist, "");
+        assert_eq!(tracks[1].duration_secs, None);
     }
 
     #[test]
