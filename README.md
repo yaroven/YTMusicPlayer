@@ -44,9 +44,11 @@ Download the file for your system from the
 | macOS 11+ (Apple Silicon and Intel) | `ytm-player-<version>-macos.pkg` | open it |
 
 Each one adds **ytm-player** to your applications (opens the window) and the
-`ytm` command (terminal UI and the commands below). Then set up Google
-sign-in once, from a terminal: see
-[Set up Google sign-in](#set-up-google-sign-in-once-5-minutes).
+`ytm` command (terminal UI and the commands below). On first start the
+window opens the **Google account** dialog: import the OAuth client JSON
+(or paste its ID and secret) and click **Sign in with Google** — see
+[Set up Google sign-in](#set-up-google-sign-in-once-5-minutes) for creating
+the client.
 
 The installers aren't signed with a paid developer certificate, so the
 system asks once:
@@ -163,9 +165,13 @@ your account.
    **Test users**.
 4. **Clients → Create client**: type **Desktop app**. In the dialog, click
    **Download JSON** (the secret is shown only once).
-5. Import it: `ytm import-client ~/Downloads/client_secret_….json`
-   (the installers offer this automatically).
-6. Run `ytm login`. Google warns the app is unverified — choose
+5. Import it. In the window: **Sign in** (sidebar) → **Import downloaded
+   JSON** (finds the newest `client_secret_*.json` in Downloads), or paste
+   the client ID and secret and **Save client**. In a terminal:
+   `ytm import-client ~/Downloads/client_secret_….json` (the install
+   scripts offer this automatically).
+6. Sign in: **Sign in with Google** in the window, `L` in the terminal UI,
+   or `ytm login`. Google warns the app is unverified — choose
    **Continue**, since it is your own app. The app asks for permission to
    manage your YouTube account so it can like tracks and add them to
    playlists; it never deletes anything.
@@ -245,6 +251,7 @@ size). Builds without the `gui` cargo feature are terminal-only.
 | `f` | like / unlike |
 | `a` | add to a playlist |
 | `r` | sync library |
+| `L` | sign in with Google (opens the browser) |
 | `?` | help |
 | `q` | quit |
 

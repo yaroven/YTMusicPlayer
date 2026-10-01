@@ -4,6 +4,7 @@
 //! [`Session::next_event`] to learn what changed.
 
 use std::{
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -12,9 +13,12 @@ use anyhow::Result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::{
+    account,
     api::{
+        auth::{self, OAuthClient},
         client::YouTubeClient,
         models::{LIKED_PLAYLIST_ID, Playlist, Track},
+        token_store,
     },
     audio::{
         extractor::AudioStream,
@@ -24,6 +28,7 @@ use crate::{
         resolver::StreamResolver,
         stream::HttpStream,
     },
+    config::settings::Settings,
     media::{MediaAction, MediaControls},
     storage::Library,
     sync::{SyncReport, sync_library},
@@ -36,6 +41,7 @@ pub const VOLUME_STEP: f32 = 0.05;
 const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 /// How often memory use is re-measured for display.
 const MEMORY_SAMPLE: Duration = Duration::from_secs(2);
+const NOT_SIGNED_IN: &str = "Not signed in: “Sign in” in the window, or `ytm login`";
 /// Results per online search (one API page).
 const SEARCH_RESULTS: u8 = 25;
 /// Smallest memory change worth a redraw.
@@ -51,6 +57,11 @@ pub struct Deps {
     pub volume: f32,
     pub media_controls: bool,
     pub audio_device: Option<String>,
+    /// `config.toml`, where an OAuth client set in the app is saved.
+    pub config_file: PathBuf,
+    /// Browser-login OAuth client (`None` until one is configured).
+    pub oauth_client: Option<OAuthClient>,
+    pub device_client: Option<OAuthClient>,
 }
 
 pub struct Status {
@@ -69,6 +80,8 @@ pub struct Changes {
     pub liked: Option<Arc<str>>,
     /// New online search results are in [`Session::search`].
     pub search: bool,
+    /// OAuth client or sign-in state changed.
+    pub account: bool,
 }
 
 /// The last online search.
@@ -98,6 +111,11 @@ enum Background {
         query: String,
         result: Result<Vec<Track>>,
     },
+    SignedIn {
+        generation: u64,
+        result: Result<()>,
+    },
+    SignedOut(Result<()>),
 }
 
 pub struct Session {
@@ -113,6 +131,9 @@ pub struct Session {
     pub search: Option<SearchResults>,
     search_generation: u64,
     pub logged_in: bool,
+    /// Waiting for the user to finish signing in in the browser.
+    pub signing_in: bool,
+    login_generation: u64,
     pub status: Option<Status>,
     pub player_status: PlayerStatus,
     /// "RAM 15 MB (+ yt-dlp …)", refreshed every [`MEMORY_SAMPLE`].
@@ -165,6 +186,8 @@ impl Session {
             searching: false,
             search: None,
             search_generation: 0,
+            signing_in: false,
+            login_generation: 0,
             status: None,
             memory: String::new(),
             memory_at: None,
@@ -186,10 +209,8 @@ impl Session {
     pub fn startup(&mut self, library_empty: bool) {
         match (self.logged_in, library_empty) {
             (true, true) => self.start_sync(),
-            (false, true) => self.set_error("Not logged in: run `ytm login`"),
-            (false, false) => {
-                self.set_info("Offline library (not logged in) — `ytm login` to sync")
-            }
+            (false, true) => self.set_error(NOT_SIGNED_IN),
+            (false, false) => self.set_info("Offline library (not signed in) — sign in to sync"),
             (true, false) => {}
         }
     }
@@ -368,6 +389,33 @@ impl Session {
                 }
             }
             Background::Searched { .. } => {} // a newer search replaced it
+            Background::SignedIn { generation, result } if generation == self.login_generation => {
+                self.signing_in = false;
+                changes.account = true;
+                match result {
+                    Ok(()) => {
+                        if let Some(client) = self.deps.oauth_client.clone() {
+                            self.deps.youtube = Some(account::api_client(
+                                client,
+                                self.deps.device_client.clone(),
+                                &self.deps.http,
+                            ));
+                            self.logged_in = true;
+                            self.set_info("Signed in");
+                            self.start_sync();
+                        }
+                    }
+                    Err(err) => self.set_error(format!("Sign-in failed: {err:#}")),
+                }
+            }
+            Background::SignedIn { .. } => {} // a newer attempt replaced it
+            Background::SignedOut(result) => {
+                changes.account = true;
+                match result {
+                    Ok(()) => self.set_info("Signed out — the library stays available offline"),
+                    Err(err) => self.set_error(format!("Sign-out failed: {err:#}")),
+                }
+            }
         }
         changes
     }
@@ -565,7 +613,7 @@ impl Session {
 
     fn youtube(&mut self) -> Option<Arc<YouTubeClient>> {
         if self.deps.youtube.is_none() {
-            self.set_error("Not logged in: run `ytm login`");
+            self.set_error(NOT_SIGNED_IN);
         }
         self.deps.youtube.clone()
     }
@@ -629,6 +677,84 @@ impl Session {
                 query,
                 result,
             });
+        });
+    }
+
+    // --- account ------------------------------------------------------------------
+
+    /// The configured OAuth client ID, if any.
+    pub fn client_id(&self) -> Option<&str> {
+        self.deps
+            .oauth_client
+            .as_ref()
+            .map(|c| c.client_id.as_str())
+    }
+
+    /// Saves an OAuth client (Desktop app type) into `config.toml`.
+    pub fn set_client(&mut self, id: &str, secret: &str) -> bool {
+        let saved = Settings::store_client(&self.deps.config_file, id, secret, false)
+            .and_then(|()| Settings::load(&self.deps.config_file));
+        match saved {
+            Ok(settings) => {
+                self.deps.oauth_client = account::oauth_client(&settings);
+                self.set_info(if self.logged_in {
+                    "OAuth client saved"
+                } else {
+                    "OAuth client saved — now sign in"
+                });
+                true
+            }
+            Err(err) => {
+                self.set_error(format!("{err:#}"));
+                false
+            }
+        }
+    }
+
+    /// Reads Google's downloaded client JSON and saves it.
+    pub fn import_client(&mut self, path: &Path) -> bool {
+        match account::read_client_json(path) {
+            Ok((id, secret)) => self.set_client(&id, &secret),
+            Err(err) => {
+                self.set_error(format!("{err:#}"));
+                false
+            }
+        }
+    }
+
+    /// Opens Google's consent page in the browser and waits (in the
+    /// background) for the redirect; then syncs.
+    pub fn sign_in(&mut self) {
+        let Some(client) = self.deps.oauth_client.clone() else {
+            self.set_error(
+                "No OAuth client yet: add it under “Sign in” in the window (`ytm gui`) or run `ytm import-client <json>`",
+            );
+            return;
+        };
+        self.login_generation += 1;
+        self.signing_in = true;
+        self.set_info("Finish signing in in your browser…");
+        let (tx, generation) = (self.tx.clone(), self.login_generation);
+        tokio::spawn(async move {
+            let result = async {
+                let token =
+                    auth::login(&client, |url| tracing::info!(%url, "sign-in page")).await?;
+                token_store::save(&token).await
+            }
+            .await;
+            let _ = tx.send(Background::SignedIn { generation, result });
+        });
+    }
+
+    /// Forgets the stored token; the library stays for offline use.
+    pub fn sign_out(&mut self) {
+        self.login_generation += 1;
+        self.signing_in = false;
+        self.deps.youtube = None;
+        self.logged_in = false;
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let _ = tx.send(Background::SignedOut(token_store::clear().await));
         });
     }
 

@@ -67,6 +67,9 @@ slint::slint! {
             : name == "expand" ? "M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"
             : name == "collapse" ? "M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"
             : name == "dropdown" ? "M7 10l5 5 5-5z"
+            : name == "account" ? "M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
+            : name == "close" ? "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
+            : name == "open" ? "M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"
             : name == "busy" ? "M6 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"
             : "";
     }
@@ -366,6 +369,34 @@ slint::slint! {
         }
     }
 
+    // Single-line text field (account dialog).
+    component Field inherits Rectangle {
+        in-out property <string> text;
+        in property <string> placeholder;
+        in property <bool> password;
+        height: 40px;
+        border-radius: Yt.radius;
+        background: Yt.raised;
+        border-width: 1px;
+        border-color: input.has-focus ? #ffffff66 : transparent;
+        if root.text == "": Text {
+            x: 12px;
+            text: root.placeholder;
+            color: Yt.secondary;
+            vertical-alignment: center;
+            height: parent.height;
+        }
+        input := TextInput {
+            x: 12px;
+            width: parent.width - 24px;
+            text <=> root.text;
+            color: Yt.text;
+            vertical-alignment: center;
+            single-line: true;
+            input-type: root.password ? InputType.password : InputType.text;
+        }
+    }
+
     // Playlist entry: title over song count.
     component PlaylistItem inherits Rectangle {
         in property <PlaylistRow> playlist;
@@ -430,6 +461,13 @@ slint::slint! {
         in property <bool> showing-results;
         // Bumped to empty the search field.
         in property <int> clear-search;
+        // Google account dialog.
+        in-out property <bool> account-open;
+        in property <bool> signed-in;
+        in property <bool> signing-in;
+        in property <string> client-id;
+        // Name of a client_secret_*.json found in Downloads ("" = none).
+        in property <string> download-file;
         // Sidebar width set by dragging its edge (0 = automatic).
         in-out property <length> sidebar-width: 0px;
         in property <string> memory-text;
@@ -477,10 +515,17 @@ slint::slint! {
         callback show-results();
         callback like-row(int);
         callback sidebar-resized(length);
+        callback account-opened();
+        callback save-client(string, string);
+        callback import-downloaded();
+        callback sign-in();
+        callback sign-out();
+        callback open-console();
 
         forward-focus: keys;
         keys := FocusScope {
             key-pressed(event) => {
+                if (event.text == Key.Escape && root.account-open) { root.account-open = false; return accept; }
                 if (event.text == Key.Escape && root.expanded) { root.expanded = false; return accept; }
                 if (event.text == " ") { root.toggle-pause(); return accept; }
                 if (event.text == "n") { root.next(); return accept; }
@@ -528,6 +573,18 @@ slint::slint! {
                                         selected: i == root.selected-playlist;
                                         clicked => { root.select-playlist(i); keys.focus(); }
                                     }
+                                }
+                                Rectangle {
+                                    height: 40px;
+                                    border-radius: Yt.radius;
+                                    background: account-touch.has-hover ? Yt.hover : transparent;
+                                    HorizontalLayout {
+                                        padding-left: 12px;
+                                        spacing: 10px;
+                                        Icon { name: "account"; color: root.signed-in ? Yt.secondary : Yt.red; width: 20px; height: 20px; y: (parent.height - self.height) / 2; }
+                                        Text { text: root.signed-in ? "Account" : "Sign in"; color: root.signed-in ? Yt.secondary : Yt.text; font-weight: root.signed-in ? 400 : 600; vertical-alignment: center; }
+                                    }
+                                    account-touch := TouchArea { clicked => { root.account-opened(); root.account-open = true; } }
                                 }
                                 Rectangle {
                                     height: 40px;
@@ -633,6 +690,12 @@ slint::slint! {
                                 }
                             }
                             Rectangle { horizontal-stretch: 0.0001; }
+                            if root.narrow: IconButton {
+                                icon: "account";
+                                tint: root.signed-in ? Yt.secondary : Yt.red;
+                                y: (parent.height - self.height) / 2;
+                                clicked => { root.account-opened(); root.account-open = true; }
+                            }
                             }
                             // Playlist header
                             HorizontalLayout {
@@ -823,6 +886,102 @@ slint::slint! {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // --- Google account dialog (overlay, so text fields keep focus) ---
+        if root.account-open: Rectangle {
+            background: #000000b3;
+            TouchArea { } // swallow clicks behind the card
+            Rectangle {
+                width: min(480px, root.win-width - 24px);
+                height: min(card.preferred-height, root.win-height - 24px);
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                background: #282828;
+                border-radius: 12px;
+                drop-shadow-blur: 24px;
+                drop-shadow-color: #000000aa;
+                clip: true;
+                // Scrolls when the window is shorter than the card.
+                Flickable {
+                viewport-height: card.preferred-height;
+                card := VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+                    HorizontalLayout {
+                        Text { text: "Google account"; color: Yt.text; font-size: 20px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
+                        IconButton { icon: "close"; clicked => { root.account-open = false; keys.focus(); } }
+                    }
+                    if root.signed-in: VerticalLayout {
+                        spacing: 12px;
+                        Text { text: "✓ Signed in. Your library syncs from YouTube; likes and playlist changes go back to it."; color: Yt.text; wrap: word-wrap; }
+                        Text { text: "OAuth client: " + root.client-id; color: Yt.secondary; font-size: 12px; overflow: elide; }
+                        HorizontalLayout {
+                            alignment: start;
+                            Pill { text: "Sign out"; icon: "account"; clicked => { root.sign-out(); } }
+                        }
+                    }
+                    if !root.signed-in: VerticalLayout {
+                        spacing: 10px;
+                        Text { text: "1. Your Google OAuth client"; color: Yt.text; font-weight: 600; }
+                        Text {
+                            text: "In Google Cloud: enable YouTube Data API v3, add your account as a test user, create a client of type “Desktop app” and download its JSON (README: “Set up Google sign-in”).";
+                            color: Yt.secondary;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 8px;
+                            Pill { text: "Open Google Cloud"; icon: "open"; clicked => { root.open-console(); } }
+                            if root.download-file != "": Pill {
+                                text: "Import downloaded JSON";
+                                icon: "playlist-add";
+                                filled: true;
+                                clicked => { root.import-downloaded(); }
+                            }
+                        }
+                        Text { text: "…or paste it:"; color: Yt.secondary; font-size: 12px; }
+                        id-field := Field { placeholder: "Client ID (…apps.googleusercontent.com)"; text: root.client-id; }
+                        secret-field := Field { placeholder: "Client secret (GOCSPX-…)"; password: true; }
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 12px;
+                            Pill {
+                                text: "Save client";
+                                icon: "sync";
+                                clicked => { root.save-client(id-field.text, secret-field.text); }
+                            }
+                            if root.client-id != "": Text { text: "✓ client set"; color: Yt.secondary; vertical-alignment: center; }
+                        }
+                        Rectangle { height: 1px; background: Yt.divider; }
+                        Text { text: "2. Sign in"; color: Yt.text; font-weight: 600; }
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 12px;
+                            Pill {
+                                text: root.signing-in ? "Open the browser again" : "Sign in with Google";
+                                icon: "account";
+                                filled: root.client-id != "";
+                                clicked => { root.sign-in(); }
+                            }
+                            if root.signing-in: Text { text: "Waiting for your browser…"; color: Yt.secondary; vertical-alignment: center; }
+                        }
+                        Text {
+                            text: "Google warns the app is unverified: it's your own client, choose Continue.";
+                            color: Yt.secondary;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+                    if root.status-text != "": Text {
+                        text: root.status-text;
+                        color: root.status-error ? #ff6b6b : Yt.secondary;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
                 }
             }
         }

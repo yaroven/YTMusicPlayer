@@ -190,6 +190,15 @@ main services the CFRunLoop for media keys).
   +1 unit for durations) only on Enter / `o`, never as-you-type; falls back
   to yt-dlp `ytsearch25:` with `--flat-playlist` (~2 s, no quota) when not
   signed in or the API fails. Shares the one-yt-dlp permit.
+- **In-app account setup** (`account` module, shared by CLI and GUI): the
+  GUI's "Google account" overlay saves the OAuth client into config.toml
+  (`Settings::store_client`), imports the newest Downloads
+  `client_secret_*.json`, and runs the loopback login on the core thread
+  (`Session::sign_in`; `auth::login` takes a URL callback so the TUI's
+  screen isn't printed over). Opens by itself when not signed in. An
+  overlay, not a PopupWindow, so text fields keep focus. Testing with a
+  sandbox HOME: fake client JSON is fine; never click Sign in (opens the
+  real browser) and remember the token lives in the real Keychain.
 - **Per-row liked state** is an indexed SQLite lookup per rendered row, not
   an in-memory id set.
 - **GUI toolkit: Slint (software renderer)** — measured idle footprint with

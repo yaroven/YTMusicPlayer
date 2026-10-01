@@ -32,6 +32,8 @@ const DEVICE_URL: &str = "https://oauth2.googleapis.com/device/code";
 /// working for reading; writes then ask the user to log in again.
 const SCOPE: &str = "https://www.googleapis.com/auth/youtube";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
+/// How to fix an expired or missing sign-in, in error messages.
+pub const SIGN_IN_AGAIN: &str = "sign in again (“Sign in” in the window, or `ytm login`)";
 
 #[derive(Debug, Clone)]
 pub struct OAuthClient {
@@ -59,8 +61,10 @@ macro_rules! basic_client {
     }};
 }
 
-/// Interactive login. Prints the URL and tries to open the browser.
-pub async fn login(cfg: &OAuthClient) -> Result<StoredToken> {
+/// Interactive login: opens the consent page in the browser (`show_url`
+/// gets it too, for printing in case no browser opens) and waits for the
+/// redirect to a loopback port.
+pub async fn login(cfg: &OAuthClient, show_url: impl FnOnce(&str)) -> Result<StoredToken> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let redirect = format!("http://127.0.0.1:{}", listener.local_addr()?.port());
     let client = basic_client!(cfg).set_redirect_uri(RedirectUrl::new(redirect)?);
@@ -75,7 +79,7 @@ pub async fn login(cfg: &OAuthClient) -> Result<StoredToken> {
         .add_extra_param("prompt", "consent")
         .url();
 
-    println!("Open this URL to sign in (trying to open your browser):\n\n{url}\n");
+    show_url(url.as_str());
     let _ = open::that_detached(url.as_str());
 
     let code = tokio::time::timeout(LOGIN_TIMEOUT, receive_code(&listener, csrf.secret()))
@@ -218,7 +222,7 @@ impl Auth {
             *guard = token_store::load().await?;
         }
         let Some(token) = guard.as_mut() else {
-            bail!("not logged in — run `ytm login`");
+            bail!("not signed in — {SIGN_IN_AGAIN}");
         };
         if token.is_expired(60) {
             *token = self.refresh(token).await?;
@@ -231,7 +235,7 @@ impl Auth {
         let refresh = old
             .refresh_token
             .clone()
-            .context("session expired — run `ytm login`")?;
+            .with_context(|| format!("session expired — {SIGN_IN_AGAIN}"))?;
         let cfg = match (old.device, &self.device_cfg) {
             (true, Some(device)) => device,
             (true, None) => bail!("signed in with --device but device_client_id is not configured"),
@@ -249,7 +253,7 @@ impl Auth {
                 if *r.error() == BasicErrorResponseType::InvalidGrant =>
             {
                 bail!(
-                    "sign-in expired — run `ytm login` (apps in Google's \"Testing\" mode expire logins after 7 days)"
+                    "sign-in expired — {SIGN_IN_AGAIN} (apps in Google's \"Testing\" mode expire logins after 7 days)"
                 )
             }
             Err(err) => Err(anyhow!(err)).context("refreshing access token"),

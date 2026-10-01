@@ -301,6 +301,7 @@ impl App {
                 }
             }
             Action::AddToPlaylist => self.open_add_to(),
+            Action::SignIn => self.session.sign_in(),
         }
     }
 

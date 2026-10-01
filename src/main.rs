@@ -8,12 +8,8 @@ use std::{
 use anyhow::{Context, Result, bail};
 use tracing_subscriber::EnvFilter;
 use ytm_player::{
-    api::{
-        auth::{Auth, OAuthClient},
-        client::YouTubeClient,
-        models::video_id_from_input,
-        token_store,
-    },
+    account,
+    api::{auth::OAuthClient, models::video_id_from_input, token_store},
     app::{self, Deps},
     audio::{
         extractor::YtDlp,
@@ -239,46 +235,16 @@ fn http_client() -> Result<reqwest::Client> {
         .build()?)
 }
 
-fn client_config(id: &str, secret: &str) -> OAuthClient {
-    let secret = secret.trim();
-    OAuthClient {
-        client_id: id.trim().to_owned(),
-        client_secret: (!secret.is_empty()).then(|| secret.to_owned()),
-    }
-}
-
+/// The browser-login client, or an error explaining how to set one up.
 fn oauth_client(settings: &Settings, paths: &AppPaths) -> Result<OAuthClient> {
-    if !settings.has_oauth_client() {
-        bail!(
+    account::oauth_client(settings).with_context(|| {
+        format!(
             "no Google OAuth client configured.\n\
-             Run `ytm import-client <downloaded.json>`, or set client_id and \
-             client_secret in {} (see README).",
+             Run `ytm import-client <downloaded.json>`, set it in the window \
+             (`ytm gui` → Sign in), or set client_id and client_secret in {} (see README).",
             paths.config_file().display()
-        );
-    }
-    Ok(client_config(&settings.client_id, &settings.client_secret))
-}
-
-fn device_client(settings: &Settings) -> Option<OAuthClient> {
-    settings
-        .has_device_client()
-        .then(|| client_config(&settings.device_client_id, &settings.device_client_secret))
-}
-
-/// `Some` when an OAuth client is configured and a token is stored.
-async fn youtube_client(
-    settings: &Settings,
-    paths: &AppPaths,
-    http: &reqwest::Client,
-) -> Result<Option<Arc<YouTubeClient>>> {
-    if !settings.has_oauth_client() || token_store::load().await?.is_none() {
-        return Ok(None);
-    }
-    let auth = Arc::new(Auth::new(
-        oauth_client(settings, paths)?,
-        device_client(settings),
-    ));
-    Ok(Some(Arc::new(YouTubeClient::new(http.clone(), auth))))
+        )
+    })
 }
 
 async fn resolver(
@@ -316,7 +282,7 @@ async fn resolver(
 async fn player_deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
     let http = http_client()?;
     let library = Arc::new(Library::open(&paths.database())?);
-    let youtube = youtube_client(settings, paths, &http).await?;
+    let youtube = account::youtube_client(settings, &http).await?;
     let resolver = resolver(paths, settings, &http, false, Some(library.clone())).await?;
     resolver.spawn_maintenance();
     Ok(Deps {
@@ -328,6 +294,9 @@ async fn player_deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
         volume: settings.volume,
         media_controls: settings.media_controls,
         audio_device: settings.audio_device(),
+        config_file: paths.config_file(),
+        oauth_client: account::oauth_client(settings),
+        device_client: account::device_client(settings),
     })
 }
 
@@ -350,7 +319,7 @@ fn run_gui(_paths: &AppPaths, _settings: &Settings) -> Result<()> {
 
 async fn login(paths: &AppPaths, settings: &Settings, device: bool) -> Result<()> {
     let token = if device {
-        let cfg = device_client(settings).with_context(|| {
+        let cfg = account::device_client(settings).with_context(|| {
             format!(
                 "--device needs a \"TVs and Limited Input devices\" OAuth client: set \
                  device_client_id/device_client_secret in {} or run \
@@ -360,7 +329,10 @@ async fn login(paths: &AppPaths, settings: &Settings, device: bool) -> Result<()
         })?;
         ytm_player::api::auth::login_device(&cfg).await?
     } else {
-        ytm_player::api::auth::login(&oauth_client(settings, paths)?).await?
+        ytm_player::api::auth::login(&oauth_client(settings, paths)?, |url| {
+            println!("Open this URL to sign in (trying to open your browser):\n\n{url}\n")
+        })
+        .await?
     };
     if token.refresh_token.is_none() {
         eprintln!("warning: Google returned no refresh token; you may need to log in again soon");
@@ -372,18 +344,8 @@ async fn login(paths: &AppPaths, settings: &Settings, device: bool) -> Result<()
 
 /// Reads Google's "Download JSON" file (`{"installed": {...}}`) into config.
 fn import_client(paths: &AppPaths, file: &str, device: bool) -> Result<()> {
-    let text =
-        std::fs::read_to_string(Path::new(file)).with_context(|| format!("reading {file}"))?;
-    let json: serde_json::Value = serde_json::from_str(&text).context("not a JSON file")?;
-    let client = ["installed", "web"]
-        .iter()
-        .find_map(|k| json.get(*k))
-        .unwrap_or(&json);
-    let id = client["client_id"]
-        .as_str()
-        .context("no client_id in the file — is this Google's OAuth client JSON?")?;
-    let secret = client["client_secret"].as_str().unwrap_or("");
-    Settings::store_client(&paths.config_file(), id, secret, device)?;
+    let (id, secret) = account::read_client_json(Path::new(file))?;
+    Settings::store_client(&paths.config_file(), &id, &secret, device)?;
     let kind = if device { "device client" } else { "client" };
     println!(
         "Imported {kind} {id} into {}",
@@ -438,7 +400,7 @@ async fn status(paths: &AppPaths, settings: &Settings) -> Result<()> {
 
 async fn sync(paths: &AppPaths, settings: &Settings) -> Result<()> {
     let http = http_client()?;
-    let youtube = youtube_client(settings, paths, &http)
+    let youtube = account::youtube_client(settings, &http)
         .await?
         .context("not logged in — run `ytm login`")?;
     let library = Arc::new(Library::open(&paths.database())?);

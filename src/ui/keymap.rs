@@ -30,6 +30,7 @@ pub enum Action {
     PlayNext,
     Like,
     AddToPlaylist,
+    SignIn,
 }
 
 /// `(keys, description)` rows for the help popup.
@@ -50,6 +51,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("f", "like / unlike"),
     ("a", "add to playlist"),
     ("r", "sync library from YouTube"),
+    ("L", "sign in with Google (browser)"),
     ("?", "this help"),
     ("q  Ctrl-C", "quit"),
 ];
@@ -87,6 +89,7 @@ pub fn action_for(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('u') => Action::PlayNext,
         KeyCode::Char('f') => Action::Like,
         KeyCode::Char('a') => Action::AddToPlaylist,
+        KeyCode::Char('L') => Action::SignIn,
         _ => return None,
     })
 }

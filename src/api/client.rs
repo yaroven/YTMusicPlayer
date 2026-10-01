@@ -392,7 +392,10 @@ async fn check(response: reqwest::Response, endpoint: &str) -> Result<reqwest::R
     }
     let body = response.text().await.unwrap_or_default();
     if body.contains("insufficientPermissions") || body.contains("SCOPE_INSUFFICIENT") {
-        bail!("no permission to change your library — run `ytm login` again to allow it");
+        bail!(
+            "no permission to change your library — {} to allow it",
+            super::auth::SIGN_IN_AGAIN
+        );
     }
     bail!(
         "YouTube API {endpoint}: {status}: {}",

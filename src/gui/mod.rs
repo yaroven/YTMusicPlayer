@@ -32,6 +32,7 @@ use tokio::sync::{
 };
 
 use crate::{
+    account,
     api::models::{LIKED_PLAYLIST_ID, Playlist, Track},
     app::filter_indices,
     audio::{player::PlayState, queue::Repeat},
@@ -66,6 +67,10 @@ enum Cmd {
     AddTo(Playlist, Track),
     Sync,
     Search(String),
+    SaveClient(String, String),
+    ImportClient(std::path::PathBuf),
+    SignIn,
+    SignOut,
     FetchArt(Arc<str>, ArtSize),
     /// Save state (selected playlist id) and stop.
     Quit(Option<String>),
@@ -84,6 +89,9 @@ struct Snapshot {
     status: Option<(String, bool)>,
     syncing: bool,
     searching: bool,
+    signed_in: bool,
+    signing_in: bool,
+    client_id: String,
     memory: String,
     changes: Changes,
     /// The latest search, when `changes.search`.
@@ -110,6 +118,9 @@ impl Snapshot {
                 .map(|s| (s.text.clone(), s.is_error)),
             syncing: session.syncing,
             searching: session.searching,
+            signed_in: session.logged_in,
+            signing_in: session.signing_in,
+            client_id: session.client_id().unwrap_or_default().to_owned(),
             memory: session.memory.clone(),
             search: session
                 .search
@@ -449,6 +460,13 @@ impl View {
     }
 }
 
+/// File name of a downloaded OAuth client JSON, for the import button.
+fn downloaded_client_name() -> String {
+    account::downloaded_client_json()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_default()
+}
+
 /// The open window, for [`raise`] (called from the single-instance thread).
 static WINDOW: Mutex<Option<slint::Weak<MainWindow>>> = Mutex::new(None);
 
@@ -513,6 +531,11 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps) -> Result<()> {
     let library_empty = view.borrow().playlists.is_empty();
 
     wire_callbacks(&ui, &view, &cmd_tx);
+    // First start: nothing works without an account, so ask right away.
+    if deps.youtube.is_none() {
+        ui.set_download_file(downloaded_client_name().into());
+        ui.set_account_open(true);
+    }
 
     // Core thread: session + background work. Pushes snapshots to the UI.
     let weak = ui.as_weak();
@@ -656,6 +679,22 @@ fn wire_callbacks(ui: &MainWindow, view: &Rc<RefCell<View>>, cmd_tx: &UnboundedS
             tracing::warn!(%err, "saving sidebar width");
         }
     });
+    on!(on_account_opened, [tx, view, ui], || ui
+        .set_download_file(downloaded_client_name().into()));
+    on!(on_save_client, [tx, view, ui], |id, secret| send(
+        Cmd::SaveClient(id.trim().to_owned(), secret.trim().to_owned()),
+        tx
+    ));
+    on!(on_import_downloaded, [tx, view, ui], || {
+        if let Some(path) = account::downloaded_client_json() {
+            send(Cmd::ImportClient(path), tx);
+        }
+    });
+    on!(on_sign_in, [tx, view, ui], || send(Cmd::SignIn, tx));
+    on!(on_sign_out, [tx, view, ui], || send(Cmd::SignOut, tx));
+    on!(on_open_console, [tx, view, ui], || {
+        let _ = open::that_detached(account::CONSOLE_URL);
+    });
     on!(on_add_to, [tx, view, ui], |index| {
         let v = view.borrow();
         let playlist = usize::try_from(index)
@@ -789,6 +828,14 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::AddTo(playlist, track) => session.add_to_playlist(playlist, track),
         Cmd::Sync => session.start_sync(),
         Cmd::Search(query) => session.search(&query),
+        Cmd::SaveClient(id, secret) => {
+            session.set_client(&id, &secret);
+        }
+        Cmd::ImportClient(path) => {
+            session.import_client(&path);
+        }
+        Cmd::SignIn => session.sign_in(),
+        Cmd::SignOut => session.sign_out(),
         Cmd::FetchArt(..) | Cmd::Quit(_) => {}
     }
 }
@@ -807,6 +854,12 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
         });
         ui.set_syncing(snap.syncing);
         ui.set_searching(snap.searching);
+        ui.set_signed_in(snap.signed_in);
+        ui.set_signing_in(snap.signing_in);
+        ui.set_client_id(snap.client_id.as_str().into());
+        if snap.changes.account && snap.signed_in {
+            ui.set_account_open(false);
+        }
         ui.set_memory_text(snap.memory.as_str().into());
         let (text, error) = snap.status.unwrap_or_default();
         ui.set_status_text(text.into());
