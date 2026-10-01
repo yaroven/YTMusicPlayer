@@ -906,7 +906,7 @@ slint::slint! {
                 clip: true;
                 // Scrolls when the window is shorter than the card.
                 Flickable {
-                viewport-height: card.preferred-height;
+                content-height: card.preferred-height;
                 card := VerticalLayout {
                     padding: 20px;
                     spacing: 12px;
