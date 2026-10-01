@@ -199,6 +199,12 @@ main services the CFRunLoop for media keys).
   overlay, not a PopupWindow, so text fields keep focus. Testing with a
   sandbox HOME: fake client JSON is fine; never click Sign in (opens the
   real browser) and remember the token lives in the real Keychain.
+- **Mid-track 403 → new URL** (`stream::Refresh`): a Linux user's log
+  (2026-10-01) showed googlevideo 403 on chunk 4 (past 1 MiB) while chunks
+  0–3 worked; not reproducible from this Mac (different client/IP). The
+  downloader now asks the resolver for a fresh URL (drops the cached one,
+  switches to JS under OnDemand), checks the same file length and
+  continues at the same offset; 2 refreshes per track.
 - **Per-row liked state** is an indexed SQLite lookup per rendered row, not
   an in-memory id set.
 - **GUI toolkit: Slint (software renderer)** — measured idle footprint with

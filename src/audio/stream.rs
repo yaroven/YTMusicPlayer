@@ -5,6 +5,11 @@
 //! the reader. At most [`MAX_CHUNKS`] are kept (~2 MiB), so memory doesn't
 //! grow with track length. Seeking to a chunk that isn't cached fetches it on
 //! demand; the reader blocks until it arrives.
+//!
+//! Media URLs can stop working mid-track: YouTube answers 403 past the
+//! first ~1 MB for some clients/regions, and URLs expire. On 403/410 the
+//! downloader asks [`Refresh`] for a new URL (the resolver re-resolves,
+//! switching to JS-assisted resolution) and carries on at the same offset.
 
 use std::{
     collections::HashMap,
@@ -13,6 +18,7 @@ use std::{
     time::Duration,
 };
 
+use futures_util::future::BoxFuture;
 use reqwest::{
     StatusCode,
     header::{CONTENT_RANGE, HeaderMap, HeaderName, HeaderValue, RANGE},
@@ -28,6 +34,11 @@ const AHEAD: u64 = 4;
 /// Hard cap on cached chunks (2 MiB).
 const MAX_CHUNKS: usize = 8;
 const RETRIES: u32 = 3;
+/// New URLs fetched per track after 403/410 before giving up.
+const REFRESHES: u32 = 2;
+
+/// Produces a fresh media URL for the same track (`None`: can't).
+pub type Refresh = Box<dyn Fn() -> BoxFuture<'static, Option<AudioStream>> + Send + Sync>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StreamError {
@@ -80,18 +91,12 @@ pub struct HttpStream {
 impl HttpStream {
     /// Fetches the first chunk (so HTTP errors surface here, not mid-playback)
     /// and starts the background downloader.
-    pub async fn open(http: &reqwest::Client, stream: &AudioStream) -> Result<Self, StreamError> {
-        let headers: HeaderMap = stream
-            .http_headers
-            .iter()
-            .filter_map(|(k, v)| {
-                Some((
-                    HeaderName::from_bytes(k.as_bytes()).ok()?,
-                    HeaderValue::from_str(v).ok()?,
-                ))
-            })
-            .collect();
-
+    pub async fn open(
+        http: &reqwest::Client,
+        stream: &AudioStream,
+        refresh: Option<Refresh>,
+    ) -> Result<Self, StreamError> {
+        let headers = header_map(stream);
         let (first, total) = fetch_chunk(http, &stream.url, &headers, 0, None).await?;
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
@@ -109,8 +114,11 @@ impl HttpStream {
         if shared.chunk_count > 1 {
             tokio::spawn(downloader(
                 http.clone(),
-                stream.url.clone(),
-                headers,
+                Source {
+                    url: stream.url.clone(),
+                    headers,
+                },
+                refresh,
                 shared.clone(),
             ));
         }
@@ -124,6 +132,25 @@ impl HttpStream {
     pub fn is_empty(&self) -> bool {
         self.shared.total == 0
     }
+}
+
+fn header_map(stream: &AudioStream) -> HeaderMap {
+    stream
+        .http_headers
+        .iter()
+        .filter_map(|(k, v)| {
+            Some((
+                HeaderName::from_bytes(k.as_bytes()).ok()?,
+                HeaderValue::from_str(v).ok()?,
+            ))
+        })
+        .collect()
+}
+
+/// Where chunks come from; replaced when the URL stops working.
+struct Source {
+    url: String,
+    headers: HeaderMap,
 }
 
 /// Fetches chunk `index`; returns its bytes and the total file size.
@@ -186,7 +213,13 @@ fn evict(state: &mut State) {
     }
 }
 
-async fn downloader(http: reqwest::Client, url: String, headers: HeaderMap, shared: Arc<Shared>) {
+async fn downloader(
+    http: reqwest::Client,
+    mut source: Source,
+    refresh: Option<Refresh>,
+    shared: Arc<Shared>,
+) {
+    let mut refreshes = 0;
     loop {
         // Register interest before checking state, so a reader move between
         // the check and the await isn't missed.
@@ -205,9 +238,26 @@ async fn downloader(http: reqwest::Client, url: String, headers: HeaderMap, shar
 
         let mut attempt = 0;
         let result = loop {
-            match fetch_chunk(&http, &url, &headers, index, Some(shared.total)).await {
+            match fetch_chunk(
+                &http,
+                &source.url,
+                &source.headers,
+                index,
+                Some(shared.total),
+            )
+            .await
+            {
                 Ok((bytes, _)) if !bytes.is_empty() => break Ok(bytes),
                 Ok(_) => break Err("empty chunk".to_owned()),
+                // Retrying the same URL won't help: get a new one.
+                Err(err) if err.is_forbidden() && refreshes < REFRESHES => {
+                    refreshes += 1;
+                    tracing::info!(%err, index, refreshes, "media URL rejected mid-track, re-resolving");
+                    match new_source(refresh.as_ref(), &http, shared.total).await {
+                        Some(fresh) => source = fresh,
+                        None => break Err(err.to_string()),
+                    }
+                }
                 Err(err) if attempt < RETRIES => {
                     attempt += 1;
                     tracing::debug!(%err, attempt, index, "chunk failed, retrying");
@@ -236,6 +286,31 @@ async fn downloader(http: reqwest::Client, url: String, headers: HeaderMap, shar
         shared.arrived.notify_all();
         if failed {
             return;
+        }
+    }
+}
+
+/// A new URL for the same file (same length), or `None`.
+async fn new_source(
+    refresh: Option<&Refresh>,
+    http: &reqwest::Client,
+    total: u64,
+) -> Option<Source> {
+    let stream = refresh?().await?;
+    let source = Source {
+        url: stream.url.clone(),
+        headers: header_map(&stream),
+    };
+    // A different format would have different bytes at the same offsets.
+    match fetch_chunk(http, &source.url, &source.headers, 0, None).await {
+        Ok((_, len)) if len == total => Some(source),
+        Ok((_, len)) => {
+            tracing::warn!(len, total, "re-resolved URL is a different file");
+            None
+        }
+        Err(err) => {
+            tracing::warn!(%err, "re-resolved URL fails too");
+            None
         }
     }
 }
@@ -302,6 +377,103 @@ impl Drop for HttpStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serves `body` at `/ok` and `/limited`; `/limited` answers 403 past
+    /// 1 MiB, like googlevideo does for some URLs.
+    async fn media_server(body: Arc<Vec<u8>>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0; 4096];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
+                    let range = req
+                        .lines()
+                        .find_map(|l| l.strip_prefix("range: bytes="))
+                        .and_then(|r| r.trim().split_once('-'))
+                        .map(|(a, b)| (a.parse::<usize>().unwrap(), b.parse::<usize>().unwrap()))
+                        .unwrap();
+                    let (start, end) = (range.0, range.1.min(body.len() - 1));
+                    let head = if req.starts_with("get /limited") && start >= 1 << 20 {
+                        "HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                            .to_owned()
+                    } else {
+                        format!(
+                            "HTTP/1.1 206 Partial Content\r\ncontent-range: bytes {start}-{end}/{}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                            body.len(),
+                            end - start + 1
+                        )
+                    };
+                    let _ = socket.write_all(head.as_bytes()).await;
+                    if head.contains("206") {
+                        let _ = socket.write_all(&body[start..=end]).await;
+                    }
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn audio(url: String) -> AudioStream {
+        AudioStream {
+            video_id: "dQw4w9WgXcQ".into(),
+            title: None,
+            url,
+            format_id: None,
+            ext: None,
+            codec: None,
+            bitrate_kbps: None,
+            sample_rate: None,
+            duration: None,
+            content_length: None,
+            http_headers: HashMap::new(),
+            expires_at: None,
+        }
+    }
+
+    async fn read_all(stream: HttpStream) -> io::Result<Vec<u8>> {
+        tokio::task::spawn_blocking(move || {
+            let mut stream = stream;
+            let mut out = Vec::new();
+            stream.read_to_end(&mut out).map(|_| out)
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn switches_url_on_403_mid_track() {
+        let body: Arc<Vec<u8>> = Arc::new((0..1_600_000u32).map(|i| (i % 251) as u8).collect());
+        let base = media_server(body.clone()).await;
+        let http = reqwest::Client::new();
+        let fresh = audio(format!("{base}/ok"));
+        let refresh: Refresh = Box::new(move || {
+            let fresh = fresh.clone();
+            Box::pin(async move { Some(fresh) })
+        });
+        let stream = HttpStream::open(&http, &audio(format!("{base}/limited")), Some(refresh))
+            .await
+            .unwrap();
+        assert_eq!(read_all(stream).await.unwrap(), *body);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fails_on_403_without_refresh() {
+        let body: Arc<Vec<u8>> = Arc::new(vec![7; 1_600_000]);
+        let base = media_server(body).await;
+        let http = reqwest::Client::new();
+        let stream = HttpStream::open(&http, &audio(format!("{base}/limited")), None)
+            .await
+            .unwrap();
+        assert!(read_all(stream).await.is_err());
+    }
 
     fn state(reader: u64, have: &[u64]) -> State {
         State {
