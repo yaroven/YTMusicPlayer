@@ -7,8 +7,10 @@ pub mod audio;
 pub mod config;
 #[cfg(feature = "gui")]
 pub mod gui;
+pub mod instance;
 pub mod media;
 pub mod session;
 pub mod storage;
 pub mod sync;
+pub mod sysmem;
 pub mod ui;

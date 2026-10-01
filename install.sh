@@ -10,6 +10,7 @@ YES=0
 DEPS=1
 LAUNCH=1
 FROM_SOURCE=0
+LAUNCHER_ONLY=0
 
 usage() {
   cat <<'EOF'
@@ -19,6 +20,7 @@ Usage: ./install.sh [options]
   --from-source    build from this checkout instead of downloading a release
   --no-deps        skip system package installation (source builds)
   --no-launch      don't start ytm at the end
+  --launcher-only  only (re)create the app menu entry / ytm-player.app
   -h, --help       show this help
 EOF
 }
@@ -29,6 +31,7 @@ while (($#)); do
     --from-source) FROM_SOURCE=1 ;;
     --no-deps) DEPS=0 ;;
     --no-launch) LAUNCH=0 ;;
+    --launcher-only) LAUNCHER_ONLY=1 ;;
     -h | --help) usage && exit 0 ;;
     *) usage >&2 && exit 2 ;;
   esac
@@ -125,7 +128,10 @@ install_prebuilt() {
 }
 
 BIN=""
-if ((!FROM_SOURCE)); then
+if ((LAUNCHER_ONLY)); then
+  BIN=$(command -v ytm || true)
+  [[ -n $BIN ]] || die "ytm is not installed yet; run ./install.sh first"
+elif ((!FROM_SOURCE)); then
   say "Downloading ytm"
   install_prebuilt || {
     info "no prebuilt release available here; building from source"
@@ -208,6 +214,79 @@ build_from_source() {
 }
 
 [[ -n $BIN ]] || build_from_source
+
+# --- App launcher -----------------------------------------------------------------------
+
+# Info.plist for ytm-player.app; the bundle runs the real binary (one process,
+# its own name and icon in Activity Monitor / Dock).
+write_info_plist() {
+  local version
+  version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+  cat >"$1" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>ytm-player</string>
+  <key>CFBundleDisplayName</key><string>ytm-player</string>
+  <key>CFBundleIdentifier</key><string>dev.ytm-player.app</string>
+  <key>CFBundleExecutable</key><string>ytm-player</string>
+  <key>CFBundleIconFile</key><string>ytm-player</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$version</string>
+  <key>CFBundleVersion</key><string>$version</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+EOF
+}
+
+install_launcher() {
+  if [[ $OS == Darwin ]]; then
+    local app="$HOME/Applications/ytm-player.app"
+    rm -rf "$app"
+    mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+    cp "$BIN" "$app/Contents/MacOS/ytm-player"
+    cp assets/ytm-player.icns "$app/Contents/Resources/"
+    write_info_plist "$app/Contents/Info.plist"
+    # Ad-hoc signature: a stable identity for the bundle (Keychain, Gatekeeper).
+    codesign --force --sign - "$app" >/dev/null 2>&1 || warn "codesign failed; the app may still run"
+    info "app: $app (Launchpad, Spotlight, Dock)"
+  else
+    local share="${XDG_DATA_HOME:-$HOME/.local/share}"
+    mkdir -p "$share/icons/hicolor/256x256/apps" "$share/applications"
+    cp assets/ytm-player.png "$share/icons/hicolor/256x256/apps/ytm-player.png"
+    cat >"$share/applications/ytm-player.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=ytm-player
+GenericName=Music Player
+Comment=Your YouTube Music library
+Exec="$BIN" gui
+Icon=ytm-player
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;youtube;player;
+StartupWMClass=ytm
+EOF
+    update-desktop-database "$share/applications" >/dev/null 2>&1 || true
+    gtk-update-icon-cache -q -t "$share/icons/hicolor" >/dev/null 2>&1 || true
+    info "menu entry: $share/applications/ytm-player.desktop"
+  fi
+}
+
+# Only builds with the window (`gui` feature) get a launcher.
+if "$BIN" --help 2>/dev/null | grep -q 'ytm gui'; then
+  say "App launcher"
+  if ask "Add ytm-player to your applications?" y; then
+    install_launcher
+  fi
+fi
+if ((LAUNCHER_ONLY)); then
+  exit 0
+fi
 
 # --- 3. PATH ---------------------------------------------------------------------------
 

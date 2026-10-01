@@ -82,6 +82,8 @@ main services the CFRunLoop for media keys).
 | `api::{auth, token_store, client, models}` | OAuth PKCE loopback + device flow, tokens in keyring, Data API v3 (list, rate, insert), `Track` with `Arc<str>` fields |
 | `storage` | SQLite: library, playlist ETags, stream URL cache, `meta` (UI state) |
 | `sync` | API -> storage; skips playlists with unchanged ETag |
+| `instance` | single player instance over a Unix socket in the runtime/temp dir (data dir paths exceed SUN_LEN); 2nd launch raises the window and exits |
+| `sysmem` | own + child (yt-dlp) memory for the status bar: macOS `proc_pid_rusage` phys_footprint, Linux `smaps_rollup` Pss |
 | `media` | souvlaki: media keys + Now Playing (macOS, Linux/MPRIS); stub on Windows |
 | `gui` (feature `gui`) | Slint window on the main thread; `Session` on a "core" thread with its own runtime; UI sends `Cmd`s, core pushes `Snapshot`s via `upgrade_in_event_loop`; `TracksModel` builds rows lazily over `Arc<[Track]>` |
 | `config::{paths, settings}` | per-OS dirs; `config.toml` (template on first run, `store_client` rewrites keys in place) |
@@ -127,6 +129,12 @@ main services the CFRunLoop for media keys).
 - GUI testing on macOS: `swift` scripts with `CGWindowListCopyWindowInfo`
   (window id → `screencapture -l`) and `CGEvent` clicks (Accessibility is
   granted here); run with `HOME=<sandbox>`.
+- **One yt-dlp at a time** (`MAX_CONCURRENT = 1`): each is ~90 MB while it
+  runs; prefetch starts only after the current track plays anyway.
+- **Launchers**: `install.sh` makes `~/Applications/ytm-player.app` (real
+  binary copied in, ad-hoc signed, opens the GUI when started from the
+  bundle) and a Linux `.desktop` entry + icon (`assets/`, icon drawn with a
+  Swift CoreGraphics script, `.icns` via `iconutil`).
 - **Windows media keys skipped**: souvlaki needs an HWND.
 - **CI**: Linux only (fmt/clippy/test/shellcheck); no macOS on push (10x
   minutes on private repos). **Releases (user's choice, 2026-10-01): only

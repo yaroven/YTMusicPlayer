@@ -38,6 +38,22 @@ impl AppPaths {
         self.data_dir().join("bin")
     }
 
+    /// Single-instance socket (see `instance`): the per-user runtime dir on
+    /// Linux, else the temp dir (per-user on macOS). Unix socket paths must
+    /// stay under ~100 bytes, so not the (long) data dir.
+    pub fn instance_socket(&self) -> PathBuf {
+        let dir = self
+            .dirs
+            .runtime_dir()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(std::env::temp_dir);
+        #[cfg(unix)]
+        let name = format!("ytm-player-{}.sock", unsafe { libc::getuid() });
+        #[cfg(not(unix))]
+        let name = "ytm-player.sock".to_owned();
+        dir.join(name)
+    }
+
     pub fn log_dir(&self) -> PathBuf {
         self.dirs.cache_dir().join("logs")
     }

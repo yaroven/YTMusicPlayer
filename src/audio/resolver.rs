@@ -27,9 +27,9 @@ use super::{
     js_runtime::JsRuntime,
 };
 
-/// Keeps a few yt-dlp processes (~100 MB each while running) from piling up,
-/// and avoids tripping YouTube's rate limiting.
-const MAX_CONCURRENT: usize = 2;
+/// One yt-dlp process at a time: each takes ~90 MB for a few seconds, and
+/// prefetch only starts once the current track is playing anyway.
+const MAX_CONCURRENT: usize = 1;
 /// A URL this close to expiry is re-resolved rather than handed to the player.
 const FRESH_MARGIN: Duration = Duration::from_secs(30 * 60);
 const UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);

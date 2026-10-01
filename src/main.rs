@@ -22,6 +22,7 @@ use ytm_player::{
         resolver::{JsPolicy, StreamResolver},
     },
     config::{paths::AppPaths, settings::Settings},
+    instance::{self, Acquired, Instance},
     storage::Library,
     sync::sync_library,
 };
@@ -48,18 +49,33 @@ fn main() -> Result<()> {
     let _log_guard = init_logging(&paths);
     let settings = Settings::load(&paths.config_file())?;
 
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = std::env::args()
+        .skip(1)
+        // Old macOS passes a process serial number to apps opened from Finder.
+        .filter(|a| !a.starts_with("-psn_"))
+        .collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
 
     let gui = matches!(args.as_slice(), ["gui"])
-        || (args.is_empty() && settings.ui.eq_ignore_ascii_case("gui"));
+        || (args.is_empty() && (settings.ui.eq_ignore_ascii_case("gui") || in_app_bundle()));
     if gui {
+        let Some(_instance) = single_instance(&paths, "gui")? else {
+            return Ok(());
+        };
         return run_gui(&paths, &settings);
     }
     let args: Vec<&str> = if args.as_slice() == ["tui"] {
         Vec::new()
     } else {
         args
+    };
+    let _instance = if args.is_empty() {
+        match single_instance(&paths, "tui")? {
+            Some(instance) => Some(instance),
+            None => return Ok(()),
+        }
+    } else {
+        None
     };
 
     // macOS delivers media-key callbacks on the main thread's run loop, so
@@ -72,6 +88,33 @@ fn main() -> Result<()> {
     }
 
     runtime()?.block_on(dispatch(&paths, &settings, &args))
+}
+
+/// Started from `ytm-player.app` (Finder, Dock, Spotlight): open the window.
+fn in_app_bundle() -> bool {
+    std::env::current_exe().is_ok_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/"))
+}
+
+/// Claims the single player instance. `None`: another player is running
+/// (a running window has been raised); the caller should exit.
+fn single_instance(paths: &AppPaths, kind: &'static str) -> Result<Option<Instance>> {
+    let on_show = || {
+        #[cfg(feature = "gui")]
+        ytm_player::gui::raise();
+    };
+    match instance::acquire(&paths.instance_socket(), kind, on_show) {
+        Ok(Acquired::Primary(instance)) => Ok(Some(instance)),
+        Ok(Acquired::Running(other)) if other == "gui" => {
+            eprintln!("ytm-player is already open; brought its window to the front.");
+            Ok(None)
+        }
+        Ok(Acquired::Running(_)) => bail!("ytm-player is already running in another terminal"),
+        // Can't create the socket (read-only dir…): run anyway.
+        Err(err) => {
+            tracing::warn!(%err, "single-instance check unavailable");
+            Ok(Some(Instance::none()))
+        }
+    }
 }
 
 /// Single-threaded runtime: the work is I/O-bound and every extra worker

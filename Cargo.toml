@@ -102,7 +102,13 @@ slint = { version = "1.18", optional = true, default-features = false, features 
     "compat-1-2",
     "backend-winit",
     "renderer-software",
+    # Window access to raise it when a second launch asks for it.
+    "unstable-winit-030",
 ] }
+
+# Process memory (macOS `proc_pid_rusage`) and the single-instance socket.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # Media keys + "Now Playing" (MPRIS over pure-Rust zbus on Linux). Windows
 # needs a window handle, so it's left out there for now.

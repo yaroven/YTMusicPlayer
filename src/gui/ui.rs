@@ -94,6 +94,7 @@ slint::slint! {
         in property <string> status-text;
         in property <bool> status-error;
         in property <bool> syncing;
+        in property <string> memory-text;
 
         callback select-playlist(int);
         callback select-track(int);
@@ -232,6 +233,11 @@ slint::slint! {
                                 overflow: elide;
                                 horizontal-stretch: 1;
                             }
+                            Text {
+                                text: root.memory-text;
+                                color: Theme.muted;
+                            }
+                            Rectangle { width: 16px; }
                             Text {
                                 text: "Made with Slint";
                                 color: Theme.muted;

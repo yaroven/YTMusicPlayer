@@ -84,8 +84,9 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
 
 pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     let hint_text = match app.mode {
-        Mode::Search => " type to filter · Enter keep · Esc clear ",
-        _ => " ? help · q quit ",
+        Mode::Search => " type to filter · Enter keep · Esc clear ".to_owned(),
+        _ if app.session.memory.is_empty() => " ? help · q quit ".to_owned(),
+        _ => format!(" {} · ? help · q quit ", app.session.memory),
     };
     let hint = Span::from(hint_text).dark_gray();
     let [left, right] =

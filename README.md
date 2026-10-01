@@ -49,7 +49,13 @@ source) (the repository is private, so this uses the
 installing build dependencies and Rust as needed. They then import your Google
 OAuth client (see below), sign you in and start the player. Re-run to update.
 
-`install.sh` options: `--yes`, `--from-source`, `--no-deps`, `--no-launch`.
+The installer also adds the player to your applications: a menu entry with
+an icon on Linux, and `~/Applications/ytm-player.app` on macOS (Launchpad,
+Spotlight, Dock; it shows up as "ytm-player" in Activity Monitor). Re-create
+just that with `./install.sh --launcher-only`.
+
+`install.sh` options: `--yes`, `--from-source`, `--no-deps`, `--no-launch`,
+`--launcher-only`.
 `install.ps1` options: `-Yes`, `-FromSource`, `-NoLaunch`.
 
 ### Build manually
@@ -123,6 +129,11 @@ previous/play/next, like, play next, add to playlist, shuffle, repeat,
 volume and a clickable progress bar. Keys: `Space` play/pause, `n`/`p`
 next/previous, `f` like, `/` filter. Set `ui = "gui"` to make it the
 default.
+
+Only one player runs at a time: launching it again brings the open window
+to the front. The status bar shows the player's memory use, plus yt-dlp's
+while it is fetching a track link (it runs as a short-lived child process,
+one at a time).
 
 The window costs more memory than the terminal UI (~55–70 MB on macOS vs
 ~15 MB; most of it is the window's pixel buffers, so it grows with window

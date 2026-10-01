@@ -8,7 +8,12 @@
 
 mod ui;
 
-use std::{cell::RefCell, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::{Context, Result, anyhow};
 use slint::{ComponentHandle, Model, ModelNotify, ModelRc, ModelTracker, SharedString, VecModel};
@@ -53,6 +58,7 @@ struct Snapshot {
     repeat: Repeat,
     status: Option<(String, bool)>,
     syncing: bool,
+    memory: String,
     changes: Changes,
 }
 
@@ -73,6 +79,7 @@ impl Snapshot {
                 .as_ref()
                 .map(|s| (s.text.clone(), s.is_error)),
             syncing: session.syncing,
+            memory: session.memory.clone(),
             changes,
         }
     }
@@ -217,9 +224,27 @@ impl View {
     }
 }
 
+/// The open window, for [`raise`] (called from the single-instance thread).
+static WINDOW: Mutex<Option<slint::Weak<MainWindow>>> = Mutex::new(None);
+
+/// Brings the window to the front (another launch asked for it).
+pub fn raise() {
+    let window = WINDOW.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some(weak) = window {
+        let _ = weak.upgrade_in_event_loop(|ui| {
+            use slint::winit_030::WinitWindowAccessor;
+            let window = ui.window();
+            window.set_minimized(false);
+            let _ = window.show();
+            window.with_winit_window(|w| w.focus_window());
+        });
+    }
+}
+
 /// Runs the GUI until the window closes. `rt` runs the core on its own thread.
 pub fn run(rt: tokio::runtime::Runtime, deps: Deps) -> Result<()> {
     let ui = MainWindow::new().context("cannot open a window (no display?)")?;
+    *WINDOW.lock().unwrap_or_else(|e| e.into_inner()) = Some(ui.as_weak());
     let library = deps.library.clone();
     let (cmd_tx, cmd_rx) = unbounded_channel();
 
@@ -416,6 +441,7 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
             .into(),
         );
         ui.set_syncing(snap.syncing);
+        ui.set_memory_text(snap.memory.as_str().into());
         let (text, error) = snap.status.unwrap_or_default();
         ui.set_status_text(text.into());
         ui.set_status_error(error);

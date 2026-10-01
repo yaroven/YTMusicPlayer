@@ -3,7 +3,10 @@
 //! and media-key handling. Frontends call the action methods and await
 //! [`Session::next_event`] to learn what changed.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -24,12 +27,15 @@ use crate::{
     media::{MediaAction, MediaControls},
     storage::Library,
     sync::{SyncReport, sync_library},
+    sysmem,
 };
 
 pub const SEEK_STEP_SECS: i64 = 5;
 pub const VOLUME_STEP: f32 = 0.05;
 /// Stop auto-skipping after this many tracks in a row fail to load.
 const MAX_CONSECUTIVE_FAILURES: u32 = 3;
+/// How often memory use is re-measured for display.
+const MEMORY_SAMPLE: Duration = Duration::from_secs(2);
 
 pub struct Deps {
     pub library: Arc<Library>,
@@ -86,6 +92,9 @@ pub struct Session {
     pub logged_in: bool,
     pub status: Option<Status>,
     pub player_status: PlayerStatus,
+    /// "RAM 15 MB (+ yt-dlp …)", refreshed every [`MEMORY_SAMPLE`].
+    pub memory: String,
+    memory_at: Option<Instant>,
     generation: u64,
     failures: u32,
     tx: UnboundedSender<Background>,
@@ -130,6 +139,8 @@ impl Session {
             loading: false,
             syncing: false,
             status: None,
+            memory: String::new(),
+            memory_at: None,
             generation: 0,
             failures: 0,
             tx,
@@ -189,14 +200,24 @@ impl Session {
 
     // --- events ---------------------------------------------------------------
 
-    /// Re-reads player status (cheap); true when it changed.
+    /// Re-reads player status (cheap) and, every few seconds, memory use;
+    /// true when anything shown changed.
     pub fn refresh_status(&mut self) -> bool {
         let status = self.player.status();
         if let Some(media) = &mut self.media {
             media.set_state(status.state, status.position, false);
         }
-        let changed = status != self.player_status;
+        let mut changed = status != self.player_status;
         self.player_status = status;
+
+        if self.memory_at.is_none_or(|t| t.elapsed() >= MEMORY_SAMPLE) {
+            self.memory_at = Some(Instant::now());
+            let label = sysmem::sample().label();
+            if label != self.memory {
+                self.memory = label;
+                changed = true;
+            }
+        }
         changed
     }
 
