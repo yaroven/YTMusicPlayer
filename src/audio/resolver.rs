@@ -225,7 +225,9 @@ impl StreamResolver {
         }
 
         // An extractor broken by a YouTube change is fixed by updating yt-dlp.
-        if is_retryable(&result) && self.try_update_once().await {
+        // An outdated managed copy is fixed the same way.
+        let outdated = matches!(result, Err(ExtractorError::Outdated { .. }));
+        if (is_retryable(&result) || outdated) && self.try_update_once().await {
             result = self.attempt(video_id, use_js).await;
         }
         result

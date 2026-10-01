@@ -61,6 +61,11 @@ pub enum ExtractorError {
     Timeout(Duration),
     #[error("video unavailable: {0}")]
     Unavailable(String),
+    /// yt-dlp rejected our flags: it predates them.
+    #[error(
+        "yt-dlp at {path} is too old ({message}); update or uninstall it so ytm can use its own copy"
+    )]
+    Outdated { path: PathBuf, message: String },
     #[error("yt-dlp exited with {status}: {message}")]
     Failed { status: ExitStatus, message: String },
     #[error("failed to parse yt-dlp output: {0}")]
@@ -174,53 +179,43 @@ impl YtDlp {
         managed_dir.join(executable_name())
     }
 
-    /// First existing candidate (`PATH`, then managed) without running it.
-    /// Instant, unlike [`locate`](Self::locate): starting yt-dlp takes seconds,
-    /// so interactive startup shouldn't wait for a probe.
+    /// The app-managed copy, if installed. Instant (no probe): starting
+    /// yt-dlp takes seconds, so interactive startup shouldn't wait for one.
+    ///
+    /// The managed copy is preferred over one on `PATH`: we keep it current
+    /// (`-U` daily), while distro packages lag behind YouTube changes and
+    /// may not know flags we pass (e.g. `--no-js-runtimes`).
     pub fn find(managed_dir: &Path) -> Option<Self> {
-        if let Ok(path) = which::which("yt-dlp") {
-            return Some(Self::new(path, BinarySource::System));
-        }
         let managed = Self::managed_path(managed_dir);
         managed
             .is_file()
             .then(|| Self::new(managed, BinarySource::Managed))
     }
 
-    /// Finds a *working* yt-dlp (one that answers `--version`).
-    pub async fn locate(managed_dir: &Path) -> Option<Self> {
-        let mut candidates = Vec::with_capacity(2);
-        if let Ok(path) = which::which("yt-dlp") {
-            candidates.push(Self::new(path, BinarySource::System));
-        }
-        let managed = Self::managed_path(managed_dir);
-        if managed.is_file() {
-            candidates.push(Self::new(managed, BinarySource::Managed));
-        }
-
-        for candidate in candidates {
-            match candidate.version().await {
-                Ok(version) => {
-                    tracing::info!(path = %candidate.path.display(), %version, "using yt-dlp");
-                    return Some(candidate);
-                }
-                Err(err) => {
-                    tracing::warn!(path = %candidate.path.display(), %err, "yt-dlp candidate unusable");
-                }
-            }
-        }
-        None
+    /// `yt-dlp` on `PATH`, used only when the managed copy can't be installed.
+    pub fn system() -> Option<Self> {
+        which::which("yt-dlp")
+            .ok()
+            .map(|path| Self::new(path, BinarySource::System))
     }
 
-    /// [`locate`](Self::locate), falling back to downloading the managed binary.
+    /// Managed copy if present, else download it; a system yt-dlp is the
+    /// last resort (offline first run, unsupported architecture).
     pub async fn ensure(client: &reqwest::Client, managed_dir: &Path) -> Result<Self> {
-        if let Some(found) = Self::locate(managed_dir).await {
+        if let Some(found) = Self::find(managed_dir) {
             return Ok(found);
         }
-        tracing::info!(dir = %managed_dir.display(), "yt-dlp not found, downloading");
-        let ytdlp = Self::download(client, managed_dir).await?;
-        ytdlp.version().await?;
-        Ok(ytdlp)
+        tracing::info!(dir = %managed_dir.display(), "downloading yt-dlp");
+        match Self::download(client, managed_dir).await {
+            Ok(ytdlp) => Ok(ytdlp),
+            Err(err) => match Self::system() {
+                Some(system) => {
+                    tracing::warn!(%err, path = %system.path.display(), "download failed, using system yt-dlp");
+                    Ok(system)
+                }
+                None => Err(err),
+            },
+        }
     }
 
     /// Downloads the latest official build into `managed_dir`, verifying SHA-256.
@@ -360,10 +355,14 @@ impl YtDlp {
         if output.status.success() {
             return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
         }
-        Err(classify_failure(
-            output.status,
-            &String::from_utf8_lossy(&output.stderr),
-        ))
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if let Some(line) = stderr.lines().find(|l| l.contains("no such option")) {
+            return Err(ExtractorError::Outdated {
+                path: self.path.clone(),
+                message: line.trim().to_owned(),
+            });
+        }
+        Err(classify_failure(output.status, &stderr))
     }
 }
 
@@ -585,6 +584,20 @@ cccc  yt-dlp_linux
             "WARNING: x\nERROR: [youtube] x: Requested format is not available",
         );
         assert!(matches!(other, ExtractorError::Failed { .. }));
+    }
+
+    #[test]
+    fn prefers_managed_copy() {
+        let dir = std::env::temp_dir().join(format!("ytm-find-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            YtDlp::find(&dir).is_none(),
+            "PATH copy is not picked up by find()"
+        );
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(YtDlp::managed_path(&dir), b"").unwrap();
+        assert_eq!(YtDlp::find(&dir).unwrap().source(), BinarySource::Managed);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

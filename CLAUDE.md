@@ -100,6 +100,9 @@ main services the CFRunLoop for media keys).
 - **Measured footprint** (2026-10-01, M1, release, 2000-track library,
   `footprint`): idle ~10 MB, playing 14–16 MB (was 19), peak 20 MB (was 26).
   Media controls cost 0–1 MB. Binary 8.0 MB.
+- **Managed yt-dlp first, PATH copy only as fallback**: a user's Linux
+  distro yt-dlp lacked `--no-js-runtimes` and every track failed (log
+  2026-10-01). Unknown-flag errors map to `ExtractorError::Outdated`.
 - **Startup must not wait on yt-dlp**: `YtDlp::find` (no probe);
   `yt-dlp --version` costs 3–4 s.
 - **Sync never runs on a timer** to save quota.
@@ -116,7 +119,6 @@ main services the CFRunLoop for media keys).
 
 ## Open TODOs
 
-- Linux playback bug the user saw: waiting for their logs.
 - Windows media keys (hidden window + SMTC).
 - `souvlaki` pulls `block 0.1.6` (future-incompat warning on macOS).
 - Test `playlistItems.list?playlistId=LM|LL` for exact YT Music likes.
