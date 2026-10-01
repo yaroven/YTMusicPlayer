@@ -31,6 +31,7 @@ use ui::{MainWindow, PlaylistRow, TrackRow};
 
 enum Cmd {
     Play(Arc<[Track]>, usize),
+    ShufflePlay(Arc<[Track]>),
     TogglePause,
     Next,
     Prev,
@@ -148,6 +149,8 @@ impl Model for TracksModel {
             } else {
                 (index + 1).to_string().into()
             },
+            initial: initial(&t.title),
+            hue: hue(&t.artist),
             title: SharedString::from(&*t.title),
             artist: SharedString::from(&*t.artist),
             time: t
@@ -162,6 +165,24 @@ impl Model for TracksModel {
     fn model_tracker(&self) -> &dyn ModelTracker {
         &self.notify
     }
+}
+
+/// First letter or digit of a title, for the album-art stand-in.
+fn initial(title: &str) -> SharedString {
+    title
+        .chars()
+        .find(|c| c.is_alphanumeric())
+        .map(|c| c.to_uppercase().collect::<String>())
+        .unwrap_or_default()
+        .into()
+}
+
+/// Stable 0..1 hue per artist, so one artist's tiles share a colour.
+fn hue(artist: &str) -> f32 {
+    let h = artist.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    (h % 360) as f32 / 360.0
 }
 
 /// UI-thread state.
@@ -206,6 +227,7 @@ impl View {
         };
         let tracks = self.library.tracks(&p.id).unwrap_or_else(|_| Arc::from([]));
         ui.set_tracks_title(p.title.as_str().into());
+        ui.set_track_count(tracks.len() as i32);
         self.tracks.set(tracks, &self.filter);
     }
 
@@ -316,6 +338,18 @@ fn wire_callbacks(ui: &MainWindow, view: &Rc<RefCell<View>>, cmd_tx: &UnboundedS
             send(Cmd::Play(v.tracks.tracks.borrow().clone(), index), tx);
         }
     });
+    on!(on_play_all, [tx, view, ui], || {
+        let v = view.borrow();
+        if let Some(index) = v.tracks.index(0) {
+            send(Cmd::Play(v.tracks.tracks.borrow().clone(), index), tx);
+        }
+    });
+    on!(on_shuffle_play, [tx, view, ui], || {
+        let tracks = view.borrow().tracks.tracks.borrow().clone();
+        if !tracks.is_empty() {
+            send(Cmd::ShufflePlay(tracks), tx);
+        }
+    });
     on!(on_filter_changed, [tx, view, ui], |text| {
         let mut v = view.borrow_mut();
         v.filter = text.to_string();
@@ -410,6 +444,7 @@ async fn core_loop(
 fn apply(session: &mut Session, cmd: Cmd) {
     match cmd {
         Cmd::Play(tracks, index) => session.play(tracks, index),
+        Cmd::ShufflePlay(tracks) => session.play_shuffled(tracks),
         Cmd::TogglePause => session.toggle_pause(),
         Cmd::Next => session.skip(1),
         Cmd::Prev => session.skip(-1),
@@ -432,14 +467,11 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
         ui.set_playing(snap.state == PlayState::Playing);
         ui.set_volume(snap.volume);
         ui.set_shuffle(snap.shuffle);
-        ui.set_repeat_on(snap.repeat != Repeat::Off);
-        ui.set_repeat_label(
-            match snap.repeat {
-                Repeat::Off | Repeat::All => "Repeat",
-                Repeat::One => "Repeat 1",
-            }
-            .into(),
-        );
+        ui.set_repeat_mode(match snap.repeat {
+            Repeat::Off => 0,
+            Repeat::All => 1,
+            Repeat::One => 2,
+        });
         ui.set_syncing(snap.syncing);
         ui.set_memory_text(snap.memory.as_str().into());
         let (text, error) = snap.status.unwrap_or_default();
@@ -465,9 +497,11 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
             Some(t) => {
                 ui.set_now_title(SharedString::from(&*t.title));
                 ui.set_now_artist(SharedString::from(&*t.artist));
+                ui.set_now_initial(initial(&t.title));
+                ui.set_now_hue(hue(&t.artist));
             }
             None => {
-                ui.set_now_title("Nothing playing".into());
+                ui.set_now_title("".into());
                 ui.set_now_artist("".into());
             }
         }

@@ -357,6 +357,19 @@ impl Session {
         self.play_current();
     }
 
+    /// Turns shuffle on and starts from a random track of `tracks`.
+    pub fn play_shuffled(&mut self, tracks: Arc<[Track]>) {
+        if tracks.is_empty() {
+            return;
+        }
+        self.queue.shuffle = true;
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.subsec_nanos() as usize);
+        let start = seed % tracks.len();
+        self.play(tracks, start);
+    }
+
     pub fn toggle_pause(&mut self) {
         self.player.toggle_pause();
     }

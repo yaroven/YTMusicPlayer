@@ -123,10 +123,12 @@ ytm login [--device] | ytm logout
 
 ### Desktop window
 
-`ytm gui` opens the same player in a window: library on the left, filter
-box and track list (double-click to play), and a player bar with
-previous/play/next, like, play next, add to playlist, shuffle, repeat,
-volume and a clickable progress bar. Keys: `Space` play/pause, `n`/`p`
+`ytm gui` opens the same player in a window styled after YouTube Music:
+library on the left, search box, playlist header with Play / Shuffle,
+track list (double-click to play), and a player bar with a red progress
+line, previous/play/next, the current track with a like button, volume,
+repeat, shuffle, play next and save to playlist. Album art is shown as a
+coloured tile with the title's initial (no image downloads, to save memory). Keys: `Space` play/pause, `n`/`p`
 next/previous, `f` like, `/` filter. Set `ui = "gui"` to make it the
 default.
 
