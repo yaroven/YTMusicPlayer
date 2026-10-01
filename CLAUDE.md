@@ -43,67 +43,80 @@ stdout/stderr — the terminal belongs to the TUI.
 
 - Set `volume = 0.0` in config.toml before playback tests; restore after.
 - No tmux here. Drive the TUI with Python `pty` + `pyte` (pip install
-  `--target` into the scratchpad), send keys, print `screen.display`.
+  `--target` into the scratchpad), send keys, print `screen.display`. Mouse:
+  write SGR sequences (`\x1b[<0;col;rowM` / `m`, 1-based); send both clicks of
+  a double-click in one write (the driver pauses 0.3 s per step).
 - Seed a fake library with `sqlite3` into `<data_dir>/library.sqlite3`
-  (real video ids), delete it afterwards — a real sync replaces it anyway.
-- OAuth login / sync need the user's Google account: the user tests those.
-- Linux: Docker is available. `ubuntu:24.04` + `./install.sh --yes --no-launch`
-  verified 2026-10-01 (build 1m49s, yt-dlp download + resolve OK; no audio
-  device / Secret Service in containers, so expect those two errors).
+  (real video ids; name columns explicitly), delete it afterwards.
+- Memory: compare `footprint -p PID` (phys_footprint, what Activity Monitor
+  shows), not RSS — RSS includes shared framework pages and is noisy.
+  Build the previous commit in a `git worktree` to compare like for like.
+- CLI tests that write config: run with `HOME=<scratch dir>`.
+- OAuth login / sync / likes need the user's Google account: the user tests.
+  The auto-mode classifier blocks Claude from moving client secrets; the user
+  imports them (`ytm import-client`).
+- Linux/Windows: Docker is available — `rust:latest` for clippy/tests and
+  `cargo check --target x86_64-pc-windows-gnu` (with `gcc-mingw-w64`);
+  `mcr.microsoft.com/powershell` to parse `install.ps1`. No audio device or
+  Secret Service in containers. Real Windows runs happen in CI.
 
 ## Architecture
 
-Library crate (`src/lib.rs`) plus thin binary (`src/main.rs`, CLI commands).
+Library crate (`src/lib.rs`) plus thin binary (`src/main.rs`, CLI commands,
+single-threaded tokio runtime; on macOS the TUI runs on a worker thread and
+main services the CFRunLoop for media keys).
 
 | Module | Role |
 |---|---|
-| `app` | state + `tokio::select!` loop: keys, background results, player events, 500 ms redraw tick |
-| `ui::{keymap, views}` | ratatui rendering (pure functions of `App`), key -> `Action` |
-| `audio::player` | rodio on its own thread; commands via channel, status via `watch`, events (ended/error) tagged with a load `generation` |
-| `audio::stream` | `Read + Seek` over googlevideo: 1 MiB Range chunks into memory, reads block until bytes arrive |
-| `audio::queue` | queue snapshot of the playlist the user started from |
-| `audio::{extractor, resolver, js_runtime, install}` | yt-dlp lookup/download, URL cache + prefetch + fallback ladder |
+| `app` | state + `tokio::select!` loop: keys/mouse, background results, player and media events; redraws only when dirty |
+| `ui::{keymap, views}` | ratatui rendering; track table builds widgets for visible rows only |
+| `audio::player` | rodio on its own thread (256 KiB stack); device opened lazily, closed after 30 s idle; events tagged with a load `generation` |
+| `audio::stream` | bounded `Read + Seek` over googlevideo: 256 KiB Range chunks, 4 ahead, max 8 cached (2 MiB) |
+| `audio::queue` | `Arc<[Track]>` + `u32` play order, shuffle/repeat, "play next" list |
+| `audio::{extractor, resolver, js_runtime, install}` | yt-dlp lookup/download, URL cache (16 in memory, rest in SQLite) + prefetch + fallback ladder |
 | `audio::open_track` | resolve + open stream; on 403/410 re-resolve once |
-| `api::{auth, token_store, client, models}` | OAuth PKCE loopback, tokens in keyring, Data API v3, domain types |
-| `storage` | SQLite library (`replace_library` is one transaction) |
-| `sync` | API -> storage; only on empty library or `r` / `ytm sync` |
-| `config::{paths, settings}` | per-OS dirs; `config.toml` (template written on first run) |
+| `api::{auth, token_store, client, models}` | OAuth PKCE loopback + device flow, tokens in keyring, Data API v3 (list, rate, insert), `Track` with `Arc<str>` fields |
+| `storage` | SQLite: library, playlist ETags, stream URL cache, `meta` (UI state) |
+| `sync` | API -> storage; skips playlists with unchanged ETag |
+| `media` | souvlaki: media keys + Now Playing (macOS, Linux/MPRIS); stub on Windows |
+| `config::{paths, settings}` | per-OS dirs; `config.toml` (template on first run, `store_client` rewrites keys in place) |
 
 ## Decisions (with evidence — don't re-litigate without new data)
 
-- **AAC (itag 140), not Opus**: rodio's symphonia 0.5 has no Opus decoder.
-  Opus would need our own symphonia + `symphonia-adapter-libopus` Source.
+- **AAC (itag 140), not Opus**: rodio's symphonia 0.5 has no Opus decoder;
+  `symphonia-adapter-libopus` needs cmake + bindgen/libclang on every OS and
+  symphonia 0.6. No audible gain at ~128 kbps. Rejected 2026-10-01.
 - **No direct `cpal`/`symphonia` deps**: use rodio's, avoid duplicate versions.
 - **rustls + bundled SQLite**: no system OpenSSL/SQLite on any OS.
 - **yt-dlp without JS runtime by default** (`--no-js-runtimes`). Measured
   2026-10-01, yt-dlp 2026.08.19, M1, peak RAM of whole process tree:
-  no JS 93 MB / ~6 s; node ~350 MB; QuickJS ~328 MB. Plain URLs played at
-  full speed with Range seek. JS runtime is a fallback only.
+  no JS 93 MB / ~6 s; node ~350 MB; QuickJS ~328 MB. JS is a fallback only.
+- **yt-dlp `--print` field subset** instead of `-J`: 1.7 KB vs 660 KB output.
 - **QuickJS-NG over Deno** for the fallback (1.3–2.5 MB vs ~100 MB), pinned
   `v0.17.0` with hashes in code.
-- **Rejected**: `rustypipe` (last release 2025-04, likely broken),
-  Invidious/Piped (third-party servers).
+- **Rejected**: `rustypipe` (last release 2025-04), Invidious/Piped.
 - yt-dlp child process: `stdin` null, `kill_on_drop`, timeouts,
   `--ignore-config`, `--` before URL, video id validated (11 chars).
-- **Measured footprint** (2026-10-01, M1, release): ~14 MB idle/resolving,
-  20–25 MB RSS while playing, CPU ~0%. Binary 7.8 MB.
-- **Startup must not wait on yt-dlp**: `YtDlp::find` (no probe) is used;
-  running `yt-dlp --version` costs 3–4 s (PyInstaller unpack).
-- **Whole track buffered in RAM** (~1 MB/min): simple and seekable; revisit
-  for hour-long mixes.
-- **Sync never runs on a timer** to save quota; library is read from SQLite.
+- **Measured footprint** (2026-10-01, M1, release, 2000-track library,
+  `footprint`): idle ~10 MB, playing 14–16 MB (was 19), peak 20 MB (was 26).
+  Media controls cost 0–1 MB. Binary 8.0 MB.
+- **Startup must not wait on yt-dlp**: `YtDlp::find` (no probe);
+  `yt-dlp --version` costs 3–4 s.
+- **Sync never runs on a timer** to save quota.
 - `client_secret` lives in `config.toml` (Google: not confidential for
   Desktop clients); tokens live in the OS keyring.
-
-## Planned design notes
-
-- OAuth device flow as SSH/headless fallback.
-- ETags (`If-None-Match`) for cheaper re-syncs; test
-  `playlistItems.list?playlistId=LM|LL` for exact YT Music likes.
+- **OAuth scope `youtube`** (not readonly) for like/add-to-playlist; older
+  read-only tokens still read, writes ask to re-login.
+- **App stays in Google "Testing"**: publishing needs a public homepage +
+  privacy policy (user's call). Testing ⇒ 7-day login; the app says so.
+- **Windows media keys skipped**: souvlaki needs an HWND.
+- **CI**: Linux (fmt/clippy/test/shellcheck) + Windows (clippy/test/installer);
+  no macOS on push (10x minutes on private repos). Releases on `v*` tags;
+  Linux built on ubuntu-22.04 for glibc 2.35 compatibility.
 
 ## Open TODOs
 
-- Persist resolved-URL cache in SQLite.
-- Shuffle/repeat, search within library, remember volume.
-- Stream from disk/ranges instead of full in-memory buffer for long tracks.
-- Verify the Windows build; Linux real-desktop test (audio, keyring) by user.
+- Linux playback bug the user saw: waiting for their logs.
+- Windows media keys (hidden window + SMTC).
+- `souvlaki` pulls `block 0.1.6` (future-incompat warning on macOS).
+- Test `playlistItems.list?playlistId=LM|LL` for exact YT Music likes.

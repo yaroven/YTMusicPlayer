@@ -1,5 +1,6 @@
-//! Typed YouTube Data API v3 client. Every `*.list` page costs 1 quota unit
-//! (10,000/day); [`YouTubeClient::units_used`] counts them for this process.
+//! Typed YouTube Data API v3 client. Quota (10,000 units/day): each `*.list`
+//! page costs 1 unit, `videos.rate` and `playlistItems.insert` 50 each;
+//! [`YouTubeClient::units_used`] counts them for this process.
 
 use std::sync::{
     Arc,
@@ -36,6 +37,7 @@ struct Page<T> {
 #[serde(rename_all = "camelCase")]
 struct PlaylistDto {
     id: String,
+    etag: Option<String>,
     snippet: PlaylistSnippet,
     content_details: Option<PlaylistContent>,
 }
@@ -121,14 +123,7 @@ impl YouTubeClient {
             let response = request.send().await?;
             self.units.fetch_add(1, Ordering::Relaxed);
 
-            let status = response.status();
-            if !status.is_success() {
-                let body = response.text().await.unwrap_or_default();
-                bail!(
-                    "YouTube API {endpoint}: {status}: {}",
-                    api_error_message(&body)
-                );
-            }
+            let response = check(response, endpoint).await?;
             let page: Page<T> = response
                 .json()
                 .await
@@ -152,6 +147,7 @@ impl YouTubeClient {
             .into_iter()
             .map(|p| Playlist {
                 id: p.id,
+                etag: p.etag,
                 title: p.snippet.title,
                 item_count: p.content_details.and_then(|c| c.item_count).unwrap_or(0),
             })
@@ -174,8 +170,8 @@ impl YouTubeClient {
             .filter_map(|i| {
                 let artist = i.snippet.video_owner_channel_title?;
                 Some(Track {
-                    video_id: i.content_details.video_id,
-                    title: i.snippet.title,
+                    video_id: i.content_details.video_id.into(),
+                    title: i.snippet.title.into(),
                     artist: clean_artist(&artist),
                     duration_secs: None,
                 })
@@ -196,8 +192,8 @@ impl YouTubeClient {
             .into_iter()
             .filter(|v| !music_only || v.snippet.category_id.as_deref() == Some(MUSIC_CATEGORY))
             .map(|v| Track {
-                video_id: v.id,
-                title: v.snippet.title,
+                video_id: v.id.into(),
+                title: v.snippet.title.into(),
                 artist: clean_artist(&v.snippet.channel_title),
                 duration_secs: v
                     .content_details
@@ -206,6 +202,61 @@ impl YouTubeClient {
             })
             .collect())
     }
+}
+
+impl YouTubeClient {
+    /// Likes (`true`) or removes the rating from (`false`) a video. 50 units.
+    pub async fn rate(&self, video_id: &str, like: bool) -> Result<()> {
+        let rating = if like { "like" } else { "none" };
+        let response = self
+            .http
+            .post(format!("{BASE}/videos/rate"))
+            .bearer_auth(self.auth.access_token().await?)
+            .query(&[("id", video_id), ("rating", rating)])
+            .header(reqwest::header::CONTENT_LENGTH, 0)
+            .send()
+            .await?;
+        self.units.fetch_add(50, Ordering::Relaxed);
+        check(response, "videos.rate").await?;
+        Ok(())
+    }
+
+    /// Appends a video to one of the user's playlists. 50 units.
+    pub async fn add_to_playlist(&self, playlist_id: &str, video_id: &str) -> Result<()> {
+        let body = serde_json::json!({
+            "snippet": {
+                "playlistId": playlist_id,
+                "resourceId": { "kind": "youtube#video", "videoId": video_id },
+            }
+        });
+        let response = self
+            .http
+            .post(format!("{BASE}/playlistItems"))
+            .bearer_auth(self.auth.access_token().await?)
+            .query(&[("part", "snippet")])
+            .json(&body)
+            .send()
+            .await?;
+        self.units.fetch_add(50, Ordering::Relaxed);
+        check(response, "playlistItems.insert").await?;
+        Ok(())
+    }
+}
+
+/// Turns API errors into readable messages, with a hint for missing scope.
+async fn check(response: reqwest::Response, endpoint: &str) -> Result<reqwest::Response> {
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
+    }
+    let body = response.text().await.unwrap_or_default();
+    if body.contains("insufficientPermissions") || body.contains("SCOPE_INSUFFICIENT") {
+        bail!("no permission to change your library — run `ytm login` again to allow it");
+    }
+    bail!(
+        "YouTube API {endpoint}: {status}: {}",
+        api_error_message(&body)
+    )
 }
 
 /// Pulls `error.message` out of a Google API error body.

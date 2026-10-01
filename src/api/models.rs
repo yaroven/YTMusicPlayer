@@ -1,5 +1,7 @@
 //! Domain types shared by API, storage, audio queue and UI.
 
+use std::sync::Arc;
+
 /// Pseudo playlist id for the "Liked" list.
 pub const LIKED_PLAYLIST_ID: &str = "__liked__";
 
@@ -8,22 +10,23 @@ pub struct Playlist {
     pub id: String,
     pub title: String,
     pub item_count: u32,
+    /// API ETag; unchanged means its items needn't be re-fetched.
+    pub etag: Option<String>,
 }
 
+/// Strings are `Arc<str>`: a track is shared by the library view, the queue
+/// and the now-playing state, and cloning must not copy text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Track {
-    pub video_id: String,
-    pub title: String,
-    pub artist: String,
+    pub video_id: Arc<str>,
+    pub title: Arc<str>,
+    pub artist: Arc<str>,
     pub duration_secs: Option<u32>,
 }
 
 /// "Artist - Topic" is how YouTube names auto-generated music channels.
-pub fn clean_artist(channel: &str) -> String {
-    channel
-        .strip_suffix(" - Topic")
-        .unwrap_or(channel)
-        .to_owned()
+pub fn clean_artist(channel: &str) -> Arc<str> {
+    channel.strip_suffix(" - Topic").unwrap_or(channel).into()
 }
 
 /// Parses ISO 8601 durations as returned by the API (`PT1H2M3S`, `P1DT2S`).
@@ -97,7 +100,7 @@ mod tests {
 
     #[test]
     fn topic_suffix_removed() {
-        assert_eq!(clean_artist("Daft Punk - Topic"), "Daft Punk");
-        assert_eq!(clean_artist("Rick Astley"), "Rick Astley");
+        assert_eq!(&*clean_artist("Daft Punk - Topic"), "Daft Punk");
+        assert_eq!(&*clean_artist("Rick Astley"), "Rick Astley");
     }
 }

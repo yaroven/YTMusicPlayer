@@ -1,14 +1,23 @@
 //! Playback engine on a dedicated OS thread (rodio's device sink is not
 //! `Send`). Commands go in over a channel; state comes out via a `watch`
 //! (polled by the UI) and discrete events via an mpsc (track ended, error).
+//!
+//! The audio device is opened on the first track and closed again after
+//! [`IDLE_CLOSE`] without playback, so an idle player holds no audio buffers.
 
-use std::{sync::mpsc, thread, time::Duration};
+use std::{
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
 
-use anyhow::{Context, Result, anyhow};
-use rodio::{Decoder, DeviceSinkBuilder, Player, Source};
+use anyhow::Result;
+use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use tokio::sync::{mpsc::UnboundedSender, watch};
 
 use super::stream::HttpStream;
+
+const IDLE_CLOSE: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayState {
@@ -25,7 +34,7 @@ pub struct PlayerStatus {
     pub volume: f32,
 }
 
-/// `generation` identifies the load a event belongs to, so stale events
+/// `generation` identifies the load an event belongs to, so stale events
 /// from a track the user already skipped are ignored.
 #[derive(Debug, Clone)]
 pub enum PlayerEvent {
@@ -40,8 +49,10 @@ enum Command {
         generation: u64,
     },
     TogglePause,
+    SetPaused(bool),
     Stop,
     SeekBy(i64),
+    SeekTo(Duration),
     SetVolume(f32),
 }
 
@@ -52,7 +63,8 @@ pub struct PlayerHandle {
 }
 
 impl PlayerHandle {
-    /// Opens the default output device; fails if there is none.
+    /// Starts the audio thread. The device itself is opened lazily; failures
+    /// to open it are reported as [`PlayerEvent::Error`] on the first load.
     pub fn spawn(volume: f32, events: UnboundedSender<PlayerEvent>) -> Result<Self> {
         let (tx, rx) = mpsc::channel();
         let (status_tx, status) = watch::channel(PlayerStatus {
@@ -61,14 +73,11 @@ impl PlayerHandle {
             duration: None,
             volume,
         });
-        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         thread::Builder::new()
             .name("audio".into())
-            .spawn(move || run(rx, status_tx, events, volume, ready_tx))?;
-        ready_rx
-            .recv()
-            .context("audio thread exited")?
-            .map_err(|e| anyhow!("cannot open audio output: {e}"))?;
+            // Decoding needs little stack; the default 2 MiB is reserved per thread.
+            .stack_size(256 * 1024)
+            .spawn(move || Engine::new(status_tx, events, volume).run(rx))?;
         Ok(Self { tx, status })
     }
 
@@ -85,6 +94,10 @@ impl PlayerHandle {
         self.send(Command::TogglePause);
     }
 
+    pub fn set_paused(&self, paused: bool) {
+        self.send(Command::SetPaused(paused));
+    }
+
     pub fn stop(&self) {
         self.send(Command::Stop);
     }
@@ -93,9 +106,16 @@ impl PlayerHandle {
         self.send(Command::SeekBy(secs));
     }
 
+    pub fn seek_to(&self, position: Duration) {
+        self.send(Command::SeekTo(position));
+    }
+
+    pub fn set_volume(&self, volume: f32) {
+        self.send(Command::SetVolume(volume.clamp(0.0, 1.0)));
+    }
+
     pub fn change_volume(&self, delta: f32) {
-        let volume = (self.status().volume + delta).clamp(0.0, 1.0);
-        self.send(Command::SetVolume(volume));
+        self.set_volume(self.status().volume + delta);
     }
 
     pub fn status(&self) -> PlayerStatus {
@@ -103,43 +123,97 @@ impl PlayerHandle {
     }
 
     fn send(&self, cmd: Command) {
-        // Only fails if the audio thread died; the UI shows it via status.
+        // Only fails if the audio thread died.
         let _ = self.tx.send(cmd);
     }
 }
 
-fn run(
-    rx: mpsc::Receiver<Command>,
+struct Output {
+    // Field order matters: the player must drop before its device.
+    player: Player,
+    _sink: MixerDeviceSink,
+}
+
+struct Engine {
+    output: Option<Output>,
+    /// (generation, duration) of the loaded track.
+    current: Option<(u64, Option<Duration>)>,
+    volume: f32,
+    idle_since: Instant,
     status_tx: watch::Sender<PlayerStatus>,
     events: UnboundedSender<PlayerEvent>,
-    volume: f32,
-    ready: mpsc::SyncSender<Result<(), String>>,
-) {
-    let mut sink = match DeviceSinkBuilder::open_default_sink() {
-        Ok(sink) => sink,
-        Err(err) => {
-            let _ = ready.send(Err(err.to_string()));
-            return;
+}
+
+impl Engine {
+    fn new(
+        status_tx: watch::Sender<PlayerStatus>,
+        events: UnboundedSender<PlayerEvent>,
+        volume: f32,
+    ) -> Self {
+        Self {
+            output: None,
+            current: None,
+            volume,
+            idle_since: Instant::now(),
+            status_tx,
+            events,
         }
-    };
-    // Default prints to stderr on drop, which would corrupt the TUI.
-    sink.log_on_drop(false);
-    let player = Player::connect_new(sink.mixer());
-    player.set_volume(volume);
-    let _ = ready.send(Ok(()));
+    }
 
-    // (generation, duration) of the loaded track.
-    let mut current: Option<(u64, Option<Duration>)> = None;
+    fn run(mut self, rx: mpsc::Receiver<Command>) {
+        loop {
+            // Poll faster while playing (position updates), slowly when idle.
+            let timeout = if self.current.is_some() {
+                Duration::from_millis(100)
+            } else {
+                Duration::from_secs(1)
+            };
+            match rx.recv_timeout(timeout) {
+                Ok(cmd) => self.handle(cmd),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+            self.tick();
+        }
+    }
 
-    loop {
-        match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(Command::Load {
+    fn open_output(&mut self) -> Result<&Player, String> {
+        if self.output.is_none() {
+            let mut sink = DeviceSinkBuilder::open_default_sink()
+                .map_err(|e| format!("cannot open audio output: {e}"))?;
+            // Default prints to stderr on drop, which would corrupt the TUI.
+            sink.log_on_drop(false);
+            let player = Player::connect_new(sink.mixer());
+            player.set_volume(self.volume);
+            self.output = Some(Output {
+                player,
+                _sink: sink,
+            });
+            tracing::debug!("audio output opened");
+        }
+        Ok(&self.output.as_ref().expect("just opened").player)
+    }
+
+    fn error(&self, generation: u64, message: String) {
+        let _ = self.events.send(PlayerEvent::Error {
+            generation,
+            message,
+        });
+    }
+
+    fn handle(&mut self, cmd: Command) {
+        match cmd {
+            Command::Load {
                 stream,
                 duration,
                 generation,
-            }) => {
+            } => {
+                self.current = None;
+                let player = match self.open_output() {
+                    Ok(player) => player,
+                    Err(message) => return self.error(generation, message),
+                };
                 player.clear();
-                current = None;
                 let len = stream.len();
                 // Reads the container header: may block briefly on the network.
                 let built = Decoder::builder()
@@ -154,75 +228,99 @@ fn run(
                         let duration = decoder.total_duration().or(duration);
                         player.append(decoder);
                         player.play();
-                        current = Some((generation, duration));
+                        self.current = Some((generation, duration));
                     }
-                    Err(err) => {
-                        let _ = events.send(PlayerEvent::Error {
-                            generation,
-                            message: format!("cannot decode audio: {err}"),
-                        });
+                    Err(err) => self.error(generation, format!("cannot decode audio: {err}")),
+                }
+            }
+            Command::TogglePause => {
+                if let (Some(out), Some(_)) = (&self.output, self.current) {
+                    if out.player.is_paused() {
+                        out.player.play()
+                    } else {
+                        out.player.pause()
                     }
                 }
             }
-            Ok(Command::TogglePause) if current.is_some() => {
-                if player.is_paused() {
-                    player.play()
-                } else {
-                    player.pause()
+            Command::SetPaused(paused) => {
+                if let (Some(out), Some(_)) = (&self.output, self.current) {
+                    if paused {
+                        out.player.pause()
+                    } else {
+                        out.player.play()
+                    }
                 }
             }
-            Ok(Command::TogglePause) => {}
-            Ok(Command::Stop) => {
-                player.clear();
-                current = None;
+            Command::Stop => {
+                if let Some(out) = &self.output {
+                    out.player.clear();
+                }
+                self.current = None;
             }
-            Ok(Command::SeekBy(secs)) => {
-                if let Some((generation, duration)) = current {
-                    let pos = player.get_pos();
+            Command::SeekBy(secs) => {
+                if let Some(out) = &self.output {
+                    let pos = out.player.get_pos();
                     let delta = Duration::from_secs(secs.unsigned_abs());
-                    let mut target = if secs < 0 {
+                    let target = if secs < 0 {
                         pos.saturating_sub(delta)
                     } else {
                         pos + delta
                     };
-                    if let Some(d) = duration {
-                        target = target.min(d.saturating_sub(Duration::from_secs(1)));
-                    }
-                    if let Err(err) = player.try_seek(target) {
-                        let _ = events.send(PlayerEvent::Error {
-                            generation,
-                            message: format!("seek failed: {err}"),
-                        });
-                    }
+                    self.seek(target);
                 }
             }
-            Ok(Command::SetVolume(v)) => player.set_volume(v),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            Command::SeekTo(target) => self.seek(target),
+            Command::SetVolume(v) => {
+                self.volume = v;
+                if let Some(out) = &self.output {
+                    out.player.set_volume(v);
+                }
+            }
         }
+    }
 
-        if let Some((generation, _)) = current
-            && player.empty()
-        {
-            current = None;
-            let _ = events.send(PlayerEvent::Ended { generation });
-        }
-
-        let status = PlayerStatus {
-            state: match (&current, player.is_paused()) {
-                (None, _) => PlayState::Idle,
-                (Some(_), true) => PlayState::Paused,
-                (Some(_), false) => PlayState::Playing,
-            },
-            position: if current.is_some() {
-                player.get_pos()
-            } else {
-                Duration::ZERO
-            },
-            duration: current.and_then(|(_, d)| d),
-            volume: player.volume(),
+    fn seek(&self, mut target: Duration) {
+        let (Some(out), Some((generation, duration))) = (&self.output, self.current) else {
+            return;
         };
-        status_tx.send_if_modified(|old| {
+        if let Some(d) = duration {
+            target = target.min(d.saturating_sub(Duration::from_secs(1)));
+        }
+        if let Err(err) = out.player.try_seek(target) {
+            self.error(generation, format!("seek failed: {err}"));
+        }
+    }
+
+    fn tick(&mut self) {
+        if let (Some((generation, _)), Some(out)) = (self.current, &self.output)
+            && out.player.empty()
+        {
+            self.current = None;
+            let _ = self.events.send(PlayerEvent::Ended { generation });
+        }
+
+        let playing = self.current.is_some();
+        if playing {
+            self.idle_since = Instant::now();
+        } else if self.output.is_some() && self.idle_since.elapsed() >= IDLE_CLOSE {
+            self.output = None;
+            tracing::debug!("audio output closed after idle");
+        }
+
+        let (state, position) = match (&self.output, self.current) {
+            (Some(out), Some(_)) if out.player.is_paused() => {
+                (PlayState::Paused, out.player.get_pos())
+            }
+            (Some(out), Some(_)) => (PlayState::Playing, out.player.get_pos()),
+            _ => (PlayState::Idle, Duration::ZERO),
+        };
+        let status = PlayerStatus {
+            state,
+            position,
+            duration: self.current.and_then(|(_, d)| d),
+            volume: self.volume,
+        };
+        self.status_tx.send_if_modified(|old| {
             let changed = *old != status;
             *old = status;
             changed

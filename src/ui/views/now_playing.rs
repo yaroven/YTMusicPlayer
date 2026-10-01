@@ -1,4 +1,4 @@
-//! Bottom: current track, progress bar, volume; then a one-line status bar.
+//! Bottom: current track, progress bar, modes, volume; then a status line.
 
 use ratatui::{
     Frame,
@@ -9,12 +9,12 @@ use ratatui::{
 };
 
 use crate::{
-    app::App,
-    audio::player::PlayState,
+    app::{App, Mode},
+    audio::{player::PlayState, queue::Repeat},
     ui::{ACCENT, fmt_time},
 };
 
-pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
+pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let status = &app.player_status;
     let icon = match (app.loading, status.state) {
         (true, _) => "…",
@@ -25,26 +25,44 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let title = match app.queue.current() {
         Some(t) => Line::from(vec![
             format!(" {icon} ").fg(ACCENT).bold(),
-            t.title.clone().bold(),
+            Span::raw(&*t.title).bold(),
             " — ".dark_gray(),
-            t.artist.clone().into(),
+            Span::raw(&*t.artist),
             " ".into(),
         ]),
         None => Line::from(" ■ nothing playing ".dark_gray()),
     };
-    let volume = format!(" vol {:>3}% ", (status.volume * 100.0).round() as u32);
+    let on = |active: bool, text: &'static str| {
+        if active {
+            Span::from(text).fg(ACCENT)
+        } else {
+            Span::from(text).dark_gray()
+        }
+    };
+    let repeat = match app.queue.repeat {
+        Repeat::Off => on(false, "repeat "),
+        Repeat::All => on(true, "repeat "),
+        Repeat::One => on(true, "repeat1 "),
+    };
+    let modes = Line::from(vec![
+        on(app.queue.shuffle, " shuffle "),
+        repeat,
+        format!("vol {:>3}% ", (status.volume * 100.0).round() as u32).into(),
+    ])
+    .right_aligned();
     let queue = match app.queue.position() {
         Some(i) => format!(" {}/{} ", i + 1, app.queue.len()),
         None => String::new(),
     };
     let block = Block::bordered()
         .title(title)
-        .title_top(Line::from(volume).right_aligned())
+        .title_top(modes)
         .title_bottom(Line::from(queue).right_aligned().dark_gray());
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let [bar] = Layout::vertical([Constraint::Length(1)]).areas(inner);
+    app.areas.progress = bar;
     let (label, ratio) = if app.loading {
         ("loading…".to_owned(), 0.0)
     } else {
@@ -65,7 +83,11 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
-    let hint = Span::from(" ? help · q quit ").dark_gray();
+    let hint_text = match app.mode {
+        Mode::Search => " type to filter · Enter keep · Esc clear ",
+        _ => " ? help · q quit ",
+    };
+    let hint = Span::from(hint_text).dark_gray();
     let [left, right] =
         Layout::horizontal([Constraint::Min(10), Constraint::Length(hint.width() as u16)])
             .areas(area);

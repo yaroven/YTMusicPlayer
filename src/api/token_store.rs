@@ -13,6 +13,9 @@ pub struct StoredToken {
     pub refresh_token: Option<String>,
     /// Unix seconds.
     pub expires_at: i64,
+    /// Obtained via device flow (refresh with the device client).
+    #[serde(default)]
+    pub device: bool,
 }
 
 impl StoredToken {

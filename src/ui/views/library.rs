@@ -1,22 +1,24 @@
-//! Left: playlists (Liked first). Right: tracks of the selected playlist.
+//! Left: playlists (Liked first). Right: tracks of the selected playlist, or
+//! the play queue. Only rows on screen are turned into widgets.
 
 use std::time::Duration;
 
 use ratatui::{
     Frame,
     layout::{Constraint, Rect},
-    style::{Modifier, Style, Stylize},
-    text::Line,
-    widgets::{Block, Cell, List, ListItem, Row, Table},
+    style::{Color, Modifier, Style, Stylize},
+    text::{Line, Span},
+    widgets::{Block, Cell, List, ListItem, Row, Table, TableState},
 };
 
 use crate::{
-    app::{App, Focus},
+    api::models::Track,
+    app::{App, Focus, Mode, TracksView},
     ui::{ACCENT, centered_text, fmt_time},
 };
 
-fn pane(title: String, focused: bool) -> Block<'static> {
-    let block = Block::bordered().title(Line::from(title).bold());
+fn pane(title: Line<'static>, focused: bool) -> Block<'static> {
+    let block = Block::bordered().title(title.bold());
     if focused {
         block.border_style(Style::new().fg(ACCENT))
     } else {
@@ -28,7 +30,7 @@ fn highlight(focused: bool) -> Style {
     if focused {
         Style::new()
             .bg(ACCENT)
-            .fg(ratatui::style::Color::White)
+            .fg(Color::White)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::new().add_modifier(Modifier::REVERSED)
@@ -37,7 +39,7 @@ fn highlight(focused: bool) -> Style {
 
 pub fn draw_playlists(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Playlists;
-    let block = pane(" Library ".into(), focused);
+    let block = pane(Line::from(" Library "), focused);
     if app.playlists.is_empty() {
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -51,7 +53,7 @@ pub fn draw_playlists(frame: &mut Frame, area: Rect, app: &mut App) {
     }
     let items = app.playlists.iter().map(|p| {
         ListItem::new(Line::from(vec![
-            p.title.clone().into(),
+            Span::raw(p.title.as_str()),
             format!(" {}", p.item_count).dark_gray(),
         ]))
     });
@@ -62,55 +64,112 @@ pub fn draw_playlists(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_stateful_widget(list, area, &mut app.playlist_state);
 }
 
+fn track_row(marker: String, t: &Track, playing: bool) -> Row<'_> {
+    let time = t
+        .duration_secs
+        .map(|s| fmt_time(Duration::from_secs(s.into())))
+        .unwrap_or_default();
+    let row = Row::new([
+        Cell::from(Line::from(marker).right_aligned()),
+        Cell::from(&*t.title),
+        Cell::from(&*t.artist),
+        Cell::from(Line::from(time).right_aligned()),
+    ]);
+    if playing { row.fg(ACCENT) } else { row }
+}
+
+const WIDTHS: [Constraint; 4] = [
+    Constraint::Length(5),
+    Constraint::Fill(3),
+    Constraint::Fill(2),
+    Constraint::Length(7),
+];
+
 pub fn draw_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
+    match app.view {
+        TracksView::Playlist => draw_playlist_tracks(frame, area, app),
+        TracksView::Queue => draw_queue(frame, area, app),
+    }
+}
+
+fn draw_playlist_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Tracks;
-    let title = app
+    let name = app
         .playlist_state
         .selected()
         .and_then(|i| app.playlists.get(i))
-        .map_or(" Tracks ".into(), |p| {
-            format!(" {} · {} ", p.title, app.tracks.len())
-        });
-    let block = pane(title, focused);
-    if app.tracks.is_empty() {
+        .map_or("Tracks", |p| p.title.as_str());
+    let mut title = vec![Span::raw(format!(" {name} · {} ", app.visible.len()))];
+    let searching = matches!(app.mode, Mode::Search);
+    if searching || !app.filter.is_empty() {
+        let cursor = if searching { "▏" } else { "" };
+        title.push(Span::raw(format!("/{}{cursor} ", app.filter)).fg(ACCENT));
+    }
+    let block = pane(Line::from(title), focused);
+    if app.visible.is_empty() {
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        centered_text(frame, inner, "no tracks");
+        let hint = if app.filter.is_empty() {
+            "no tracks"
+        } else {
+            "no matches"
+        };
+        centered_text(frame, inner, hint);
         return;
     }
 
-    let playing_id = app.queue.current().map(|t| t.video_id.as_str());
-    let rows = app.tracks.iter().enumerate().map(|(i, t)| {
-        let playing = Some(t.video_id.as_str()) == playing_id;
+    // Keep the selection on screen, then build widgets for that window only.
+    let height = area.height.saturating_sub(3) as usize; // borders + header
+    let selected = app.track_selected.unwrap_or(0);
+    if selected < app.track_offset {
+        app.track_offset = selected;
+    } else if height > 0 && selected >= app.track_offset + height {
+        app.track_offset = selected + 1 - height;
+    }
+    let end = (app.track_offset + height).min(app.visible.len());
+    let playing_id = app.queue.current().map(|t| t.video_id.clone());
+    let rows = app.visible[app.track_offset..end].iter().map(|&i| {
+        let t = &app.tracks[i as usize];
+        let playing = playing_id.as_ref() == Some(&t.video_id);
         let marker = if playing {
             "▶".to_owned()
         } else {
             (i + 1).to_string()
         };
-        let time = t
-            .duration_secs
-            .map(|s| fmt_time(Duration::from_secs(s.into())))
-            .unwrap_or_default();
-        let row = Row::new([
-            Cell::from(Line::from(marker).right_aligned()),
-            Cell::from(t.title.as_str()),
-            Cell::from(t.artist.as_str()),
-            Cell::from(Line::from(time).right_aligned()),
-        ]);
-        if playing { row.fg(ACCENT) } else { row }
+        track_row(marker, t, playing)
     });
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(4),
-            Constraint::Fill(3),
-            Constraint::Fill(2),
-            Constraint::Length(7),
-        ],
-    )
-    .header(Row::new(["#", "Title", "Artist", "Time"]).dark_gray())
-    .block(block)
-    .column_spacing(2)
-    .row_highlight_style(highlight(focused));
-    frame.render_stateful_widget(table, area, &mut app.track_state);
+    let table = Table::new(rows, WIDTHS)
+        .header(Row::new(["#", "Title", "Artist", "Time"]).dark_gray())
+        .block(block)
+        .column_spacing(2)
+        .row_highlight_style(highlight(focused));
+    let mut state = TableState::default().with_selected(Some(selected - app.track_offset));
+    frame.render_stateful_widget(table, area, &mut state);
+}
+
+fn draw_queue(frame: &mut Frame, area: Rect, app: &mut App) {
+    let focused = app.focus == Focus::Tracks;
+    let block = pane(
+        Line::from(format!(" Queue · {} ", app.queue.len())),
+        focused,
+    );
+    let Some(current) = app.queue.current() else {
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        centered_text(frame, inner, "queue is empty — play a track");
+        return;
+    };
+    let height = area.height.saturating_sub(3) as usize;
+    let rows = std::iter::once(track_row("▶".into(), current, true)).chain(
+        app.queue
+            .upcoming()
+            .take(height.saturating_sub(1))
+            .enumerate()
+            .map(|(i, t)| track_row((i + 1).to_string(), t, false)),
+    );
+    let table = Table::new(rows, WIDTHS)
+        .header(Row::new(["", "Up next", "Artist", "Time"]).dark_gray())
+        .block(block)
+        .column_spacing(2);
+    frame.render_widget(table, area);
 }

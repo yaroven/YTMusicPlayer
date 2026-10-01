@@ -1,5 +1,7 @@
 //! Account sync: YouTube Data API -> local library. Runs on first start (empty
 //! library) and on demand, never on a timer, to keep quota use minimal.
+//! Playlists whose ETag hasn't changed reuse their stored tracks instead of
+//! re-fetching items (1 unit per 50 tracks saved each).
 
 use std::sync::Arc;
 
@@ -17,6 +19,8 @@ use crate::{
 pub struct SyncReport {
     pub playlists: usize,
     pub tracks: usize,
+    /// Playlists skipped because their ETag was unchanged.
+    pub unchanged: usize,
     pub quota_units: u32,
 }
 
@@ -26,6 +30,10 @@ pub async fn sync_library(
     liked_music_only: bool,
 ) -> Result<SyncReport> {
     let start_units = client.units_used();
+    let known_etags = {
+        let library = library.clone();
+        tokio::task::spawn_blocking(move || library.playlist_etags()).await??
+    };
 
     let liked = client.liked_tracks(liked_music_only).await?;
     let mut all = vec![(
@@ -33,17 +41,27 @@ pub async fn sync_library(
             id: LIKED_PLAYLIST_ID.into(),
             title: "Liked music".into(),
             item_count: liked.len() as u32,
+            etag: None,
         },
-        liked,
+        liked.into(),
     )];
+    let mut unchanged = 0;
     for playlist in client.my_playlists().await? {
-        let tracks = client.playlist_tracks(&playlist.id).await?;
+        let same =
+            playlist.etag.is_some() && playlist.etag.as_ref() == known_etags.get(&playlist.id);
+        let tracks = if same {
+            unchanged += 1;
+            library.tracks(&playlist.id)?
+        } else {
+            client.playlist_tracks(&playlist.id).await?.into()
+        };
         all.push((playlist, tracks));
     }
 
     let report = SyncReport {
         playlists: all.len(),
         tracks: all.iter().map(|(_, t)| t.len()).sum(),
+        unchanged,
         quota_units: client.units_used() - start_units,
     };
     tokio::task::spawn_blocking(move || library.replace_library(&all)).await??;

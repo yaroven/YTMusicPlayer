@@ -88,6 +88,15 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2" # log to file: stdout belongs to the TUI
 
+# Media keys + "Now Playing" (MPRIS over pure-Rust zbus on Linux). Windows
+# needs a window handle, so it's left out there for now.
+[target.'cfg(not(windows))'.dependencies]
+souvlaki = { version = "0.8", default-features = false, features = ["use_zbus"] }
+
+# Main-thread run loop for media key handlers.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -14,6 +14,14 @@ const TEMPLATE: &str = r#"# ytm-player configuration
 client_id = ""
 client_secret = ""
 
+# Optional: a second client of type "TVs and Limited Input devices", used by
+# `ytm login --device` (sign in by code, e.g. over SSH).
+device_client_id = ""
+device_client_secret = ""
+
+# Media keys and the system "Now Playing" widget (macOS, Linux).
+media_controls = true
+
 # Retry with a JavaScript runtime (system deno/node, or a ~2 MB QuickJS-NG
 # download) when yt-dlp fails without one. false = never run JS.
 js_fallback = true
@@ -33,6 +41,9 @@ volume = 0.8
 pub struct Settings {
     pub client_id: String,
     pub client_secret: String,
+    pub device_client_id: String,
+    pub device_client_secret: String,
+    pub media_controls: bool,
     pub js_fallback: bool,
     pub ytdlp_extra_args: Vec<String>,
     pub liked_music_only: bool,
@@ -44,6 +55,9 @@ impl Default for Settings {
         Self {
             client_id: String::new(),
             client_secret: String::new(),
+            device_client_id: String::new(),
+            device_client_secret: String::new(),
+            media_controls: true,
             js_fallback: true,
             ytdlp_extra_args: Vec::new(),
             liked_music_only: true,
@@ -74,15 +88,21 @@ impl Settings {
         if let Ok(secret) = std::env::var("YTM_CLIENT_SECRET") {
             settings.client_secret = secret;
         }
-        settings.client_id = normalize_client_id(&settings.client_id);
-        settings.client_secret = settings.client_secret.trim().to_owned();
-        if settings.has_oauth_client() && !is_valid_client_id(&settings.client_id) {
-            bail!(
-                "client_id in {} doesn't look like a Google OAuth client ID \
-                 (expected `<digits>-<letters>.apps.googleusercontent.com`)",
-                path.display()
-            );
+        for (name, id) in [
+            ("client_id", &mut settings.client_id),
+            ("device_client_id", &mut settings.device_client_id),
+        ] {
+            *id = normalize_client_id(id);
+            if !id.is_empty() && !is_valid_client_id(id) {
+                bail!(
+                    "{name} in {} doesn't look like a Google OAuth client ID \
+                     (expected `<digits>-<letters>.apps.googleusercontent.com`)",
+                    path.display()
+                );
+            }
         }
+        settings.client_secret = settings.client_secret.trim().to_owned();
+        settings.device_client_secret = settings.device_client_secret.trim().to_owned();
         settings.volume = settings.volume.clamp(0.0, 1.0);
         Ok(settings)
     }
@@ -90,7 +110,63 @@ impl Settings {
     pub fn has_oauth_client(&self) -> bool {
         !self.client_id.trim().is_empty()
     }
+
+    pub fn has_device_client(&self) -> bool {
+        !self.device_client_id.trim().is_empty()
+    }
+
+    /// Writes OAuth client credentials into `path`, keeping comments and
+    /// other settings. `device` selects the `device_client_*` keys.
+    pub fn store_client(path: &Path, id: &str, secret: &str, device: bool) -> Result<()> {
+        let id = normalize_client_id(id);
+        if !is_valid_client_id(&id) {
+            bail!("not a Google OAuth client ID: {id}");
+        }
+        if secret.contains(['"', '\\', '\n']) {
+            bail!("unexpected characters in client secret");
+        }
+        let prefix = if device { "device_client" } else { "client" };
+        let text = std::fs::read_to_string(path).unwrap_or_else(|_| TEMPLATE.to_owned());
+        let (mut seen_id, mut seen_secret) = (false, false);
+        let mut out: Vec<String> = text
+            .lines()
+            .map(|line| {
+                let key = line.split('=').next().unwrap_or("").trim();
+                if key == format!("{prefix}_id") {
+                    seen_id = true;
+                    format!("{prefix}_id = \"{id}\"")
+                } else if key == format!("{prefix}_secret") {
+                    seen_secret = true;
+                    format!("{prefix}_secret = \"{secret}\"")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        // Older config files may lack the keys: prepend (before any table).
+        if !seen_secret {
+            out.insert(0, format!("{prefix}_secret = \"{secret}\""));
+        }
+        if !seen_id {
+            out.insert(0, format!("{prefix}_id = \"{id}\""));
+        }
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(path, out.join("\n") + "\n")?;
+        restrict_permissions(path);
+        Ok(())
+    }
 }
+
+#[cfg(unix)]
+fn restrict_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+
+#[cfg(not(unix))]
+fn restrict_permissions(_path: &Path) {}
 
 /// Undoes copy-paste damage: terminals and editors sometimes turn the ID
 /// into a link (`http://…googleusercontent.com/`).
@@ -127,6 +203,27 @@ mod tests {
         assert!(is_valid_client_id(id));
         assert!(!is_valid_client_id("abc.apps.googleusercontent.com"));
         assert!(!is_valid_client_id("859927131765-abc123"));
+    }
+
+    #[test]
+    fn store_client_rewrites_keys_in_place() {
+        let dir = std::env::temp_dir().join(format!("ytm-cfg-test-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, TEMPLATE).unwrap();
+        let id = "123-abc.apps.googleusercontent.com";
+        Settings::store_client(&path, &format!("http://{id}/"), "GOCSPX-x", false).unwrap();
+        let s = Settings::load(&path).unwrap();
+        assert_eq!(s.client_id, id);
+        assert_eq!(s.client_secret, "GOCSPX-x");
+        assert!(!s.has_device_client());
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("# Startup volume")
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

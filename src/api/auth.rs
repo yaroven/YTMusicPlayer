@@ -1,13 +1,21 @@
-//! OAuth 2.0 Authorization Code + PKCE for installed apps: open the consent
-//! page in the browser, receive the code on a loopback listener
-//! (`http://127.0.0.1:<random port>`), exchange it for tokens.
+//! Google sign-in.
+//!
+//! - [`login`]: Authorization Code + PKCE for installed apps — open the
+//!   consent page in the browser, receive the code on a loopback listener
+//!   (`http://127.0.0.1:<random port>`), exchange it for tokens.
+//! - [`login_device`]: device flow for machines without a local browser
+//!   (SSH): show a code, approve it on any device. Needs a separate
+//!   "TVs and Limited Input devices" OAuth client.
 
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use oauth2::{
-    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge, RedirectUrl,
-    RefreshToken, Scope, TokenResponse, TokenUrl, basic::BasicClient,
+    AuthType, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
+    DeviceAuthorizationUrl, EmptyExtraDeviceAuthorizationFields, PkceCodeChallenge, RedirectUrl,
+    RefreshToken, RequestTokenError, Scope, StandardDeviceAuthorizationResponse, TokenResponse,
+    TokenUrl,
+    basic::{BasicClient, BasicErrorResponseType},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -19,7 +27,10 @@ use super::token_store::{self, StoredToken};
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-const SCOPE: &str = "https://www.googleapis.com/auth/youtube.readonly";
+const DEVICE_URL: &str = "https://oauth2.googleapis.com/device/code";
+/// Read + like/add-to-playlist. Tokens from older read-only logins keep
+/// working for reading; writes then ask the user to log in again.
+const SCOPE: &str = "https://www.googleapis.com/auth/youtube";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone)]
@@ -78,11 +89,54 @@ pub async fn login(cfg: &OAuthClient) -> Result<StoredToken> {
         .await
         .context("exchanging authorization code")?;
 
-    Ok(StoredToken {
+    Ok(stored(&response, None, false))
+}
+
+/// Device flow: prints a URL and code, polls until approved on any device.
+pub async fn login_device(cfg: &OAuthClient) -> Result<StoredToken> {
+    let client = basic_client!(cfg)
+        .set_device_authorization_url(DeviceAuthorizationUrl::new(DEVICE_URL.into())?)
+        // Google wants client credentials in the request body.
+        .set_auth_type(AuthType::RequestBody);
+    let http = token_http()?;
+    let details: StandardDeviceAuthorizationResponse = client
+        .exchange_device_code()
+        .add_scope(Scope::new(SCOPE.into()))
+        .request_async(&http)
+        .await
+        .context(
+            "requesting a device code (is device_client_id a \"TVs and Limited Input\" client?)",
+        )?;
+    let _: &EmptyExtraDeviceAuthorizationFields = details.extra_fields();
+
+    println!(
+        "On any phone or computer, open:\n\n    {}\n\nand enter the code:  {}\n\nWaiting for approval…",
+        details.verification_uri().as_str(),
+        details.user_code().secret()
+    );
+    let response = client
+        .exchange_device_access_token(&details)
+        .request_async(&http, tokio::time::sleep, Some(LOGIN_TIMEOUT))
+        .await
+        .context("waiting for device approval")?;
+    Ok(stored(&response, None, true))
+}
+
+fn stored(
+    response: &impl TokenResponse,
+    previous_refresh: Option<String>,
+    device: bool,
+) -> StoredToken {
+    StoredToken {
         access_token: response.access_token().secret().clone(),
-        refresh_token: response.refresh_token().map(|t| t.secret().clone()),
+        // Google omits the refresh token on refresh: keep the old one.
+        refresh_token: response
+            .refresh_token()
+            .map(|t| t.secret().clone())
+            .or(previous_refresh),
         expires_at: expires_at(response.expires_in()),
-    })
+        device,
+    }
 }
 
 /// Waits for the browser redirect and returns the authorization code.
@@ -140,13 +194,16 @@ fn expires_at(expires_in: Option<Duration>) -> i64 {
 /// Hands out valid access tokens, refreshing and persisting as needed.
 pub struct Auth {
     cfg: OAuthClient,
+    /// Refreshes tokens obtained via [`login_device`].
+    device_cfg: Option<OAuthClient>,
     token: Mutex<Option<StoredToken>>,
 }
 
 impl Auth {
-    pub fn new(cfg: OAuthClient) -> Self {
+    pub fn new(cfg: OAuthClient, device_cfg: Option<OAuthClient>) -> Self {
         Self {
             cfg,
+            device_cfg,
             token: Mutex::new(None),
         }
     }
@@ -175,20 +232,27 @@ impl Auth {
             .refresh_token
             .clone()
             .context("session expired — run `ytm login`")?;
-        let response = basic_client!(self.cfg)
+        let cfg = match (old.device, &self.device_cfg) {
+            (true, Some(device)) => device,
+            (true, None) => bail!("signed in with --device but device_client_id is not configured"),
+            (false, _) => &self.cfg,
+        };
+        let result = basic_client!(cfg)
+            .set_auth_type(AuthType::RequestBody)
             .exchange_refresh_token(&RefreshToken::new(refresh.clone()))
             .request_async(&token_http()?)
-            .await
-            .context("refreshing access token (if this persists, run `ytm login`)")?;
-        Ok(StoredToken {
-            access_token: response.access_token().secret().clone(),
-            // Google omits the refresh token on refresh: keep the old one.
-            refresh_token: Some(
-                response
-                    .refresh_token()
-                    .map_or(refresh, |t| t.secret().clone()),
-            ),
-            expires_at: expires_at(response.expires_in()),
-        })
+            .await;
+        match result {
+            Ok(response) => Ok(stored(&response, Some(refresh), old.device)),
+            // Revoked, or the 7-day limit Google applies to apps in "Testing".
+            Err(RequestTokenError::ServerResponse(r))
+                if *r.error() == BasicErrorResponseType::InvalidGrant =>
+            {
+                bail!(
+                    "sign-in expired — run `ytm login` (apps in Google's \"Testing\" mode expire logins after 7 days)"
+                )
+            }
+            Err(err) => Err(anyhow!(err)).context("refreshing access token"),
+        }
     }
 }

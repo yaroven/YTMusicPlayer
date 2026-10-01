@@ -16,7 +16,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use super::{
@@ -34,6 +34,10 @@ const UPDATE_TIMEOUT: Duration = Duration::from_secs(120);
 /// Prefer progressive AAC in MP4 (itag 140): symphonia (via rodio) decodes it,
 /// but has no Opus decoder. `protocol^=http` excludes HLS/DASH manifests.
 pub const DEFAULT_FORMAT: &str = "bestaudio[ext=m4a][protocol^=http]/bestaudio[acodec^=mp4a][protocol^=http]/bestaudio[protocol^=http]";
+
+/// yt-dlp output template selecting just the [`RawInfo`] fields as JSON.
+const PRINT_TEMPLATE: &str =
+    "%(.{title,duration,url,format_id,ext,acodec,abr,asr,filesize,filesize_approx,http_headers})j";
 
 pub type Result<T, E = ExtractorError> = std::result::Result<T, E>;
 
@@ -86,7 +90,7 @@ pub enum BinarySource {
 }
 
 /// A direct, time-limited audio URL plus what's needed to play it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioStream {
     pub video_id: String,
     pub title: Option<String>,
@@ -306,7 +310,9 @@ impl YtDlp {
             "--no-playlist",
             "--no-warnings",
             "--no-progress",
-            "--dump-single-json",
+            // Only the fields we use: ~2 KB instead of the ~650 KB full info JSON.
+            "--print",
+            PRINT_TEMPLATE,
             "--format",
             &self.format,
             // Deterministic: never pick up a runtime implicitly from PATH.
@@ -448,8 +454,8 @@ fn classify_failure(status: ExitStatus, stderr: &str) -> ExtractorError {
     }
 }
 
-/// Subset of yt-dlp's info dict. With a single (non-merged) format selected,
-/// the chosen format's fields are hoisted to the top level.
+/// Fields printed via [`PRINT_TEMPLATE`]. With a single (non-merged) format
+/// selected, the chosen format's fields are at the top level.
 #[derive(Debug, Deserialize)]
 struct RawInfo {
     title: Option<String>,

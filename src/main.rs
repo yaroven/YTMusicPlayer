@@ -1,5 +1,6 @@
 use std::{
     io::Write,
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -29,36 +30,64 @@ const USAGE: &str = "\
 ytm — lightweight YouTube Music player
 
 USAGE:
-    ytm                     open the player (TUI)
-    ytm login               sign in with Google (opens the browser)
-    ytm logout              forget the stored sign-in
-    ytm sync                refresh the local library from YouTube
-    ytm play <id|url>       play one track without the TUI
-    ytm resolve <id> [--js] print the direct audio URL (debug)
-    ytm config              print config file location
-    ytm status              show setup state (config, sign-in, library)";
+    ytm                         open the player (TUI)
+    ytm login [--device]        sign in with Google (browser, or a code with --device)
+    ytm logout                  forget the stored sign-in
+    ytm import-client <json> [--device]
+                                read client ID/secret from Google's downloaded JSON
+    ytm sync                    refresh the local library from YouTube
+    ytm play <id|url>           play one track without the TUI
+    ytm resolve <id> [--js]     print the direct audio URL (debug)
+    ytm config                  print config file location
+    ytm status                  show setup state (config, sign-in, library)";
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let paths = AppPaths::new().context("cannot determine home directory")?;
     let _log_guard = init_logging(&paths);
     let settings = Settings::load(&paths.config_file())?;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    match args.as_slice() {
-        [] => run_tui(&paths, &settings).await,
-        ["login"] => login(&paths, &settings).await,
+
+    // macOS delivers media-key callbacks on the main thread's run loop, so
+    // the TUI runs on a worker thread there while main services the loop.
+    #[cfg(target_os = "macos")]
+    if args.is_empty() && settings.media_controls {
+        return macos::run_with_main_run_loop(move || {
+            runtime()?.block_on(run_tui(&paths, &settings))
+        });
+    }
+
+    runtime()?.block_on(dispatch(&paths, &settings, &args))
+}
+
+/// Single-threaded runtime: the work is I/O-bound and every extra worker
+/// thread costs memory. Blocking calls go to `spawn_blocking`.
+fn runtime() -> Result<tokio::runtime::Runtime> {
+    Ok(tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(4)
+        .thread_stack_size(512 * 1024)
+        .build()?)
+}
+
+async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Result<()> {
+    match args {
+        [] => run_tui(paths, settings).await,
+        ["login"] => login(paths, settings, false).await,
+        ["login", "--device"] => login(paths, settings, true).await,
         ["logout"] => {
             token_store::clear().await?;
             println!("Signed out.");
             Ok(())
         }
-        ["sync"] => sync(&paths, &settings).await,
-        ["play", input] => play(&paths, &settings, input).await,
-        ["resolve", id] => resolve(&paths, &settings, id, false).await,
-        ["resolve", id, "--js"] => resolve(&paths, &settings, id, true).await,
-        ["status"] => status(&paths, &settings).await,
+        ["import-client", file] => import_client(paths, file, false),
+        ["import-client", file, "--device"] => import_client(paths, file, true),
+        ["sync"] => sync(paths, settings).await,
+        ["play", input] => play(paths, settings, input).await,
+        ["resolve", id] => resolve(paths, settings, id, false).await,
+        ["resolve", id, "--js"] => resolve(paths, settings, id, true).await,
+        ["status"] => status(paths, settings).await,
         ["config"] => {
             println!("{}", paths.config_file().display());
             Ok(())
@@ -75,23 +104,36 @@ fn http_client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .user_agent(concat!("ytm-player/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(10))
+        // Few hosts, sequential requests: don't hold idle sockets around.
+        .pool_max_idle_per_host(1)
+        .pool_idle_timeout(Duration::from_secs(30))
         .build()?)
+}
+
+fn client_config(id: &str, secret: &str) -> OAuthClient {
+    let secret = secret.trim();
+    OAuthClient {
+        client_id: id.trim().to_owned(),
+        client_secret: (!secret.is_empty()).then(|| secret.to_owned()),
+    }
 }
 
 fn oauth_client(settings: &Settings, paths: &AppPaths) -> Result<OAuthClient> {
     if !settings.has_oauth_client() {
         bail!(
             "no Google OAuth client configured.\n\
-             Set client_id and client_secret in {} (see README), \
-             or YTM_CLIENT_ID / YTM_CLIENT_SECRET.",
+             Run `ytm import-client <downloaded.json>`, or set client_id and \
+             client_secret in {} (see README).",
             paths.config_file().display()
         );
     }
-    let secret = settings.client_secret.trim();
-    Ok(OAuthClient {
-        client_id: settings.client_id.trim().to_owned(),
-        client_secret: (!secret.is_empty()).then(|| secret.to_owned()),
-    })
+    Ok(client_config(&settings.client_id, &settings.client_secret))
+}
+
+fn device_client(settings: &Settings) -> Option<OAuthClient> {
+    settings
+        .has_device_client()
+        .then(|| client_config(&settings.device_client_id, &settings.device_client_secret))
 }
 
 /// `Some` when an OAuth client is configured and a token is stored.
@@ -103,7 +145,10 @@ async fn youtube_client(
     if !settings.has_oauth_client() || token_store::load().await?.is_none() {
         return Ok(None);
     }
-    let auth = Arc::new(Auth::new(oauth_client(settings, paths)?));
+    let auth = Arc::new(Auth::new(
+        oauth_client(settings, paths)?,
+        device_client(settings),
+    ));
     Ok(Some(Arc::new(YouTubeClient::new(http.clone(), auth))))
 }
 
@@ -112,6 +157,7 @@ async fn resolver(
     settings: &Settings,
     http: &reqwest::Client,
     force_js: bool,
+    store: Option<Arc<Library>>,
 ) -> Result<StreamResolver> {
     let ytdlp = match YtDlp::find(&paths.bin_dir()) {
         Some(found) => found,
@@ -128,11 +174,12 @@ async fn resolver(
         (false, true) => JsPolicy::OnDemand,
         (false, false) => JsPolicy::Never,
     };
-    Ok(StreamResolver::new(
+    Ok(StreamResolver::with_store(
         ytdlp,
         http.clone(),
         paths.bin_dir(),
         policy,
+        store,
     ))
 }
 
@@ -140,7 +187,7 @@ async fn run_tui(paths: &AppPaths, settings: &Settings) -> Result<()> {
     let http = http_client()?;
     let library = Arc::new(Library::open(&paths.database())?);
     let youtube = youtube_client(settings, paths, &http).await?;
-    let resolver = resolver(paths, settings, &http, false).await?;
+    let resolver = resolver(paths, settings, &http, false, Some(library.clone())).await?;
     resolver.spawn_maintenance();
 
     app::run(Deps {
@@ -150,17 +197,53 @@ async fn run_tui(paths: &AppPaths, settings: &Settings) -> Result<()> {
         youtube,
         liked_music_only: settings.liked_music_only,
         volume: settings.volume,
+        media_controls: settings.media_controls,
     })
     .await
 }
 
-async fn login(paths: &AppPaths, settings: &Settings) -> Result<()> {
-    let token = ytm_player::api::auth::login(&oauth_client(settings, paths)?).await?;
+async fn login(paths: &AppPaths, settings: &Settings, device: bool) -> Result<()> {
+    let token = if device {
+        let cfg = device_client(settings).with_context(|| {
+            format!(
+                "--device needs a \"TVs and Limited Input devices\" OAuth client: set \
+                 device_client_id/device_client_secret in {} or run \
+                 `ytm import-client <json> --device`",
+                paths.config_file().display()
+            )
+        })?;
+        ytm_player::api::auth::login_device(&cfg).await?
+    } else {
+        ytm_player::api::auth::login(&oauth_client(settings, paths)?).await?
+    };
     if token.refresh_token.is_none() {
         eprintln!("warning: Google returned no refresh token; you may need to log in again soon");
     }
     token_store::save(&token).await?;
     println!("Signed in. Run `ytm sync` or just `ytm`.");
+    Ok(())
+}
+
+/// Reads Google's "Download JSON" file (`{"installed": {...}}`) into config.
+fn import_client(paths: &AppPaths, file: &str, device: bool) -> Result<()> {
+    let text =
+        std::fs::read_to_string(Path::new(file)).with_context(|| format!("reading {file}"))?;
+    let json: serde_json::Value = serde_json::from_str(&text).context("not a JSON file")?;
+    let client = ["installed", "web"]
+        .iter()
+        .find_map(|k| json.get(*k))
+        .unwrap_or(&json);
+    let id = client["client_id"]
+        .as_str()
+        .context("no client_id in the file — is this Google's OAuth client JSON?")?;
+    let secret = client["client_secret"].as_str().unwrap_or("");
+    Settings::store_client(&paths.config_file(), id, secret, device)?;
+    let kind = if device { "device client" } else { "client" };
+    println!(
+        "Imported {kind} {id} into {}",
+        paths.config_file().display()
+    );
+    println!("Next: ytm login{}", if device { " --device" } else { "" });
     Ok(())
 }
 
@@ -170,11 +253,17 @@ async fn status(paths: &AppPaths, settings: &Settings) -> Result<()> {
     } else {
         "missing"
     };
+    let device = if settings.has_device_client() {
+        ", device client: set"
+    } else {
+        ""
+    };
     println!(
-        "config:     {} (OAuth client: {client})",
+        "config:     {} (OAuth client: {client}{device})",
         paths.config_file().display()
     );
     let signed_in = match token_store::load().await {
+        Ok(Some(t)) if t.device => "yes (device)".to_owned(),
         Ok(Some(_)) => "yes".to_owned(),
         Ok(None) => "no".to_owned(),
         Err(err) => format!("unknown ({err:#})"),
@@ -210,8 +299,8 @@ async fn sync(paths: &AppPaths, settings: &Settings) -> Result<()> {
     println!("Syncing…");
     let report = sync_library(&youtube, library, settings.liked_music_only).await?;
     println!(
-        "Synced {} playlists, {} tracks ({} API quota units).",
-        report.playlists, report.tracks, report.quota_units
+        "Synced {} playlists, {} tracks ({} unchanged, {} API quota units).",
+        report.playlists, report.tracks, report.unchanged, report.quota_units
     );
     Ok(())
 }
@@ -219,7 +308,8 @@ async fn sync(paths: &AppPaths, settings: &Settings) -> Result<()> {
 async fn play(paths: &AppPaths, settings: &Settings, input: &str) -> Result<()> {
     let video_id = video_id_from_input(input).context("not a YouTube video id or URL")?;
     let http = http_client()?;
-    let resolver = resolver(paths, settings, &http, false).await?;
+    let library = Arc::new(Library::open(&paths.database())?);
+    let resolver = resolver(paths, settings, &http, false, Some(library)).await?;
 
     let started = Instant::now();
     let (body, stream) = open_track(&resolver, &http, &video_id).await?;
@@ -239,13 +329,14 @@ async fn play(paths: &AppPaths, settings: &Settings, input: &str) -> Result<()> 
     player.load(body, stream.duration, 1);
 
     let mut tick = tokio::time::interval(Duration::from_millis(500));
+    let mut ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());
     loop {
         tokio::select! {
             event = events.recv() => match event {
                 Some(PlayerEvent::Error { message, .. }) => bail!(message),
                 _ => break,
             },
-            _ = tokio::signal::ctrl_c() => break,
+            _ = &mut ctrl_c => break,
             _ = tick.tick() => {
                 let s = player.status();
                 if s.state != PlayState::Idle {
@@ -267,7 +358,8 @@ fn fmt(d: Duration) -> String {
 async fn resolve(paths: &AppPaths, settings: &Settings, id: &str, js: bool) -> Result<()> {
     let video_id = video_id_from_input(id).context("not a YouTube video id or URL")?;
     let http = http_client()?;
-    let resolver = resolver(paths, settings, &http, js).await?;
+    // No persistent store: this command is for debugging resolution itself.
+    let resolver = resolver(paths, settings, &http, js, None).await?;
     let ytdlp = resolver.ytdlp();
     println!("yt-dlp: {} ({:?})", ytdlp.path().display(), ytdlp.source());
 
@@ -296,10 +388,57 @@ fn init_logging(paths: &AppPaths) -> tracing_appender::non_blocking::WorkerGuard
     let (writer, guard) = tracing_appender::non_blocking(appender);
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_env("YTM_LOG").unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_env("YTM_LOG")
+                .unwrap_or_else(|_| EnvFilter::new("info,symphonia=warn")),
         )
         .with_writer(writer)
         .with_ansi(false)
         .init();
     guard
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        time::Duration,
+    };
+
+    use anyhow::{Result, anyhow};
+    use core_foundation::runloop::{CFRunLoop, CFRunLoopRunResult, kCFRunLoopDefaultMode};
+
+    /// Runs `work` on a thread while the main thread services its run loop
+    /// (media-key handlers are dispatched there). Returns `work`'s result.
+    pub fn run_with_main_run_loop<F>(work: F) -> Result<()>
+    where
+        F: FnOnce() -> Result<()> + Send + 'static,
+    {
+        let done = Arc::new(AtomicBool::new(false));
+        let worker = {
+            let done = done.clone();
+            std::thread::Builder::new()
+                .name("app".into())
+                .spawn(move || {
+                    let result = work();
+                    done.store(true, Ordering::Release);
+                    CFRunLoop::get_main().stop();
+                    result
+                })?
+        };
+        while !done.load(Ordering::Acquire) {
+            let result = CFRunLoop::run_in_mode(
+                unsafe { kCFRunLoopDefaultMode },
+                Duration::from_millis(250),
+                false,
+            );
+            // No sources yet (e.g. before media controls register): don't spin.
+            if result == CFRunLoopRunResult::Finished {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+        worker.join().map_err(|_| anyhow!("app thread panicked"))?
+    }
 }

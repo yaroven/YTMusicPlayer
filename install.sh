@@ -1,28 +1,32 @@
 #!/usr/bin/env bash
 # ytm-player installer for Linux and macOS.
-# Installs build dependencies and Rust if missing, builds and installs `ytm`,
-# helps with the Google OAuth client and sign-in, then starts the player.
-# Safe to re-run: use it again after `git pull` to update.
+# Installs a prebuilt `ytm` from GitHub Releases when one is available,
+# otherwise builds it (installing build dependencies and Rust if missing).
+# Then helps with the Google OAuth client and sign-in, and starts the player.
+# Safe to re-run: use it again to update.
 set -euo pipefail
 
 YES=0
 DEPS=1
 LAUNCH=1
+FROM_SOURCE=0
 
 usage() {
   cat <<'EOF'
 Usage: ./install.sh [options]
 
-  -y, --yes      don't ask; accept defaults (never starts the TUI)
-  --no-deps      skip system package installation
-  --no-launch    don't start ytm at the end
-  -h, --help     show this help
+  -y, --yes        don't ask; accept defaults (never starts the TUI)
+  --from-source    build from this checkout instead of downloading a release
+  --no-deps        skip system package installation (source builds)
+  --no-launch      don't start ytm at the end
+  -h, --help       show this help
 EOF
 }
 
 while (($#)); do
   case $1 in
     -y | --yes) YES=1 ;;
+    --from-source) FROM_SOURCE=1 ;;
     --no-deps) DEPS=0 ;;
     --no-launch) LAUNCH=0 ;;
     -h | --help) usage && exit 0 ;;
@@ -63,9 +67,73 @@ grep -q '^name = "ytm-player"' Cargo.toml 2>/dev/null ||
   die "run this script from the ytm-player repository"
 
 OS=$(uname -s)
-[[ $OS == Linux || $OS == Darwin ]] || die "unsupported OS: $OS (on Windows see README)"
+[[ $OS == Linux || $OS == Darwin ]] || die "unsupported OS: $OS (on Windows use install.ps1)"
 
-# --- 1. System dependencies -----------------------------------------------------
+REPO=$(git config --get remote.origin.url 2>/dev/null |
+  sed -E 's#^(https://github.com/|git@github.com:)##; s#\.git$##' || true)
+[[ $REPO == */* ]] || REPO="yaroven/YTMusicPlayer"
+
+# --- 1. Prebuilt release ------------------------------------------------------------
+
+target_triple() {
+  case "$OS/$(uname -m)" in
+    Linux/x86_64) echo x86_64-unknown-linux-gnu ;;
+    Linux/aarch64 | Linux/arm64) echo aarch64-unknown-linux-gnu ;;
+    Darwin/arm64) echo aarch64-apple-darwin ;;
+    Darwin/x86_64) echo x86_64-apple-darwin ;;
+    *) return 1 ;;
+  esac
+}
+
+sha256_check() {
+  if command -v sha256sum >/dev/null; then sha256sum -c "$1"; else shasum -a 256 -c "$1"; fi
+}
+
+# Downloads and installs the latest release binary into ~/.local/bin.
+install_prebuilt() {
+  local target asset tmp base="https://github.com/$REPO/releases/latest/download"
+  target=$(target_triple) || return 1
+  asset="ytm-$target.tar.gz"
+  tmp=$(mktemp -d)
+  # Public repo: plain download. Private repo: GitHub CLI with your login.
+  if curl -fsSL -o "$tmp/$asset" "$base/$asset" 2>/dev/null &&
+    curl -fsSL -o "$tmp/$asset.sha256" "$base/$asset.sha256" 2>/dev/null; then
+    :
+  elif command -v gh >/dev/null && gh auth status >/dev/null 2>&1 &&
+    gh release download --repo "$REPO" --pattern "$asset" --pattern "$asset.sha256" \
+      --dir "$tmp" >/dev/null 2>&1; then
+    :
+  else
+    rm -rf "$tmp"
+    return 1
+  fi
+  (cd "$tmp" && sha256_check "$asset.sha256" >/dev/null) || {
+    rm -rf "$tmp"
+    die "checksum mismatch for $asset"
+  }
+  tar -xzf "$tmp/$asset" -C "$tmp"
+  mkdir -p "$HOME/.local/bin"
+  install -m 755 "$tmp/ytm" "$HOME/.local/bin/ytm"
+  rm -rf "$tmp"
+  BIN="$HOME/.local/bin/ytm"
+  # A binary that can't start (e.g. missing system audio library) is useless.
+  "$BIN" --help >/dev/null 2>&1 || {
+    warn "prebuilt binary doesn't run on this system; building instead"
+    return 1
+  }
+  info "installed release $target to $BIN"
+}
+
+BIN=""
+if ((!FROM_SOURCE)); then
+  say "Downloading ytm"
+  install_prebuilt || {
+    info "no prebuilt release available here; building from source"
+    BIN=""
+  }
+fi
+
+# --- 2. Build from source (fallback) ---------------------------------------------------
 
 install_linux_deps() {
   local sudo=() pkgs=()
@@ -94,53 +162,56 @@ install_linux_deps() {
   fi
 }
 
-if ((DEPS)); then
-  say "System dependencies"
-  if [[ $OS == Darwin ]]; then
-    if xcode-select -p >/dev/null 2>&1; then
-      info "Xcode Command Line Tools: installed"
+build_from_source() {
+  if ((DEPS)); then
+    say "System dependencies"
+    if [[ $OS == Darwin ]]; then
+      if xcode-select -p >/dev/null 2>&1; then
+        info "Xcode Command Line Tools: installed"
+      else
+        xcode-select --install || true
+        die "finish the Xcode Command Line Tools installer, then run this script again"
+      fi
     else
-      xcode-select --install || true
-      die "finish the Xcode Command Line Tools installer, then run this script again"
+      install_linux_deps
     fi
-  else
-    install_linux_deps
   fi
-fi
 
-# --- 2. Rust ----------------------------------------------------------------------
-
-say "Rust toolchain"
-CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
-if ! command -v cargo >/dev/null && [[ -x $CARGO_BIN/cargo ]]; then
-  export PATH="$CARGO_BIN:$PATH"
-fi
-if ! command -v cargo >/dev/null; then
-  ask "Rust is not installed. Install it with rustup (https://rustup.rs)?" y ||
-    die "Rust is required"
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-  export PATH="$CARGO_BIN:$PATH"
-fi
-
-# Cargo.toml requires 1.85+.
-rust_minor=$(rustc --version | awk '{split($2, v, "."); print v[2]}')
-if ((rust_minor < 85)); then
-  if command -v rustup >/dev/null; then
-    run rustup update stable
-  else
-    die "Rust $(rustc --version | awk '{print $2}') is too old; 1.85+ required (distro Rust? install via rustup)"
+  say "Rust toolchain"
+  local cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+  if ! command -v cargo >/dev/null && [[ -x $cargo_bin/cargo ]]; then
+    export PATH="$cargo_bin:$PATH"
   fi
-fi
-info "$(rustc --version)"
+  if ! command -v cargo >/dev/null; then
+    ask "Rust is not installed. Install it with rustup (https://rustup.rs)?" y ||
+      die "Rust is required"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+    export PATH="$cargo_bin:$PATH"
+  fi
+  # Cargo.toml requires 1.85+.
+  local rust_minor
+  rust_minor=$(rustc --version | awk '{split($2, v, "."); print v[2]}')
+  if ((rust_minor < 85)); then
+    if command -v rustup >/dev/null; then
+      run rustup update stable
+    else
+      die "Rust $(rustc --version | awk '{print $2}') is too old; 1.85+ required (distro Rust? install via rustup)"
+    fi
+  fi
+  info "$(rustc --version)"
 
-# --- 3. Build and install --------------------------------------------------------
+  say "Building ytm (release, takes a few minutes the first time)"
+  run cargo install --path . --locked
+  BIN="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin/ytm"
+  [[ -x $BIN ]] || die "build finished but $BIN is missing"
+  info "installed: $BIN"
+}
 
-say "Building ytm (release, takes a few minutes the first time)"
-run cargo install --path . --locked
-BIN="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin/ytm"
-[[ -x $BIN ]] || die "build finished but $BIN is missing"
-info "installed: $BIN"
-# Homebrew/distro Rust (unlike rustup) doesn't put ~/.cargo/bin on PATH.
+[[ -n $BIN ]] || build_from_source
+
+# --- 3. PATH ---------------------------------------------------------------------------
+
+# Homebrew/distro Rust (unlike rustup) and ~/.local/bin aren't always on PATH.
 if [[ $(command -v ytm || true) != "$BIN" ]]; then
   bin_dir=$(dirname "$BIN")
   case ${SHELL##*/} in
@@ -149,12 +220,11 @@ if [[ $(command -v ytm || true) != "$BIN" ]]; then
     *) profile="$HOME/.profile" ;;
   esac
   line="export PATH=\"$bin_dir:\$PATH\""
-  # Also recognise the portable "$HOME/.cargo/bin" spelling.
-  if grep -qsF "$line" "$profile" ||
-    { [[ $bin_dir == "$HOME/.cargo/bin" ]] && grep -qsF "\$HOME/.cargo/bin" "$profile"; }; then
+  portable="\$HOME${bin_dir#"$HOME"}"
+  if grep -qsF "$line" "$profile" || grep -qsF "$portable" "$profile"; then
     info "PATH is set in $profile; open a new terminal to use 'ytm'"
   elif ask "Add $bin_dir to PATH in $profile?" y; then
-    printf '\n# ytm-player: cargo bin\n%s\n' "$line" >>"$profile"
+    printf '\n# ytm-player: bin dir\n%s\n' "$line" >>"$profile"
     info "added; open a new terminal (or run: source $profile)"
   else
     warn "$bin_dir is not on PATH; add to your shell profile: $line"
@@ -179,29 +249,26 @@ fi
 say "Configuration"
 CONFIG=$("$BIN" config)
 info "config file: $CONFIG"
-status=$("$BIN" status)
 
-valid_value() { [[ $1 =~ ^[A-Za-z0-9._-]+$ ]]; }
-
-if grep -q 'OAuth client: missing' <<<"$status"; then
-  info "No Google OAuth client yet. One-time setup (~5 min), README section"
-  info "\"Set up Google sign-in\": create a Desktop-app client, then paste it here."
-  if interactive && ask "Enter client ID and secret now?" y; then
+if grep -q 'OAuth client: missing' <<<"$("$BIN" status)"; then
+  info "No Google OAuth client yet (one-time setup, README \"Set up Google sign-in\")."
+  # Google's "Download JSON" lands here as client_secret_<id>.json.
+  json=""
+  for f in "$HOME"/Downloads/client_secret_*.json; do
+    [[ -f $f && ( -z $json || $f -nt $json ) ]] && json=$f
+  done
+  if [[ -n $json ]] && ask "Import $(basename "$json") from Downloads?" y; then
+    "$BIN" import-client "$json"
+  elif interactive && ask "Paste client ID and secret now?" y; then
     read -r -p "    client_id: " client_id </dev/tty
     read -r -p "    client_secret: " client_secret </dev/tty
-    if ! valid_value "$client_id" || ! valid_value "$client_secret"; then
-      die "unexpected characters in client_id/client_secret"
-    fi
     tmp=$(mktemp)
-    awk -v id="$client_id" -v secret="$client_secret" '
-      /^client_id[[:space:]]*=/     { print "client_id = \"" id "\""; next }
-      /^client_secret[[:space:]]*=/ { print "client_secret = \"" secret "\""; next }
-      { print }' "$CONFIG" >"$tmp"
-    mv "$tmp" "$CONFIG"
-    chmod 600 "$CONFIG"
-    info "saved to $CONFIG"
+    printf '{"installed":{"client_id":"%s","client_secret":"%s"}}' \
+      "${client_id//\"/}" "${client_secret//\"/}" >"$tmp"
+    "$BIN" import-client "$tmp" || warn "not saved; fix and retry with: ytm import-client <file.json>"
+    rm -f "$tmp"
   else
-    info "Later: edit $CONFIG, then run: ytm login"
+    info "Later: ytm import-client ~/Downloads/client_secret_….json, then: ytm login"
   fi
 else
   info "OAuth client: configured"
@@ -215,8 +282,8 @@ if grep -q 'signed in:  yes' <<<"$status"; then
 elif grep -q 'OAuth client: set' <<<"$status" && interactive; then
   say "Sign in"
   if [[ -n ${SSH_CONNECTION:-} ]]; then
-    warn "over SSH the browser redirect goes to 127.0.0.1 on the machine running the browser;"
-    info "easiest is to run 'ytm login' at this computer's own desktop."
+    warn "over SSH the browser redirect can't reach this machine;"
+    info "use 'ytm login --device' (needs a TV-type client, see README) or log in at the desktop."
   fi
   if ask "Sign in with Google now (opens the browser)?" y; then
     "$BIN" login || warn "sign-in failed; retry later with: ytm login"

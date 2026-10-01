@@ -1,10 +1,13 @@
-//! Progressive HTTP download exposed as blocking `Read + Seek` for rodio.
+//! Bounded-memory HTTP stream exposed as blocking `Read + Seek` for rodio.
 //!
-//! The file is fetched in 1 MiB `Range` chunks (googlevideo throttles
-//! un-chunked downloads) into memory: ~1 MB per minute of 128 kbps AAC.
-//! Reads past the downloaded part block until the bytes arrive.
+//! The file is split into [`CHUNK`]-sized pieces fetched with `Range`
+//! requests by a background task, which stays up to [`AHEAD`] chunks ahead of
+//! the reader. At most [`MAX_CHUNKS`] are kept (~2 MiB), so memory doesn't
+//! grow with track length. Seeking to a chunk that isn't cached fetches it on
+//! demand; the reader blocks until it arrives.
 
 use std::{
+    collections::HashMap,
     io::{self, Read, Seek, SeekFrom},
     sync::{Arc, Condvar, Mutex},
     time::Duration,
@@ -14,10 +17,16 @@ use reqwest::{
     StatusCode,
     header::{CONTENT_RANGE, HeaderMap, HeaderName, HeaderValue, RANGE},
 };
+use tokio::sync::Notify;
 
 use super::extractor::AudioStream;
 
-const CHUNK: u64 = 1 << 20;
+/// 256 KiB ≈ 16 s of 128 kbps audio per request.
+const CHUNK: u64 = 256 * 1024;
+/// Read-ahead: ~1 minute of audio.
+const AHEAD: u64 = 4;
+/// Hard cap on cached chunks (2 MiB).
+const MAX_CHUNKS: usize = 8;
 const RETRIES: u32 = 3;
 
 #[derive(Debug, thiserror::Error)]
@@ -38,16 +47,23 @@ impl StreamError {
 }
 
 struct State {
-    data: Vec<u8>,
-    total: u64,
-    done: bool,
+    chunks: HashMap<u64, Vec<u8>>,
+    /// Chunk the reader is currently in; the downloader works ahead of it.
+    reader_chunk: u64,
+    /// Set when the reader is blocked on a missing chunk.
+    wanted: Option<u64>,
     error: Option<String>,
     cancelled: bool,
 }
 
 struct Shared {
     state: Mutex<State>,
-    ready: Condvar,
+    /// Wakes the (blocking) reader when a chunk lands.
+    arrived: Condvar,
+    /// Wakes the (async) downloader when the reader moves or needs a chunk.
+    moved: Notify,
+    total: u64,
+    chunk_count: u64,
 }
 
 impl Shared {
@@ -59,12 +75,11 @@ impl Shared {
 pub struct HttpStream {
     shared: Arc<Shared>,
     pos: u64,
-    total: u64,
 }
 
 impl HttpStream {
     /// Fetches the first chunk (so HTTP errors surface here, not mid-playback)
-    /// and continues downloading in a background task.
+    /// and starts the background downloader.
     pub async fn open(http: &reqwest::Client, stream: &AudioStream) -> Result<Self, StreamError> {
         let headers: HeaderMap = stream
             .http_headers
@@ -77,56 +92,57 @@ impl HttpStream {
             })
             .collect();
 
-        let (first, total) = fetch_range(http, &stream.url, &headers, 0).await?;
-        let done = first.len() as u64 >= total;
-        let mut data = Vec::with_capacity(total as usize);
-        data.extend_from_slice(&first);
+        let (first, total) = fetch_chunk(http, &stream.url, &headers, 0, None).await?;
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
-                data,
-                total,
-                done,
+                chunks: HashMap::from([(0, first)]),
+                reader_chunk: 0,
+                wanted: None,
                 error: None,
                 cancelled: false,
             }),
-            ready: Condvar::new(),
+            arrived: Condvar::new(),
+            moved: Notify::new(),
+            total,
+            chunk_count: total.div_ceil(CHUNK),
         });
-
-        if !done {
-            tokio::spawn(download_rest(
+        if shared.chunk_count > 1 {
+            tokio::spawn(downloader(
                 http.clone(),
                 stream.url.clone(),
                 headers,
                 shared.clone(),
-                first.len() as u64,
             ));
         }
-        Ok(Self {
-            shared,
-            pos: 0,
-            total,
-        })
+        Ok(Self { shared, pos: 0 })
     }
 
     pub fn len(&self) -> u64 {
-        self.total
+        self.shared.total
     }
 
     pub fn is_empty(&self) -> bool {
-        self.total == 0
+        self.shared.total == 0
     }
 }
 
-async fn fetch_range(
+/// Fetches chunk `index`; returns its bytes and the total file size.
+async fn fetch_chunk(
     http: &reqwest::Client,
     url: &str,
     headers: &HeaderMap,
-    start: u64,
+    index: u64,
+    total: Option<u64>,
 ) -> Result<(Vec<u8>, u64), StreamError> {
+    let start = index * CHUNK;
+    let mut end = start + CHUNK - 1;
+    if let Some(total) = total {
+        end = end.min(total - 1);
+    }
     let response = http
         .get(url)
         .headers(headers.clone())
-        .header(RANGE, format!("bytes={start}-{}", start + CHUNK - 1))
+        .header(RANGE, format!("bytes={start}-{end}"))
         .send()
         .await?;
     let total = match response.status() {
@@ -137,81 +153,125 @@ async fn fetch_range(
             .and_then(|v| v.rsplit('/').next())
             .and_then(|v| v.parse().ok())
             .ok_or(StreamError::UnknownLength)?,
-        // Server ignored Range and sends the whole file.
-        StatusCode::OK if start == 0 => response
-            .content_length()
-            .ok_or(StreamError::UnknownLength)?,
         status => return Err(StreamError::Status(status)),
     };
     Ok((response.bytes().await?.to_vec(), total))
 }
 
-async fn download_rest(
-    http: reqwest::Client,
-    url: String,
-    headers: HeaderMap,
-    shared: Arc<Shared>,
-    mut offset: u64,
-) {
-    let total = shared.lock().total;
-    while offset < total {
-        if shared.lock().cancelled {
-            return;
-        }
+/// Next chunk to fetch: whatever the reader is blocked on, else the first
+/// missing chunk in the read-ahead window.
+fn next_chunk(state: &State, chunk_count: u64) -> Option<u64> {
+    if let Some(w) = state.wanted.filter(|w| !state.chunks.contains_key(w)) {
+        return Some(w);
+    }
+    (state.reader_chunk..(state.reader_chunk + AHEAD + 1).min(chunk_count))
+        .find(|i| !state.chunks.contains_key(i))
+}
+
+/// Drops chunks farthest from the reader once over the cap, played ones first.
+fn evict(state: &mut State) {
+    while state.chunks.len() > MAX_CHUNKS {
+        let reader = state.reader_chunk;
+        let farthest = state.chunks.keys().copied().max_by_key(|&i| {
+            if i < reader {
+                (1, reader - i)
+            } else {
+                (0, i - reader)
+            }
+        });
+        match farthest {
+            Some(i) => state.chunks.remove(&i),
+            None => break,
+        };
+    }
+}
+
+async fn downloader(http: reqwest::Client, url: String, headers: HeaderMap, shared: Arc<Shared>) {
+    loop {
+        // Register interest before checking state, so a reader move between
+        // the check and the await isn't missed.
+        let moved = shared.moved.notified();
+        let next = {
+            let state = shared.lock();
+            if state.cancelled {
+                return;
+            }
+            next_chunk(&state, shared.chunk_count)
+        };
+        let Some(index) = next else {
+            moved.await;
+            continue;
+        };
+
         let mut attempt = 0;
-        let chunk = loop {
-            match fetch_range(&http, &url, &headers, offset).await {
+        let result = loop {
+            match fetch_chunk(&http, &url, &headers, index, Some(shared.total)).await {
                 Ok((bytes, _)) if !bytes.is_empty() => break Ok(bytes),
                 Ok(_) => break Err("empty chunk".to_owned()),
                 Err(err) if attempt < RETRIES => {
                     attempt += 1;
-                    tracing::debug!(%err, attempt, offset, "chunk failed, retrying");
+                    tracing::debug!(%err, attempt, index, "chunk failed, retrying");
                     tokio::time::sleep(Duration::from_millis(500 * u64::from(attempt))).await;
                 }
                 Err(err) => break Err(err.to_string()),
             }
         };
+
         let mut state = shared.lock();
-        match chunk {
+        match result {
             Ok(bytes) => {
-                offset += bytes.len() as u64;
-                state.data.extend_from_slice(&bytes);
+                state.chunks.insert(index, bytes);
+                if state.wanted == Some(index) {
+                    state.wanted = None;
+                }
+                evict(&mut state);
             }
             Err(err) => {
-                tracing::warn!(%err, offset, "stream download failed");
+                tracing::warn!(%err, index, "stream download failed");
                 state.error = Some(err);
-                state.done = true;
-                shared.ready.notify_all();
-                return;
             }
         }
-        shared.ready.notify_all();
+        let failed = state.error.is_some();
+        drop(state);
+        shared.arrived.notify_all();
+        if failed {
+            return;
+        }
     }
-    shared.lock().done = true;
-    shared.ready.notify_all();
 }
 
 impl Read for HttpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.pos >= self.shared.total || buf.is_empty() {
+            return Ok(0);
+        }
+        let index = self.pos / CHUNK;
         let mut state = self.shared.lock();
+        if state.reader_chunk != index {
+            state.reader_chunk = index;
+            self.shared.moved.notify_one();
+        }
         loop {
-            let len = state.data.len() as u64;
-            if self.pos < len {
-                let start = self.pos as usize;
-                let n = buf.len().min((len - self.pos) as usize);
-                buf[..n].copy_from_slice(&state.data[start..start + n]);
+            if let Some(chunk) = state.chunks.get(&index) {
+                let offset = (self.pos - index * CHUNK) as usize;
+                let n = buf.len().min(chunk.len().saturating_sub(offset));
+                if n == 0 {
+                    return Ok(0);
+                }
+                buf[..n].copy_from_slice(&chunk[offset..offset + n]);
                 self.pos += n as u64;
                 return Ok(n);
             }
-            if state.done || self.pos >= self.total {
-                return match &state.error {
-                    Some(err) if self.pos < self.total => Err(io::Error::other(err.clone())),
-                    _ => Ok(0),
-                };
+            if let Some(err) = &state.error {
+                return Err(io::Error::other(err.clone()));
+            }
+            if state.wanted != Some(index) {
+                state.wanted = Some(index);
+                self.shared.moved.notify_one();
             }
             state = self
                 .shared
-                .ready
+                .arrived
                 .wait(state)
                 .unwrap_or_else(|e| e.into_inner());
         }
@@ -222,7 +282,7 @@ impl Seek for HttpStream {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let target = match pos {
             SeekFrom::Start(n) => Some(n),
-            SeekFrom::End(off) => self.total.checked_add_signed(off),
+            SeekFrom::End(off) => self.shared.total.checked_add_signed(off),
             SeekFrom::Current(off) => self.pos.checked_add_signed(off),
         };
         self.pos = target
@@ -234,6 +294,51 @@ impl Seek for HttpStream {
 impl Drop for HttpStream {
     fn drop(&mut self) {
         self.shared.lock().cancelled = true;
-        self.shared.ready.notify_all();
+        self.shared.moved.notify_one();
+        self.shared.arrived.notify_all();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(reader: u64, have: &[u64]) -> State {
+        State {
+            chunks: have.iter().map(|&i| (i, vec![0])).collect(),
+            reader_chunk: reader,
+            wanted: None,
+            error: None,
+            cancelled: false,
+        }
+    }
+
+    #[test]
+    fn fetches_wanted_chunk_first() {
+        let mut s = state(0, &[0, 1]);
+        assert_eq!(next_chunk(&s, 100), Some(2));
+        s.wanted = Some(50);
+        assert_eq!(next_chunk(&s, 100), Some(50));
+    }
+
+    #[test]
+    fn stops_at_window_and_file_end() {
+        let s = state(0, &[0, 1, 2, 3, 4]);
+        assert_eq!(
+            next_chunk(&s, 100),
+            None,
+            "read-ahead window already cached"
+        );
+        let s = state(9, &[9]);
+        assert_eq!(next_chunk(&s, 10), None, "no chunks past the end");
+    }
+
+    #[test]
+    fn evicts_played_chunks_first_and_respects_cap() {
+        let mut s = state(10, &[0, 1, 2, 3, 8, 9, 10, 11, 12, 13]);
+        evict(&mut s);
+        assert_eq!(s.chunks.len(), MAX_CHUNKS);
+        assert!(!s.chunks.contains_key(&0) && !s.chunks.contains_key(&1));
+        assert!(s.chunks.contains_key(&10) && s.chunks.contains_key(&13));
     }
 }

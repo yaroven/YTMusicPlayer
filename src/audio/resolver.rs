@@ -5,7 +5,8 @@
 //! - At most [`MAX_CONCURRENT`] yt-dlp processes run at once.
 //! - Fallback ladder on failure: plain → with JS runtime → after `yt-dlp -U`.
 //!
-//! TODO: persist the cache in `storage` so URLs survive restarts.
+//! - Resolved URLs are also persisted in the library DB, so a restart doesn't
+//!   pay the ~6 s yt-dlp run again; memory keeps only [`MEMORY_CAP`] entries.
 
 use std::{
     collections::HashMap,
@@ -19,6 +20,8 @@ use std::{
 
 use tokio::sync::{OnceCell, Semaphore};
 
+use crate::storage::Library;
+
 use super::{
     extractor::{AudioStream, ExtractorError, Result, YtDlp},
     js_runtime::JsRuntime,
@@ -30,6 +33,8 @@ const MAX_CONCURRENT: usize = 2;
 /// A URL this close to expiry is re-resolved rather than handed to the player.
 const FRESH_MARGIN: Duration = Duration::from_secs(30 * 60);
 const UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// In-memory entries (~2 KB each); older ones are served from the DB.
+const MEMORY_CAP: usize = 16;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum JsPolicy {
@@ -59,10 +64,27 @@ struct Inner {
     update_tried: AtomicBool,
     permits: Semaphore,
     cache: Mutex<HashMap<String, Arc<OnceCell<AudioStream>>>>,
+    store: Option<Arc<Library>>,
 }
 
 impl StreamResolver {
     pub fn new(ytdlp: YtDlp, http: reqwest::Client, bin_dir: PathBuf, policy: JsPolicy) -> Self {
+        Self::with_store(ytdlp, http, bin_dir, policy, None)
+    }
+
+    /// Like [`new`](Self::new), persisting resolved URLs in `store`.
+    pub fn with_store(
+        ytdlp: YtDlp,
+        http: reqwest::Client,
+        bin_dir: PathBuf,
+        policy: JsPolicy,
+        store: Option<Arc<Library>>,
+    ) -> Self {
+        if let Some(store) = &store
+            && let Err(err) = store.purge_expired_streams(unix_now())
+        {
+            tracing::warn!(%err, "purging stream cache");
+        }
         Self {
             inner: Arc::new(Inner {
                 ytdlp,
@@ -74,6 +96,7 @@ impl StreamResolver {
                 update_tried: AtomicBool::new(false),
                 permits: Semaphore::new(MAX_CONCURRENT),
                 cache: Mutex::new(HashMap::new()),
+                store,
             }),
         }
     }
@@ -95,6 +118,10 @@ impl StreamResolver {
                 // In flight (empty) or still fresh: share it.
                 Some(cell) if cell.get().is_none_or(|s| s.is_fresh(FRESH_MARGIN)) => cell.clone(),
                 _ => {
+                    if cache.len() >= MEMORY_CAP {
+                        // Keep in-flight entries; resolved ones live on in the DB.
+                        cache.retain(|_, cell| cell.get().is_none());
+                    }
                     let cell = Arc::new(OnceCell::new());
                     cache.insert(video_id.to_owned(), cell.clone());
                     cell
@@ -102,9 +129,38 @@ impl StreamResolver {
             }
         };
         // Errors are not stored in the cell, so the next call retries.
-        cell.get_or_try_init(|| self.resolve_uncached(video_id))
-            .await
-            .cloned()
+        cell.get_or_try_init(|| async {
+            if let Some(stream) = self.load_persisted(video_id) {
+                return Ok(stream);
+            }
+            let stream = self.resolve_uncached(video_id).await?;
+            self.persist(&stream);
+            Ok(stream)
+        })
+        .await
+        .cloned()
+    }
+
+    fn load_persisted(&self, video_id: &str) -> Option<AudioStream> {
+        let store = self.inner.store.as_ref()?;
+        let min_expiry = unix_now() + FRESH_MARGIN.as_secs() as i64;
+        let json = store.cached_stream(video_id, min_expiry).ok()??;
+        serde_json::from_str(&json).ok()
+    }
+
+    fn persist(&self, stream: &AudioStream) {
+        let (Some(store), Some(expires)) = (&self.inner.store, stream.expires_at) else {
+            return;
+        };
+        let expires = expires
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let result = serde_json::to_string(stream)
+            .map_err(anyhow::Error::from)
+            .and_then(|json| store.put_stream(&stream.video_id, &json, expires));
+        if let Err(err) = result {
+            tracing::warn!(%err, "persisting stream URL");
+        }
     }
 
     /// Warms the cache for the next queued track; errors are only logged.
@@ -126,6 +182,9 @@ impl StreamResolver {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(video_id);
+        if let Some(store) = &self.inner.store {
+            let _ = store.put_stream(video_id, "{}", 0); // expire it
+        }
         if self.inner.policy == JsPolicy::OnDemand
             && !self.inner.js_required.swap(true, Ordering::Relaxed)
         {
@@ -224,4 +283,10 @@ fn is_retryable(result: &Result<AudioStream>) -> bool {
         result,
         Err(ExtractorError::Failed { .. } | ExtractorError::NoUrl(_))
     )
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
 }
