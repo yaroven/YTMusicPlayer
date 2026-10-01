@@ -43,7 +43,7 @@ pub fn draw_playlists(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.playlists.is_empty() {
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let hint = match (app.syncing, app.logged_in) {
+        let hint = match (app.session.syncing, app.session.logged_in) {
             (true, _) => "syncing…",
             (false, true) => "empty — press r to sync",
             (false, false) => "not logged in — run `ytm login`",
@@ -127,7 +127,7 @@ fn draw_playlist_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
         app.track_offset = selected + 1 - height;
     }
     let end = (app.track_offset + height).min(app.visible.len());
-    let playing_id = app.queue.current().map(|t| t.video_id.clone());
+    let playing_id = app.session.queue.current().map(|t| t.video_id.clone());
     let rows = app.visible[app.track_offset..end].iter().map(|&i| {
         let t = &app.tracks[i as usize];
         let playing = playing_id.as_ref() == Some(&t.video_id);
@@ -150,10 +150,10 @@ fn draw_playlist_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
 fn draw_queue(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Tracks;
     let block = pane(
-        Line::from(format!(" Queue · {} ", app.queue.len())),
+        Line::from(format!(" Queue · {} ", app.session.queue.len())),
         focused,
     );
-    let Some(current) = app.queue.current() else {
+    let Some(current) = app.session.queue.current() else {
         let inner = block.inner(area);
         frame.render_widget(block, area);
         centered_text(frame, inner, "queue is empty — play a track");
@@ -161,7 +161,8 @@ fn draw_queue(frame: &mut Frame, area: Rect, app: &mut App) {
     };
     let height = area.height.saturating_sub(3) as usize;
     let rows = std::iter::once(track_row("▶".into(), current, true)).chain(
-        app.queue
+        app.session
+            .queue
             .upcoming()
             .take(height.saturating_sub(1))
             .enumerate()

@@ -51,7 +51,10 @@ stdout/stderr — the terminal belongs to the TUI.
 - Memory: compare `footprint -p PID` (phys_footprint, what Activity Monitor
   shows), not RSS — RSS includes shared framework pages and is noisy.
   Build the previous commit in a `git worktree` to compare like for like.
-- CLI tests that write config: run with `HOME=<scratch dir>`.
+- Run TUI/CLI tests with `HOME=<scratch dir>` (create config with
+  `ytm config`, copy the managed yt-dlp into its `bin/`). The user is logged
+  in on this Mac: with the real HOME every rebuilt binary triggers a macOS
+  Keychain permission dialog and the app waits on it (looks like a hang).
 - OAuth login / sync / likes need the user's Google account: the user tests.
   The auto-mode classifier blocks Claude from moving client secrets; the user
   imports them (`ytm import-client`).
@@ -68,7 +71,8 @@ main services the CFRunLoop for media keys).
 
 | Module | Role |
 |---|---|
-| `app` | state + `tokio::select!` loop: keys/mouse, background results, player and media events; redraws only when dirty |
+| `session` | UI-independent core: queue, playback, background work (resolve, sync, likes, adds), media keys; `next_event()` reports `Changes` |
+| `app` | TUI frontend: selection, filter, popups, mouse; `select!` over input + `session.next_event()`; redraws only when dirty |
 | `ui::{keymap, views}` | ratatui rendering; track table builds widgets for visible rows only |
 | `audio::player` | rodio on its own thread (256 KiB stack); device opened lazily, closed after 30 s idle; events tagged with a load `generation` |
 | `audio::stream` | bounded `Read + Seek` over googlevideo: 256 KiB Range chunks, 4 ahead, max 8 cached (2 MiB) |
@@ -116,9 +120,13 @@ main services the CFRunLoop for media keys).
 - **App stays in Google "Testing"**: publishing needs a public homepage +
   privacy policy (user's call). Testing ⇒ 7-day login; the app says so.
 - **Windows media keys skipped**: souvlaki needs an HWND.
-- **CI**: Linux (fmt/clippy/test/shellcheck) + Windows (clippy/test/installer);
-  no macOS on push (10x minutes on private repos). Releases on `v*` tags;
-  Linux built on ubuntu-22.04 for glibc 2.35 compatibility.
+- **CI**: Linux only (fmt/clippy/test/shellcheck); no macOS on push (10x
+  minutes on private repos). **Releases (user's choice, 2026-10-01): only
+  Debian/Linux x86_64 (ubuntu-22.04, glibc 2.35) and macOS arm64 + x86_64.**
+  Windows code/install.ps1 stay but are untested in CI.
+- **GUI toolkit: Slint (software renderer)** — measured idle footprint with
+  a 2000-row list: Slint 34 MB, FLTK 49 MB, egui/glow 78 MB. Royalty-free
+  license requires a visible "Made with Slint" attribution.
 
 ## Open TODOs
 

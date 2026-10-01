@@ -1,6 +1,5 @@
-# Lint + tests on Linux, build + tests on Windows. macOS is covered by the
-# release workflow and local development (macOS runner minutes cost 10x on
-# private repositories).
+# Lint + tests on Linux. macOS is covered by the release workflow and local
+# development (macOS runner minutes cost 10x on private repositories).
 name: CI
 
 on:
@@ -31,17 +30,3 @@ jobs:
       - run: cargo test --locked
       - name: Lint install script
         run: shellcheck install.sh
-
-  windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets --locked -- -D warnings
-      - run: cargo test --locked
-      - name: Installer (source build, non-interactive)
-        shell: pwsh
-        run: ./install.ps1 -FromSource -NoLaunch -Yes

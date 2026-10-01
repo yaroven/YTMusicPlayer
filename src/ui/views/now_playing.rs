@@ -15,14 +15,14 @@ use crate::{
 };
 
 pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
-    let status = &app.player_status;
-    let icon = match (app.loading, status.state) {
+    let status = &app.session.player_status;
+    let icon = match (app.session.loading, status.state) {
         (true, _) => "…",
         (false, PlayState::Playing) => "▶",
         (false, PlayState::Paused) => "⏸",
         (false, PlayState::Idle) => "■",
     };
-    let title = match app.queue.current() {
+    let title = match app.session.queue.current() {
         Some(t) => Line::from(vec![
             format!(" {icon} ").fg(ACCENT).bold(),
             Span::raw(&*t.title).bold(),
@@ -39,19 +39,19 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
             Span::from(text).dark_gray()
         }
     };
-    let repeat = match app.queue.repeat {
+    let repeat = match app.session.queue.repeat {
         Repeat::Off => on(false, "repeat "),
         Repeat::All => on(true, "repeat "),
         Repeat::One => on(true, "repeat1 "),
     };
     let modes = Line::from(vec![
-        on(app.queue.shuffle, " shuffle "),
+        on(app.session.queue.shuffle, " shuffle "),
         repeat,
         format!("vol {:>3}% ", (status.volume * 100.0).round() as u32).into(),
     ])
     .right_aligned();
-    let queue = match app.queue.position() {
-        Some(i) => format!(" {}/{} ", i + 1, app.queue.len()),
+    let queue = match app.session.queue.position() {
+        Some(i) => format!(" {}/{} ", i + 1, app.session.queue.len()),
         None => String::new(),
     };
     let block = Block::bordered()
@@ -63,7 +63,7 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let [bar] = Layout::vertical([Constraint::Length(1)]).areas(inner);
     app.areas.progress = bar;
-    let (label, ratio) = if app.loading {
+    let (label, ratio) = if app.session.loading {
         ("loading…".to_owned(), 0.0)
     } else {
         match status.duration {
@@ -91,7 +91,7 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     let [left, right] =
         Layout::horizontal([Constraint::Min(10), Constraint::Length(hint.width() as u16)])
             .areas(area);
-    if let Some(status) = &app.status {
+    if let Some(status) = &app.session.status {
         let text = format!(" {}", status.text);
         let line = if status.is_error {
             text.red()

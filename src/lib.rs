@@ -6,6 +6,7 @@ pub mod app;
 pub mod audio;
 pub mod config;
 pub mod media;
+pub mod session;
 pub mod storage;
 pub mod sync;
 pub mod ui;

@@ -41,7 +41,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 The installers download a prebuilt binary from GitHub Releases when one
-exists for your platform (the repository is private, so this uses the
+exists for your platform (Debian/Ubuntu x86_64, macOS; Windows builds from
+source) (the repository is private, so this uses the
 [GitHub CLI](https://cli.github.com/) login), and otherwise build from source,
 installing build dependencies and Rust as needed. They then import your Google
 OAuth client (see below), sign you in and start the player. Re-run to update.
@@ -151,8 +152,8 @@ Logs: the OS cache directory under `ytm-player/logs` (`YTM_LOG=debug` for more).
 
 ## Releases
 
-Push a tag to build binaries for Linux (x86_64, arm64), macOS (Apple
-Silicon, Intel) and Windows and publish them as a GitHub Release:
+Push a tag to build binaries for Debian/Ubuntu (x86_64, Debian 12+) and
+macOS (Apple Silicon, Intel) and publish them as a GitHub Release:
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0

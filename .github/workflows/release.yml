@@ -1,6 +1,7 @@
-# Builds release binaries for every platform when a `v*` tag is pushed and
-# attaches them (plus SHA-256 files) to a GitHub Release. install.sh and
-# install.ps1 download these, so users don't need Rust.
+# Builds release binaries for Debian/Linux x86_64 and macOS when a `v*` tag
+# is pushed and
+# attaches them (plus SHA-256 files) to a GitHub Release. install.sh
+# downloads these, so users don't need Rust.
 #
 #   git tag v0.2.0 && git push origin v0.2.0
 name: Release
@@ -22,12 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Ubuntu 22.04 => glibc 2.35, so binaries run on older distros too.
+          # Debian/Ubuntu: built on 22.04 (glibc 2.35), runs on Debian 12+.
           - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
-          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: macos-latest, target: x86_64-apple-darwin }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -41,22 +40,12 @@ jobs:
           key: ${{ matrix.target }}
       - run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package (Unix)
-        if: runner.os != 'Windows'
+      - name: Package
         shell: bash
         run: |
           name=ytm-${{ matrix.target }}.tar.gz
           tar -czf "$name" -C target/${{ matrix.target }}/release ytm
           if command -v sha256sum >/dev/null; then sha256sum "$name"; else shasum -a 256 "$name"; fi > "$name.sha256"
-      - name: Package (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $name = "ytm-${{ matrix.target }}.zip"
-          Compress-Archive target/${{ matrix.target }}/release/ytm.exe $name
-          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
-          "$hash  $name" | Out-File -Encoding ascii "$name.sha256"
-
       - uses: actions/upload-artifact@v4
         with:
           name: ytm-${{ matrix.target }}
