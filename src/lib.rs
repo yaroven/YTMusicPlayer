@@ -6,6 +6,7 @@ pub mod api;
 pub mod app;
 pub mod audio;
 pub mod bootstrap;
+pub mod catalog;
 pub mod config;
 pub mod fmt;
 #[cfg(feature = "gui")]
