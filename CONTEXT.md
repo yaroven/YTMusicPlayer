@@ -10,11 +10,27 @@ interface, seam, adapter, depth) follows the codebase-design glossary.
   playlist" target: liking is how tracks get into it.
 - **Track**: one video in a Playlist, Search results or the Queue
   (`Arc<str>` fields; shared, never copied per view).
-- **Search results**: the last online search (YouTube Data API, or yt-dlp
-  without sign-in). Shown like a Playlist until another list is picked.
-- **Library view**: what the track list shows (a Playlist or Search
-  results), the filter typed over it, the selected row, and the action
-  target. One per frontend, same rules for both (`library_view`).
+- **Catalog**: YouTube Music's own (quota-free) web endpoints: search by
+  category, Pages, home Shelves, radio, Related, lyrics, loudness
+  (`catalog`).
+- **Item**: a catalog entry — song, album, artist or playlist — shown as a
+  card; songs carry a playable Track.
+- **Page**: an album, artist or playlist opened from an Item: Tracks plus
+  **Shelves** (titled rows of Items).
+- **Search results**: the last online search in one category. Shown like a
+  Playlist (songs) or as cards until another list is picked.
+- **Library view**: what the list shows (a Playlist, Search results, a
+  Page, Home, History, Downloads, saved albums or followed artists), the
+  filter, the selected row, the action target and the way **Back**. One
+  per frontend, same rules for both (`library_view`).
+- **Radio**: YouTube Music's endless mix seeded by a song. **Autoplay**
+  queues the radio of the last song when the Queue runs out.
+- **Preload**: the next track opened shortly before the current one ends,
+  so it starts gapless or crossfaded.
+- **Listener**: something told about playback (Last.fm scrobbler, Discord
+  presence).
+- **Cast player**: the Playback adapter for a Chromecast; the Session swaps
+  it in for the local player and back.
 - **Action target**: the Track that like / play next / save to playlist
   apply to: the selected row, else the playing Track. The player bar's
   heart always belongs to the playing Track.
