@@ -798,6 +798,12 @@ impl Session {
         self.store_setting("normalize_volume", &on.to_string());
     }
 
+    /// Lets age-restricted songs use `browser`'s YouTube login ("" = off).
+    pub fn set_cookies_browser(&mut self, browser: &str) {
+        self.deps.source.set_cookies_browser(browser);
+        self.store_setting("cookies_from_browser", &format!("{browser:?}"));
+    }
+
     /// Saves a preference into `config.toml` (`value` is a TOML literal).
     pub fn store_setting(&mut self, key: &str, value: &str) {
         let path = self.deps.account.config_file().to_owned();

@@ -18,6 +18,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
+    sync::{Arc, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -68,6 +69,11 @@ pub enum ExtractorError {
     Timeout(Duration),
     #[error("video unavailable: {0}")]
     Unavailable(String),
+    /// YouTube wants a signed-in viewer; see [`Cookies`].
+    #[error(
+        "age-restricted: YouTube wants a signed-in browser (Settings → Age-restricted songs, or cookies_from_browser in config.toml)"
+    )]
+    AgeRestricted,
     /// yt-dlp rejected our flags: it predates them.
     #[error(
         "yt-dlp at {path} is too old ({message}); update or uninstall it so ytm can use its own copy"
@@ -138,12 +144,49 @@ impl AudioStream {
     }
 }
 
+/// Browsers yt-dlp can read cookies from (`--cookies-from-browser`).
+pub const COOKIE_BROWSERS: [&str; 8] = [
+    "chrome", "firefox", "safari", "edge", "brave", "chromium", "opera", "vivaldi",
+];
+
+/// The browser whose YouTube login yt-dlp borrows for age-restricted
+/// videos ("" = none). Only used after a plain attempt says the video is
+/// age-restricted, so other tracks never touch the browser's cookie store.
+/// Shared, so the setting can change while the player runs.
+#[derive(Debug, Clone, Default)]
+pub struct Cookies(Arc<RwLock<String>>);
+
+impl Cookies {
+    pub fn new(browser: &str) -> Self {
+        let cookies = Self::default();
+        cookies.set(browser);
+        cookies
+    }
+
+    /// Ignores names yt-dlp doesn't know.
+    pub fn set(&self, browser: &str) {
+        let browser = browser.trim().to_lowercase();
+        let value = if COOKIE_BROWSERS.contains(&browser.as_str()) {
+            browser
+        } else {
+            String::new()
+        };
+        *self.0.write().unwrap_or_else(|e| e.into_inner()) = value;
+    }
+
+    pub fn browser(&self) -> Option<String> {
+        let browser = self.0.read().unwrap_or_else(|e| e.into_inner());
+        (!browser.is_empty()).then(|| browser.clone())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct YtDlp {
     path: PathBuf,
     source: BinarySource,
     format: String,
     extra_args: Vec<String>,
+    cookies: Cookies,
 }
 
 impl YtDlp {
@@ -153,7 +196,29 @@ impl YtDlp {
             source,
             format: DEFAULT_FORMAT.to_owned(),
             extra_args: Vec::new(),
+            cookies: Cookies::default(),
         }
+    }
+
+    /// Where age-restricted videos get a signed-in session from.
+    pub fn with_cookies(mut self, cookies: Cookies) -> Self {
+        self.cookies = cookies;
+        self
+    }
+
+    /// The age-restricted cookie setting (shared).
+    pub fn cookies(&self) -> Cookies {
+        self.cookies.clone()
+    }
+
+    /// The browser to retry with after an age-restricted failure.
+    fn age_retry<T>(&self, result: &Result<T>) -> Option<String> {
+        if !matches!(result, Err(ExtractorError::AgeRestricted)) {
+            return None;
+        }
+        let browser = self.cookies.browser()?;
+        tracing::info!(browser, "age-restricted; retrying with browser cookies");
+        Some(browser)
     }
 
     /// Override the `-f` format selector.
@@ -401,6 +466,19 @@ impl YtDlp {
     }
 
     async fn resolve_inner(&self, video_id: &str, js: Option<&JsRuntime>) -> Result<AudioStream> {
+        let result = self.resolve_once(video_id, js, None).await;
+        match self.age_retry(&result) {
+            Some(browser) => self.resolve_once(video_id, js, Some(&browser)).await,
+            None => result,
+        }
+    }
+
+    async fn resolve_once(
+        &self,
+        video_id: &str,
+        js: Option<&JsRuntime>,
+        cookies: Option<&str>,
+    ) -> Result<AudioStream> {
         validate_video_id(video_id)?;
         let page_url = format!("https://www.youtube.com/watch?v={video_id}");
 
@@ -421,6 +499,9 @@ impl YtDlp {
         if let Some(arg) = &js_arg {
             args.extend(["--js-runtimes", arg]);
         }
+        if let Some(browser) = cookies {
+            args.extend(["--cookies-from-browser", browser]);
+        }
         args.extend(self.extra_args.iter().map(String::as_str));
         args.push("--"); // nothing after this is parsed as a flag
         args.push(&page_url);
@@ -431,6 +512,19 @@ impl YtDlp {
 
     /// Downloads the AAC audio (itag 140, else the best m4a) to `dest`.
     pub async fn download_audio(&self, video_id: &str, dest: &Path) -> Result<()> {
+        let result = self.download_once(video_id, dest, None).await;
+        match self.age_retry(&result) {
+            Some(browser) => self.download_once(video_id, dest, Some(&browser)).await,
+            None => result,
+        }
+    }
+
+    async fn download_once(
+        &self,
+        video_id: &str,
+        dest: &Path,
+        cookies: Option<&str>,
+    ) -> Result<()> {
         validate_video_id(video_id)?;
         let url = format!("https://www.youtube.com/watch?v={video_id}");
         let dest = dest.to_string_lossy();
@@ -446,6 +540,9 @@ impl YtDlp {
             "--output",
             &dest,
         ];
+        if let Some(browser) = cookies {
+            args.extend(["--cookies-from-browser", browser]);
+        }
         args.extend(self.extra_args.iter().map(String::as_str));
         args.push("--");
         args.push(&url);
@@ -624,21 +721,35 @@ fn classify_failure(status: ExitStatus, stderr: &str) -> ExtractorError {
 
     // Final errors: retrying with a JS runtime or a newer yt-dlp won't help.
     // Matched case-insensitively ("Video unavailable" / "This video is unavailable").
-    const UNAVAILABLE: [&str; 7] = [
+    const UNAVAILABLE: [&str; 6] = [
         "video unavailable",
         "is unavailable",
         "private video",
         "has been removed",
-        "sign in to confirm your age",
         "not available in your country",
         "members-only",
     ];
     let lower = message.to_lowercase();
-    if UNAVAILABLE.iter().any(|needle| lower.contains(needle)) {
-        ExtractorError::Unavailable(message)
+    if lower.contains("confirm your age") || lower.contains("age-restricted") {
+        ExtractorError::AgeRestricted
+    } else if UNAVAILABLE.iter().any(|needle| lower.contains(needle)) {
+        ExtractorError::Unavailable(first_sentence(&message))
     } else {
         ExtractorError::Failed { status, message }
     }
+}
+
+/// "ERROR: [youtube] abc: Video unavailable. This video …" → "Video
+/// unavailable": the status line has room for one short sentence.
+fn first_sentence(message: &str) -> String {
+    let text = message.strip_prefix("ERROR:").unwrap_or(message).trim();
+    let text = match text.strip_prefix('[') {
+        // "[youtube] <id>: reason"
+        Some(rest) => rest.split_once(": ").map_or(text, |(_, reason)| reason),
+        None => text,
+    };
+    let end = text.find(". ").map_or(text.len(), |i| i);
+    text[..end].trim_end_matches('.').to_owned()
 }
 
 /// Fields printed via [`PRINT_TEMPLATE`]. With a single (non-merged) format
@@ -772,6 +883,28 @@ cccc  yt-dlp_linux
             "WARNING: x\nERROR: [youtube] x: Requested format is not available",
         );
         assert!(matches!(other, ExtractorError::Failed { .. }));
+        let age = classify_failure(
+            status,
+            "ERROR: [youtube] F1GxUDfGvIM: Sign in to confirm your age. Use --cookies-from-browser",
+        );
+        assert!(matches!(age, ExtractorError::AgeRestricted));
+    }
+
+    #[test]
+    fn unavailable_keeps_only_the_reason() {
+        assert_eq!(
+            first_sentence("ERROR: [youtube] x: Video unavailable. This content isn't available."),
+            "Video unavailable"
+        );
+        assert_eq!(first_sentence("Private video"), "Private video");
+    }
+
+    #[test]
+    fn cookie_browser_must_be_known() {
+        let cookies = Cookies::new(" Chrome ");
+        assert_eq!(cookies.browser().as_deref(), Some("chrome"));
+        cookies.set("--exec=rm");
+        assert_eq!(cookies.browser(), None);
     }
 
     #[test]

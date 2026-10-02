@@ -100,6 +100,7 @@ enum Cmd {
     Normalize(bool),
     StoreSetting(&'static str, bool),
     CastScan,
+    CookiesBrowser(String),
     CastTo(Option<usize>),
     SaveClient(String, String),
     ImportClient(std::path::PathBuf),
@@ -542,6 +543,7 @@ impl LyricsView {
 
 /// Settings the window shows and changes.
 struct Prefs {
+    cookies: String,
     normalize: bool,
     notifications: bool,
     tray: bool,
@@ -799,6 +801,7 @@ impl View {
         ui.set_set_notifications(self.prefs.notifications);
         ui.set_set_tray(self.prefs.tray);
         ui.set_set_crossfade(self.prefs.crossfade);
+        ui.set_set_cookies(self.prefs.cookies.as_str().into());
         ui.set_queue_source(self.queue_source.borrow().clone());
         if let Some(width) = self
             .store
@@ -1136,6 +1139,7 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Resu
         cast_names: Rc::new(VecModel::default()),
         cast_scanning: false,
         prefs: Prefs {
+            cookies: settings.cookies_from_browser.trim().to_lowercase(),
             normalize: settings.normalize_volume,
             notifications: settings.notifications,
             tray: settings.tray,
@@ -1633,6 +1637,16 @@ fn wire_callbacks(
             send(Cmd::Crossfade(secs as u64), tx);
         }
     });
+    on!(on_cookies_cycle, [tx, view, ui], || {
+        // Off, then the browsers people use most.
+        const CHOICES: [&str; 6] = ["", "chrome", "firefox", "safari", "edge", "brave"];
+        let mut v = view.borrow_mut();
+        let at = CHOICES.iter().position(|c| *c == v.prefs.cookies);
+        let next = CHOICES[at.map_or(0, |i| (i + 1) % CHOICES.len())];
+        v.prefs.cookies = next.to_owned();
+        ui.set_set_cookies(next.into());
+        send(Cmd::CookiesBrowser(next.to_owned()), tx);
+    });
     let library = library.clone();
     on!(on_sidebar_resized, [tx, view, ui], |width| {
         if let Err(err) = library.set_meta("sidebar_width", &format!("{width:.0}")) {
@@ -1806,6 +1820,7 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::Normalize(on) => session.set_normalize(on),
         Cmd::StoreSetting(key, on) => session.store_setting(key, &on.to_string()),
         Cmd::CastScan => session.find_cast_devices(),
+        Cmd::CookiesBrowser(browser) => session.set_cookies_browser(&browser),
         Cmd::CastTo(i) => {
             let device = i.and_then(|i| session.cast_devices.get(i).cloned());
             session.cast_to(device);

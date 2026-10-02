@@ -286,7 +286,8 @@ optional:
 | `media_controls` | `true` | media keys and system "Now Playing" (macOS, Linux) |
 | `audio_device` | `""` | output device name from `ytm devices`; empty = automatic (Linux: PipeWire, then PulseAudio, then ALSA default) |
 | `js_fallback` | `true` | if yt-dlp fails, retry with a JS runtime (system deno/node, or a ~2 MB QuickJS download). `false` = never run JS |
-| `ytdlp_extra_args` | `[]` | e.g. `["--cookies-from-browser", "firefox"]` for age-restricted tracks |
+| `cookies_from_browser` | `""` | age-restricted songs: borrow the YouTube sign-in of `chrome`, `firefox`, `safari`, `edge`, `brave`, … (only for those songs; also in the window's Settings) |
+| `ytdlp_extra_args` | `[]` | extra yt-dlp flags |
 | `liked_music_only` | `true` | keep only "Music"-category videos in the liked list |
 | `volume` | `0.8` | volume for the very first start |
 | `autoplay` | `true` | when the queue runs out, keep playing the last song's radio |
@@ -355,6 +356,13 @@ By hand: the binary (`/usr/bin/ytm`, `/usr/local/bin/ytm`,
 | Windows | `%APPDATA%\ytm-player`, `%LOCALAPPDATA%\ytm-player` |
 
 ## Troubleshooting
+
+- **"age-restricted: YouTube wants a signed-in browser"**: YouTube plays
+  such songs only to signed-in adults, and yt-dlp is anonymous. Pick the
+  browser you're signed in to YouTube with in **Settings → Age-restricted
+  songs** (or `cookies_from_browser` in the config). Only those songs use
+  it. macOS asks once to let ytm-player read that browser's cookies
+  (Safari needs Full Disk Access for it).
 
 - **No sound on Linux:** install your sound server's ALSA plugin
   (`pipewire-alsa` on PipeWire systems, `libasound2-plugins` / `alsa-plugins-pulseaudio`

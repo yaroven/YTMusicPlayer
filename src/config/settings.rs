@@ -29,7 +29,14 @@ media_controls = true
 # download) when yt-dlp fails without one. false = never run JS.
 js_fallback = true
 
-# Extra yt-dlp flags, e.g. ["--cookies-from-browser", "firefox"].
+# Age-restricted songs need a signed-in YouTube session: yt-dlp borrows
+# the cookies of this browser, only for such songs ("" = off). One of
+# chrome, firefox, safari, edge, brave, chromium, opera, vivaldi; you must
+# be signed in to YouTube there. macOS asks once to allow access to the
+# browser's cookie store (Safari needs Full Disk Access).
+cookies_from_browser = ""
+
+# Extra yt-dlp flags.
 ytdlp_extra_args = []
 
 # Liked list: keep only videos in the YouTube "Music" category.
@@ -82,6 +89,7 @@ pub struct Settings {
     pub audio_device: String,
     pub js_fallback: bool,
     pub ytdlp_extra_args: Vec<String>,
+    pub cookies_from_browser: String,
     pub liked_music_only: bool,
     pub volume: f32,
     pub autoplay: bool,
@@ -108,6 +116,7 @@ impl Default for Settings {
             audio_device: String::new(),
             js_fallback: true,
             ytdlp_extra_args: Vec::new(),
+            cookies_from_browser: String::new(),
             liked_music_only: true,
             volume: 0.8,
             autoplay: true,

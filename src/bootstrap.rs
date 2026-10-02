@@ -12,7 +12,10 @@ use anyhow::{Context, Result};
 use crate::{
     account::Account,
     api::token_store::Tokens,
-    audio::{JsPolicy, SourceOptions, TrackSource, extractor::YtDlp},
+    audio::{
+        JsPolicy, SourceOptions, TrackSource,
+        extractor::{Cookies, YtDlp},
+    },
     catalog::Catalog,
     config::{paths::AppPaths, settings::Settings},
     discord, lastfm,
@@ -44,7 +47,9 @@ pub async fn ytdlp(paths: &AppPaths, settings: &Settings, http: &reqwest::Client
                 .context("yt-dlp is required")?
         }
     };
-    Ok(ytdlp.with_extra_args(settings.ytdlp_extra_args.iter().cloned()))
+    Ok(ytdlp
+        .with_extra_args(settings.ytdlp_extra_args.iter().cloned())
+        .with_cookies(Cookies::new(&settings.cookies_from_browser)))
 }
 
 /// `force_js` (`ytm resolve --js`) beats the `js_fallback` setting.
@@ -66,6 +71,7 @@ pub fn track_source(
     store: Option<Arc<Library>>,
 ) -> TrackSource {
     let options = SourceOptions {
+        cookies: ytdlp.cookies(),
         downloads: store.as_ref().map(|_| paths.data_dir().join("downloads")),
         store,
         catalog: Some(Catalog::new(http.clone())),

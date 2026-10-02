@@ -869,6 +869,8 @@ slint::slint! {
         in property <bool> set-notifications;
         in property <bool> set-tray;
         in property <float> set-crossfade;
+        // Browser whose YouTube login age-restricted songs use ("" = off).
+        in property <string> set-cookies;
         // Sidebar width set by dragging its edge (0 = automatic).
         in-out property <length> sidebar-width: 0px;
 
@@ -942,6 +944,7 @@ slint::slint! {
         callback now-tab-changed(int);
         callback setting-toggled(string);
         callback crossfade-changed(float);
+        callback cookies-cycle();
         callback sidebar-resized(length);
         callback account-opened();
         callback save-client(string, string);
@@ -1539,6 +1542,26 @@ slint::slint! {
             }
             Toggle { text: "Notify when the song changes"; on: root.set-notifications; toggled => { root.setting-toggled("notifications"); } }
             Toggle { text: "Icon in the menu bar / tray (next start)"; on: root.set-tray; toggled => { root.setting-toggled("tray"); } }
+            HorizontalLayout {
+                spacing: 12px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    Text { text: "Age-restricted songs"; color: Yt.text; }
+                    Text {
+                        text: "Use the YouTube sign-in of this browser, only for such songs";
+                        color: Yt.secondary;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
+                Pill {
+                    text: root.set-cookies == "" ? "Off" : root.set-cookies;
+                    icon: "account";
+                    y: (parent.height - self.height) / 2;
+                    clicked => { root.cookies-cycle(); }
+                }
+            }
             Text {
                 text: "Last.fm and Discord: see config.toml (README: Integrations).";
                 color: Yt.secondary;

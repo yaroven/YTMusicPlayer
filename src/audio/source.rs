@@ -156,6 +156,8 @@ pub struct SourceOptions {
     pub store: Option<Arc<Library>>,
     /// For loudness normalization (`None`: never).
     pub catalog: Option<Catalog>,
+    /// The browser age-restricted videos borrow a YouTube login from.
+    pub cookies: extractor::Cookies,
     /// Normalization on (shared by clones, so it can change while playing).
     pub normalize: Arc<AtomicBool>,
     /// Where downloads go.
@@ -276,6 +278,11 @@ impl TrackSource {
             }
             _ => 1.0,
         }
+    }
+
+    /// Which browser's cookies age-restricted videos use ("" = none).
+    pub fn set_cookies_browser(&self, browser: &str) {
+        self.options.cookies.set(browser);
     }
 
     /// Turns loudness normalization on or off (from the next track).
