@@ -114,6 +114,18 @@ fn children(_pid: u32) -> Vec<u32> {
     Vec::new()
 }
 
+/// Hands memory the allocator holds but no longer uses back to the OS.
+/// The window's software renderer allocates a full-window pixel buffer per
+/// frame; glibc may keep freed ones in its heap. (macOS: see
+/// `MallocLargeCache` in main.rs.)
+pub fn release_free_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: glibc's malloc_trim only returns free heap pages to the OS.
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

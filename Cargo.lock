@@ -8411,6 +8411,7 @@ dependencies = [
  "md5",
  "notify-rust",
  "oauth2",
+ "objc2 0.6.4",
  "open",
  "ratatui",
  "rcgen",

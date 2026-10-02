@@ -42,6 +42,11 @@ USAGE:
     ytm status                  show setup state (config, sign-in, library)
     ytm uninstall [--purge]     remove ytm-player (asks about your library and sign-in)";
 
+/// Makes Slint destroy (not just hide) a window closed to the tray, so its
+/// pixel buffers go with it.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const DESTROY_ON_HIDE: &str = "SLINT_DESTROY_WINDOW_ON_HIDE";
+
 fn main() -> Result<()> {
     // Like other Unix tools, exit quietly when output is piped into
     // something that stops reading (`ytm --help | head`) instead of
@@ -64,6 +69,14 @@ fn main() -> Result<()> {
     let gui = matches!(args.as_slice(), ["gui"])
         || (args.is_empty() && (settings.ui.eq_ignore_ascii_case("gui") || in_app_bundle()));
     if gui {
+        #[cfg(target_os = "macos")]
+        macos::restart_with_gui_env();
+        #[cfg(target_os = "linux")]
+        // SAFETY: set before the GUI and the core thread start; the only
+        // other thread (the log writer) doesn't read the environment.
+        unsafe {
+            std::env::set_var(DESTROY_ON_HIDE, "1");
+        }
         let Some(_instance) = single_instance(&paths, "gui")? else {
             return Ok(());
         };
@@ -491,6 +504,32 @@ mod macos {
 
     use anyhow::{Result, anyhow};
     use core_foundation::runloop::{CFRunLoop, CFRunLoopRunResult, kCFRunLoopDefaultMode};
+
+    /// Restarts the process once with settings that are read at startup:
+    ///
+    /// - `MallocLargeCache=0`: the window's software renderer allocates a
+    ///   fresh full-window pixel buffer every frame (~11 MB on Retina) and
+    ///   macOS malloc kept freed ones cached, counted against us: 80 MB vs
+    ///   53 MB while playing (measured 2026-10-02, same CPU).
+    /// - `SLINT_DESTROY_WINDOW_ON_HIDE`: a window closed to the tray really
+    ///   goes (with its last frame and the window server's copy): 31 MB
+    ///   instead of 31–53 MB, varying with the last frame.
+    pub fn restart_with_gui_env() {
+        const VAR: &str = "MallocLargeCache";
+        if std::env::var_os(VAR).is_some() {
+            return;
+        }
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new(exe)
+            .args(std::env::args_os().skip(1))
+            .env(VAR, "0")
+            .env(super::DESTROY_ON_HIDE, "1")
+            .exec();
+        tracing::warn!(%err, "restarting with the GUI's malloc settings");
+    }
 
     /// Runs `work` on a thread while the main thread services its run loop
     /// (media-key handlers are dispatched there). Returns `work`'s result.

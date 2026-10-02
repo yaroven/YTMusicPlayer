@@ -112,6 +112,11 @@ mod native {
         pub fn set_tooltip(&self, text: &str) {
             let _ = self.icon.set_tooltip(Some(text));
         }
+
+        /// The icon is on screen (so a closed window can come back).
+        pub fn available(&self) -> bool {
+            true
+        }
     }
 }
 
@@ -207,6 +212,15 @@ mod sni {
                 handle,
                 rt: rt.clone(),
             })
+        }
+
+        /// Registered with a StatusNotifier host (GNOME without the
+        /// AppIndicator extension has none).
+        pub fn available(&self) -> bool {
+            self.handle
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some()
         }
 
         pub fn set_tooltip(&self, text: &str) {

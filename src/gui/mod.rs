@@ -18,7 +18,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -179,6 +179,11 @@ impl Images {
             order: VecDeque::new(),
             cap,
         }
+    }
+
+    fn clear(&mut self) {
+        self.map = HashMap::new();
+        self.order = VecDeque::new();
     }
 
     fn insert(&mut self, key: Arc<str>, image: Image) {
@@ -476,10 +481,12 @@ struct LyricsView {
     lyrics: Option<Arc<Lyrics>>,
     model: Rc<VecModel<LyricLine>>,
     current: Option<usize>,
+    /// Asked for and not answered yet.
+    loading: bool,
 }
 
 impl LyricsView {
-    fn set(&mut self, ui: &MainWindow, lyrics: Option<Arc<Lyrics>>) {
+    fn set(&mut self, lyrics: Option<Arc<Lyrics>>) {
         let synced = lyrics.as_ref().is_some_and(|l| l.synced());
         let rows: Vec<LyricLine> = lyrics
             .iter()
@@ -490,20 +497,12 @@ impl LyricsView {
             })
             .collect();
         self.model.set_vec(rows);
-        ui.set_lyrics_source(
-            lyrics
-                .as_ref()
-                .map(|l| l.source.as_str())
-                .unwrap_or_default()
-                .into(),
-        );
         self.lyrics = lyrics;
         self.current = None;
-        ui.set_lyrics_current(-1);
     }
 
     /// Highlights the line sung at `position`.
-    fn follow(&mut self, ui: &MainWindow, position: Duration) {
+    fn follow(&mut self, position: Duration) {
         let Some(lyrics) = &self.lyrics else {
             return;
         };
@@ -526,13 +525,44 @@ impl LyricsView {
             }
         }
         self.current = current;
-        ui.set_lyrics_current(current.map_or(-1, |c| c as i32));
+    }
+
+    fn render(&self, ui: &MainWindow) {
+        ui.set_lyrics_source(
+            self.lyrics
+                .as_ref()
+                .map(|l| l.source.as_str())
+                .unwrap_or_default()
+                .into(),
+        );
+        ui.set_lyrics_current(self.current.map_or(-1, |c| c as i32));
+        ui.set_lyrics_loading(self.loading);
     }
 }
 
-/// UI-thread state. What the list shows is the [`LibraryView`]; this only
-/// mirrors it into the window's properties and models.
+/// Settings the window shows and changes.
+struct Prefs {
+    normalize: bool,
+    notifications: bool,
+    tray: bool,
+    crossfade: f32,
+}
+
+/// UI-thread state; outlives the window, which exists only while it's
+/// open (closed to the tray it's destroyed with its pixel buffers). What
+/// the list shows is the [`LibraryView`]; this mirrors it into the
+/// window's properties and models.
 struct View {
+    tx: UnboundedSender<Cmd>,
+    store: Arc<Library>,
+    /// The last snapshot's player state (for a window opened later).
+    last: Option<SessionView>,
+    queue_source: RefCell<SharedString>,
+    cast_names: Rc<VecModel<SharedString>>,
+    cast_scanning: bool,
+    prefs: Prefs,
+    /// Size and position of the closed window, to reopen it the same.
+    geometry: Option<(slint::PhysicalSize, slint::PhysicalPosition)>,
     library: Rc<RefCell<LibraryView>>,
     tracks: Rc<TracksModel>,
     queue: Rc<TracksModel>,
@@ -553,7 +583,6 @@ struct View {
     art: Rc<RefCell<ArtCache>>,
     /// The playing track (from the last snapshot).
     now: Option<Track>,
-    notifications: bool,
 }
 
 impl View {
@@ -710,7 +739,18 @@ impl View {
     }
 
     /// Art for `key` arrived on the UI thread.
-    fn art_arrived(&mut self, ui: &MainWindow, key: Arc<str>, size: ArtSize, art: art::Art) {
+    fn art_arrived(
+        &mut self,
+        ui: Option<&MainWindow>,
+        key: Arc<str>,
+        size: ArtSize,
+        art: art::Art,
+    ) {
+        let Some(ui) = ui else {
+            // The window closed meanwhile: nothing shows it.
+            self.art.borrow_mut().requested.remove(&key);
+            return;
+        };
         let image = Image::from_rgba8(art.pixels);
         let is_now = self.now.as_ref().is_some_and(|t| t.video_id == key);
         match size {
@@ -743,6 +783,230 @@ impl View {
             self.show_now_art(ui);
         }
     }
+
+    /// Fills a new window with everything it shows.
+    fn attach(&mut self, ui: &MainWindow) {
+        ui.set_tracks(ModelRc::from(self.tracks.clone()));
+        ui.set_queue_rows(ModelRc::from(self.queue.clone()));
+        ui.set_playlists(ModelRc::from(self.playlist_rows.clone()));
+        ui.set_add_choices(ModelRc::from(self.add_rows.clone()));
+        ui.set_cards(ModelRc::from(self.cards.model.clone()));
+        ui.set_shelves(ModelRc::from(self.shelves.model.clone()));
+        ui.set_related(ModelRc::from(self.related.model.clone()));
+        ui.set_lyrics(ModelRc::from(self.lyrics.model.clone()));
+        ui.set_cast_devices(ModelRc::from(self.cast_names.clone()));
+        ui.set_set_normalize(self.prefs.normalize);
+        ui.set_set_notifications(self.prefs.notifications);
+        ui.set_set_tray(self.prefs.tray);
+        ui.set_set_crossfade(self.prefs.crossfade);
+        ui.set_queue_source(self.queue_source.borrow().clone());
+        if let Some(width) = self
+            .store
+            .get_meta("sidebar_width")
+            .ok()
+            .flatten()
+            .and_then(|w| w.parse::<f32>().ok())
+        {
+            ui.set_sidebar_width(width);
+        }
+        self.sync_list(ui);
+        self.render_player(ui);
+        self.lyrics.render(ui);
+        let (art, related) = (self.art.clone(), self.related_data.clone());
+        self.related.set(&related, &mut art.borrow_mut());
+        self.render_liked(ui);
+        self.show_now_art(ui);
+    }
+
+    /// The window closed: drop what only it needed (art, cards).
+    fn detach(&mut self) {
+        {
+            let mut art = self.art.borrow_mut();
+            art.thumbs.clear();
+            art.cards.clear();
+            art.requested.clear();
+            art.large = None;
+        }
+        let art = self.art.clone();
+        let mut art = art.borrow_mut();
+        self.cards.set(&[], &mut art);
+        self.shelves.set(&[], &mut art);
+        self.related.set(&[], &mut art);
+        // Lyrics / Related aren't on screen any more.
+        let _ = self.tx.send(Cmd::Tabs(false, false));
+    }
+
+    /// Player bar, status line and account state from the last snapshot.
+    fn render_player(&self, ui: &MainWindow) {
+        let Some(view) = &self.last else {
+            return;
+        };
+        ui.set_loading(view.loading);
+        ui.set_playing(view.state == PlayState::Playing);
+        ui.set_volume(view.volume);
+        ui.set_shuffle(view.shuffle);
+        // The UI's repeat-mode: 0 off, 1 all, 2 one.
+        ui.set_repeat_mode(match view.repeat {
+            Repeat::Off => 0,
+            Repeat::All => 1,
+            Repeat::One => 2,
+        });
+        ui.set_autoplay(view.autoplay);
+        ui.set_sleep_text(sleep_text(view.sleep).into());
+        ui.set_casting(view.casting.clone().unwrap_or_default().into());
+        ui.set_cast_scanning(self.cast_scanning);
+        ui.set_syncing(view.syncing);
+        ui.set_searching(view.searching);
+        ui.set_signed_in(view.signed_in);
+        ui.set_signing_in(view.signing_in);
+        ui.set_client_id(view.client_id.as_str().into());
+        ui.set_memory_text(view.memory.as_str().into());
+        let (text, error) = view.status.clone().unwrap_or_default();
+        ui.set_status_text(text.into());
+        ui.set_status_error(error);
+        match &view.duration {
+            Some(d) if !d.is_zero() => {
+                ui.set_progress((view.position.as_secs_f64() / d.as_secs_f64()) as f32);
+                let on = view
+                    .casting
+                    .as_ref()
+                    .map(|name| format!(" · {name}"))
+                    .unwrap_or_default();
+                ui.set_position_text(
+                    format!("{} / {}{on}", fmt_time(view.position), fmt_time(*d)).into(),
+                );
+            }
+            _ => {
+                ui.set_progress(0.0);
+                ui.set_position_text(if view.loading {
+                    "loading…".into()
+                } else {
+                    "".into()
+                });
+            }
+        }
+        match &view.now {
+            Some(t) => {
+                ui.set_now_title(SharedString::from(&*t.title));
+                ui.set_now_artist(SharedString::from(&*t.artist));
+                ui.set_now_initial(initial(&t.title));
+                ui.set_now_hue(hue(&t.artist));
+            }
+            None => {
+                ui.set_now_title("".into());
+                ui.set_now_artist("".into());
+                ui.set_expanded(false);
+            }
+        }
+    }
+
+    fn render_liked(&self, ui: &MainWindow) {
+        let liked = self
+            .now
+            .as_ref()
+            .is_some_and(|t| self.library.borrow().is_liked(&t.video_id));
+        ui.set_liked(liked);
+    }
+
+    /// Takes in a snapshot from the core; renders it when a window is open.
+    fn absorb(&mut self, snap: Snapshot, ui: Option<&MainWindow>) {
+        if let Some(home) = &snap.home {
+            self.home = Some(home.clone());
+        }
+        let applied = self.library.borrow_mut().apply(
+            &snap.changes,
+            SessionData {
+                search: snap.search.as_ref(),
+                page: snap.page.as_deref(),
+                home: self.home.as_deref(),
+            },
+        );
+        let replaced = applied.unwrap_or_else(|err| {
+            tracing::warn!(%err, "reloading the library view");
+            false
+        });
+        if let Some(queue) = snap.queue {
+            self.queue.set_queue(queue);
+        }
+        if let Some(devices) = snap.cast_devices {
+            let names: Vec<SharedString> = devices.into_iter().map(SharedString::from).collect();
+            self.cast_names.set_vec(names);
+        }
+        self.cast_scanning = snap.cast_scanning;
+        if let Some(id) = &snap.changes.liked {
+            self.tracks.rows_changed(id);
+            self.queue.rows_changed(id);
+        }
+        if snap.changes.downloads {
+            self.tracks.reset();
+        }
+        if replaced || snap.changes.playlist.is_some() {
+            self.sync_playlists();
+        }
+
+        let now_id = snap.view.now.as_ref().map(|t| t.video_id.clone());
+        let changed = now_id != self.now.as_ref().map(|t| t.video_id.clone());
+        if changed {
+            // What's shown about the old track goes; the new arrives later.
+            self.lyrics.set(None);
+            self.lyrics.loading = true;
+            self.related_data = Arc::from([]);
+        }
+        if snap.changes.lyrics {
+            self.lyrics.set(snap.lyrics.clone());
+            self.lyrics.loading = false;
+        }
+        self.lyrics.follow(snap.view.position);
+        if let Some(related) = &snap.related {
+            self.related_data = related.clone();
+        }
+        self.tracks.set_playing(now_id.clone());
+        self.queue.set_playing(now_id);
+        self.now = snap.view.now.clone();
+        if changed {
+            let tip = self.now.as_ref().map_or_else(
+                || "ytm-player".to_owned(),
+                |t| format!("{} — {}", t.title, t.artist),
+            );
+            TRAY.with(|cell| {
+                if let Some(tray) = cell.borrow().as_ref() {
+                    tray.set_tooltip(&tip);
+                }
+            });
+            if self.prefs.notifications
+                && let Some(track) = &self.now
+            {
+                crate::notify::track_changed(track);
+            }
+        }
+        let signed_in = snap.view.signed_in;
+        self.last = Some(snap.view);
+
+        let Some(ui) = ui else {
+            return;
+        };
+        self.render_player(ui);
+        if snap.changes.account && signed_in {
+            ui.set_account_open(false);
+        }
+        if replaced {
+            self.sync_list(ui);
+        }
+        if snap.changes.saved {
+            self.sync_saved(ui);
+        }
+        self.lyrics.render(ui);
+        if changed || snap.related.is_some() {
+            let (art, related) = (self.art.clone(), self.related_data.clone());
+            self.related.set(&related, &mut art.borrow_mut());
+        }
+        if changed || snap.changes.playlist.is_some() || snap.changes.liked.is_some() {
+            self.render_liked(ui);
+        }
+        if changed {
+            self.show_now_art(ui);
+        }
+    }
 }
 
 /// File name of a downloaded OAuth client JSON, for the import button.
@@ -752,27 +1016,107 @@ fn downloaded_client_name() -> String {
         .unwrap_or_default()
 }
 
-/// The open window, for [`raise`] (called from the single-instance thread).
-static WINDOW: Mutex<Option<slint::Weak<MainWindow>>> = Mutex::new(None);
-
-/// Brings the window to the front (another launch asked for it).
+/// Opens the window again, or brings it to the front (called from the
+/// tray and the single-instance thread).
 pub fn raise() {
-    let window = WINDOW.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    if let Some(weak) = window {
-        let _ = weak.upgrade_in_event_loop(|ui| {
+    let _ = slint::invoke_from_event_loop(|| {
+        if let Some(ui) = current_ui() {
             use slint::winit_030::WinitWindowAccessor;
             let window = ui.window();
             window.set_minimized(false);
             let _ = window.show();
             window.with_winit_window(|w| w.focus_window());
+        } else {
+            #[cfg(target_os = "macos")]
+            in_dock(true);
+            if let Err(err) = open_window() {
+                tracing::warn!("reopening the window: {err:#}");
+            }
+        }
+    });
+}
+
+fn current_ui() -> Option<MainWindow> {
+    UI.with(|cell| cell.borrow().as_ref().map(|ui| ui.clone_strong()))
+}
+
+/// Creates the window from the current state and shows it.
+fn open_window() -> Result<MainWindow> {
+    let view = VIEW
+        .with(|cell| cell.borrow().clone())
+        .context("GUI state missing")?;
+    let ui = MainWindow::new().context("cannot open a window (no display?)")?;
+    let (tx, store) = {
+        let mut v = view.borrow_mut();
+        v.attach(&ui);
+        (v.tx.clone(), v.store.clone())
+    };
+    wire_callbacks(&ui, &view, &tx, &store);
+    ui.window().on_close_requested(|| {
+        let tray = TRAY.with(|cell| cell.borrow().as_ref().is_some_and(tray::Tray::available));
+        let keep = VIEW.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .is_some_and(|v| v.borrow().prefs.tray)
         });
+        if !(tray && keep) {
+            let _ = slint::quit_event_loop();
+        } else if cfg!(not(windows)) {
+            // Media keys on Windows hang on to this window: only hide it there.
+            let _ = slint::invoke_from_event_loop(close_window);
+        }
+        slint::CloseRequestResponse::HideWindow
+    });
+    if let Some((size, position)) = view.borrow().geometry {
+        ui.window().set_size(size);
+        ui.window().set_position(position);
+    }
+    ui.show().context("cannot show the window")?;
+    UI.with(|cell| *cell.borrow_mut() = Some(ui.clone_strong()));
+    Ok(ui)
+}
+
+/// Destroys the window (the music plays on; the tray brings it back).
+fn close_window() {
+    let Some(ui) = UI.with(|cell| cell.borrow_mut().take()) else {
+        return;
+    };
+    VIEW.with(|cell| {
+        if let Some(view) = cell.borrow().as_ref() {
+            let mut v = view.borrow_mut();
+            v.geometry = Some((ui.window().size(), ui.window().position()));
+            v.detach();
+        }
+    });
+    let _ = ui.hide();
+    #[cfg(target_os = "macos")]
+    in_dock(false);
+}
+
+/// Shows or hides the app in the Dock and the app switcher (macOS): a
+/// window closed to the tray leaves only the menu bar icon, like other
+/// menu bar players.
+#[cfg(target_os = "macos")]
+fn in_dock(shown: bool) {
+    use objc2::{class, msg_send, runtime::AnyObject};
+    // NSApplicationActivationPolicyRegular = 0, Accessory = 1.
+    let policy: isize = if shown { 0 } else { 1 };
+    // SAFETY: main thread (Slint's event loop); NSApplication's shared
+    // instance exists once the event loop runs.
+    unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        if app.is_null() {
+            return;
+        }
+        let _: bool = msg_send![app, setActivationPolicy: policy];
+        if shown {
+            let _: () = msg_send![app, activateIgnoringOtherApps: true];
+        }
     }
 }
 
-/// Runs the GUI until the window closes. `rt` runs the core on its own thread.
+/// Runs the GUI until it quits. `rt` runs the core on its own thread.
 pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Result<()> {
-    let ui = MainWindow::new().context("cannot open a window (no display?)")?;
-    *WINDOW.lock().unwrap_or_else(|e| e.into_inner()) = Some(ui.as_weak());
     let library = deps.library.clone();
     let library_view = Rc::new(RefCell::new(LibraryView::new(library.clone())?));
     let (cmd_tx, cmd_rx) = unbounded_channel();
@@ -785,6 +1129,19 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Resu
         tx: cmd_tx.clone(),
     }));
     let view = Rc::new(RefCell::new(View {
+        tx: cmd_tx.clone(),
+        store: library.clone(),
+        last: None,
+        queue_source: RefCell::default(),
+        cast_names: Rc::new(VecModel::default()),
+        cast_scanning: false,
+        prefs: Prefs {
+            normalize: settings.normalize_volume,
+            notifications: settings.notifications,
+            tray: settings.tray,
+            crossfade: settings.crossfade,
+        },
+        geometry: None,
         tracks: Rc::new(TracksModel::new(
             Rows::Library(library_view.clone()),
             art.clone(),
@@ -804,58 +1161,32 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Resu
             lyrics: None,
             model: Rc::new(VecModel::default()),
             current: None,
+            loading: false,
         },
         home: None,
         header_art: None,
         pending_add: None,
         art,
         now: None,
-        notifications: settings.notifications,
     }));
     VIEW.with(|cell| *cell.borrow_mut() = Some(view.clone()));
-    {
-        let mut v = view.borrow_mut();
-        ui.set_tracks(ModelRc::from(v.tracks.clone()));
-        ui.set_queue_rows(ModelRc::from(v.queue.clone()));
-        ui.set_playlists(ModelRc::from(v.playlist_rows.clone()));
-        ui.set_add_choices(ModelRc::from(v.add_rows.clone()));
-        ui.set_cards(ModelRc::from(v.cards.model.clone()));
-        ui.set_shelves(ModelRc::from(v.shelves.model.clone()));
-        ui.set_related(ModelRc::from(v.related.model.clone()));
-        ui.set_lyrics(ModelRc::from(v.lyrics.model.clone()));
-        v.sync_list(&ui);
-    }
-    ui.set_autoplay(deps.autoplay);
-    ui.set_set_normalize(settings.normalize_volume);
-    ui.set_set_notifications(settings.notifications);
-    ui.set_set_tray(settings.tray);
-    ui.set_set_crossfade(settings.crossfade);
-    if let Some(width) = library
-        .get_meta("sidebar_width")
-        .ok()
-        .flatten()
-        .and_then(|w| w.parse::<f32>().ok())
-    {
-        ui.set_sidebar_width(width);
-    }
     let library_empty = view.borrow().library.borrow().playlists().is_empty();
 
-    wire_callbacks(&ui, &view, &cmd_tx, &library);
+    let ui = open_window()?;
+    ui.set_autoplay(deps.autoplay);
     // First start: nothing works without an account, so ask right away.
     if !deps.account.signed_in() {
         ui.set_download_file(downloaded_client_name().into());
         ui.set_account_open(true);
     }
+    #[cfg(windows)]
+    if let Some(hwnd) = window_handle(&ui) {
+        // Media keys (SMTC) attach to the window; the session creates them.
+        crate::media::set_window_handle(hwnd);
+    }
+    drop(ui);
 
-    // With a tray icon, closing the window only hides it.
-    let use_tray = settings.tray;
-    ui.window().on_close_requested(move || {
-        if !use_tray {
-            let _ = slint::quit_event_loop();
-        }
-        slint::CloseRequestResponse::HideWindow
-    });
-    if use_tray {
+    if settings.tray {
         let (rt, tx) = (rt.handle().clone(), cmd_tx.clone());
         // macOS wants the status item created inside the running event loop.
         slint::Timer::single_shot(Duration::ZERO, move || {
@@ -881,20 +1212,21 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Resu
         });
     }
 
-    ui.show().context("cannot show the window")?;
-    #[cfg(windows)]
-    if let Some(hwnd) = window_handle(&ui) {
-        // Media keys (SMTC) attach to the window; the session creates them.
-        crate::media::set_window_handle(hwnd);
-    }
+    // Freed frame buffers would otherwise stay in our footprint (Linux).
+    let trim = slint::Timer::default();
+    trim.start(
+        slint::TimerMode::Repeated,
+        Duration::from_secs(3),
+        crate::sysmem::release_free_memory,
+    );
 
     // Core thread: session + background work. Pushes snapshots to the UI.
-    let weak = ui.as_weak();
     let core = std::thread::Builder::new()
         .name("core".into())
-        .spawn(move || rt.block_on(core_loop(deps, cmd_rx, weak, library_empty)))?;
+        .spawn(move || rt.block_on(core_loop(deps, cmd_rx, library_empty)))?;
 
     slint::run_event_loop_until_quit().context("GUI event loop failed")?;
+    UI.with(|cell| cell.borrow_mut().take());
     TRAY.with(|cell| cell.borrow_mut().take());
 
     view.borrow().library.borrow().save();
@@ -947,7 +1279,9 @@ fn wire_callbacks(
     let play =
         |ui: &MainWindow, view: &RefCell<View>, cmd: Option<Cmd>, tx: &UnboundedSender<Cmd>| {
             if let Some(cmd) = cmd {
-                ui.set_queue_source(view.borrow().library.borrow().source_name().into());
+                let source: SharedString = view.borrow().library.borrow().source_name().into();
+                ui.set_queue_source(source.clone());
+                *view.borrow().queue_source.borrow_mut() = source;
                 let _ = tx.send(cmd);
             }
         };
@@ -1041,7 +1375,9 @@ fn wire_callbacks(
             .cloned()
             .or_else(|| lib.row(0).map(|(_, t)| t.clone()));
         if let Some(track) = seed {
-            ui.set_queue_source(format!("{} radio", track.title).into());
+            let source: SharedString = format!("{} radio", track.title).into();
+            ui.set_queue_source(source.clone());
+            *v.queue_source.borrow_mut() = source;
             send(Cmd::Radio(track), tx);
         }
     });
@@ -1138,7 +1474,9 @@ fn wire_callbacks(
             "next" => Cmd::PlayNext(track),
             "queue" => Cmd::AddToQueue(vec![track]),
             "radio" => {
-                ui.set_queue_source(format!("{} radio", track.title).into());
+                let source: SharedString = format!("{} radio", track.title).into();
+                ui.set_queue_source(source.clone());
+                *v.queue_source.borrow_mut() = source;
                 Cmd::Radio(track)
             }
             "dislike" => Cmd::Dislike(track),
@@ -1268,17 +1606,19 @@ fn wire_callbacks(
             "normalize_volume" => {
                 let on = !ui.get_set_normalize();
                 ui.set_set_normalize(on);
+                view.borrow_mut().prefs.normalize = on;
                 send(Cmd::Normalize(on), tx);
             }
             "notifications" => {
                 let on = !ui.get_set_notifications();
                 ui.set_set_notifications(on);
-                view.borrow_mut().notifications = on;
+                view.borrow_mut().prefs.notifications = on;
                 send(Cmd::StoreSetting("notifications", on), tx);
             }
             "tray" => {
                 let on = !ui.get_set_tray();
                 ui.set_set_tray(on);
+                view.borrow_mut().prefs.tray = on;
                 send(Cmd::StoreSetting("tray", on), tx);
             }
             _ => {}
@@ -1289,6 +1629,7 @@ fn wire_callbacks(
         let secs = secs.round().clamp(0.0, 12.0);
         if secs != ui.get_set_crossfade() {
             ui.set_set_crossfade(secs);
+            view.borrow_mut().prefs.crossfade = secs;
             send(Cmd::Crossfade(secs as u64), tx);
         }
     });
@@ -1336,7 +1677,6 @@ fn wire_callbacks(
 async fn core_loop(
     deps: Deps,
     mut cmd_rx: UnboundedReceiver<Cmd>,
-    ui: slint::Weak<MainWindow>,
     library_empty: bool,
 ) -> Result<()> {
     let http = deps.http.clone();
@@ -1345,7 +1685,7 @@ async fn core_loop(
     session.startup(library_empty);
     let mut queue_revision = None;
     let queue = queue_update(&session, &mut queue_revision);
-    push(&ui, Snapshot::of(&session, Changes::default(), queue));
+    push(Snapshot::of(&session, Changes::default(), queue));
 
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1363,7 +1703,7 @@ async fn core_loop(
                     }
                     Some(Cmd::FetchArt(id, size)) => {
                         dirty = false;
-                        fetch_art(&http, &fetches, &ui, id, size);
+                        fetch_art(&http, &fetches, id, size);
                     }
                     Some(cmd) => apply(&mut session, cmd),
                 }
@@ -1377,7 +1717,7 @@ async fn core_loop(
         dirty |= session.refresh_status();
         let queue = queue_update(&session, &mut queue_revision);
         if dirty || queue.is_some() {
-            push(&ui, Snapshot::of(&session, changes, queue));
+            push(Snapshot::of(&session, changes, queue));
         }
     }
     session.shutdown();
@@ -1401,22 +1741,17 @@ fn queue_update(session: &Session, revision: &mut Option<u64>) -> Option<Arc<[Tr
 }
 
 /// Downloads and decodes art off the UI thread, then hands it over.
-fn fetch_art(
-    http: &reqwest::Client,
-    permits: &Arc<Semaphore>,
-    ui: &slint::Weak<MainWindow>,
-    id: Arc<str>,
-    size: ArtSize,
-) {
-    let (http, permits, ui) = (http.clone(), permits.clone(), ui.clone());
+fn fetch_art(http: &reqwest::Client, permits: &Arc<Semaphore>, id: Arc<str>, size: ArtSize) {
+    let (http, permits) = (http.clone(), permits.clone());
     tokio::spawn(async move {
         let _permit = permits.acquire_owned().await;
         match art::fetch(&http, &id, size).await {
             Ok(art) => {
-                let _ = ui.upgrade_in_event_loop(move |ui| {
+                let _ = slint::invoke_from_event_loop(move || {
+                    let ui = current_ui();
                     VIEW.with(|cell| {
                         if let Some(view) = cell.borrow().clone() {
-                            view.borrow_mut().art_arrived(&ui, id, size, art);
+                            view.borrow_mut().art_arrived(ui.as_ref(), id, size, art);
                         }
                     });
                 });
@@ -1499,156 +1834,13 @@ fn sleep_text(sleep: Option<Sleep>) -> String {
     }
 }
 
-/// Applies a snapshot on the UI thread.
-fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
-    let _ = ui.upgrade_in_event_loop(move |ui| {
-        ui.set_loading(snap.view.loading);
-        ui.set_playing(snap.view.state == PlayState::Playing);
-        ui.set_volume(snap.view.volume);
-        ui.set_shuffle(snap.view.shuffle);
-        // The UI's repeat-mode: 0 off, 1 all, 2 one.
-        ui.set_repeat_mode(match snap.view.repeat {
-            Repeat::Off => 0,
-            Repeat::All => 1,
-            Repeat::One => 2,
-        });
-        ui.set_autoplay(snap.view.autoplay);
-        ui.set_sleep_text(sleep_text(snap.view.sleep).into());
-        ui.set_casting(snap.view.casting.clone().unwrap_or_default().into());
-        ui.set_cast_scanning(snap.cast_scanning);
-        if let Some(devices) = &snap.cast_devices {
-            let names: Vec<SharedString> = devices.iter().map(|d| d.as_str().into()).collect();
-            ui.set_cast_devices(ModelRc::new(VecModel::from(names)));
-        }
-        ui.set_syncing(snap.view.syncing);
-        ui.set_searching(snap.view.searching);
-        ui.set_signed_in(snap.view.signed_in);
-        ui.set_signing_in(snap.view.signing_in);
-        ui.set_client_id(snap.view.client_id.as_str().into());
-        if snap.changes.account && snap.view.signed_in {
-            ui.set_account_open(false);
-        }
-        ui.set_memory_text(snap.view.memory.as_str().into());
-        let (text, error) = snap.view.status.clone().unwrap_or_default();
-        ui.set_status_text(text.into());
-        ui.set_status_error(error);
-        match &snap.view.duration {
-            Some(d) if !d.is_zero() => {
-                ui.set_progress((snap.view.position.as_secs_f64() / d.as_secs_f64()) as f32);
-                let on = snap
-                    .view
-                    .casting
-                    .as_ref()
-                    .map(|name| format!(" · {name}"))
-                    .unwrap_or_default();
-                ui.set_position_text(
-                    format!("{} / {}{on}", fmt_time(snap.view.position), fmt_time(*d)).into(),
-                );
-            }
-            _ => {
-                ui.set_progress(0.0);
-                ui.set_position_text(if snap.view.loading {
-                    "loading…".into()
-                } else {
-                    "".into()
-                });
-            }
-        }
-        match &snap.view.now {
-            Some(t) => {
-                ui.set_now_title(SharedString::from(&*t.title));
-                ui.set_now_artist(SharedString::from(&*t.artist));
-                ui.set_now_initial(initial(&t.title));
-                ui.set_now_hue(hue(&t.artist));
-            }
-            None => {
-                ui.set_now_title("".into());
-                ui.set_now_artist("".into());
-                ui.set_expanded(false);
-            }
-        }
-
+/// Applies a snapshot on the UI thread (to the window, if one is open).
+fn push(snap: Snapshot) {
+    let _ = slint::invoke_from_event_loop(move || {
+        let ui = current_ui();
         VIEW.with(|cell| {
-            let Some(view) = cell.borrow().clone() else {
-                return;
-            };
-            let mut v = view.borrow_mut();
-            if let Some(home) = &snap.home {
-                v.home = Some(home.clone());
-            }
-            let applied = v.library.borrow_mut().apply(
-                &snap.changes,
-                SessionData {
-                    search: snap.search.as_ref(),
-                    page: snap.page.as_deref(),
-                    home: v.home.as_deref(),
-                },
-            );
-            match applied {
-                Ok(true) => v.sync_list(&ui),
-                // Counts may have changed (a like elsewhere).
-                Ok(false) if snap.changes.playlist.is_some() => v.sync_playlists(),
-                Ok(false) => {}
-                Err(err) => tracing::warn!(%err, "reloading the library view"),
-            }
-            if snap.changes.saved {
-                v.sync_saved(&ui);
-            }
-            if snap.changes.downloads {
-                v.tracks.reset();
-            }
-            if let Some(id) = &snap.changes.liked {
-                v.tracks.rows_changed(id);
-                v.queue.rows_changed(id);
-            }
-            if let Some(queue) = snap.queue {
-                v.queue.set_queue(queue);
-            }
-            let now_id = snap.view.now.as_ref().map(|t| t.video_id.clone());
-            let changed = now_id != v.now.as_ref().map(|t| t.video_id.clone());
-            if changed {
-                // What's shown about the old track goes; the new arrives later.
-                v.lyrics.set(&ui, None);
-                ui.set_lyrics_loading(true);
-                v.related_data = Arc::from([]);
-                let art = v.art.clone();
-                v.related.set(&[], &mut art.borrow_mut());
-            }
-            if snap.changes.lyrics {
-                v.lyrics.set(&ui, snap.lyrics.clone());
-                ui.set_lyrics_loading(false);
-            }
-            v.lyrics.follow(&ui, snap.view.position);
-            if let Some(related) = &snap.related {
-                v.related_data = related.clone();
-                let art = v.art.clone();
-                v.related.set(related, &mut art.borrow_mut());
-            }
-            if changed || snap.changes.playlist.is_some() || snap.changes.liked.is_some() {
-                let liked = now_id
-                    .as_ref()
-                    .is_some_and(|id| v.library.borrow().is_liked(id));
-                ui.set_liked(liked);
-            }
-            v.tracks.set_playing(now_id.clone());
-            v.queue.set_playing(now_id);
-            v.now = snap.view.now.clone();
-            if changed {
-                v.show_now_art(&ui);
-                let tip = v.now.as_ref().map_or_else(
-                    || "ytm-player".to_owned(),
-                    |t| format!("{} — {}", t.title, t.artist),
-                );
-                TRAY.with(|cell| {
-                    if let Some(tray) = cell.borrow().as_ref() {
-                        tray.set_tooltip(&tip);
-                    }
-                });
-                if v.notifications
-                    && let Some(track) = &v.now
-                {
-                    crate::notify::track_changed(track);
-                }
+            if let Some(view) = cell.borrow().clone() {
+                view.borrow_mut().absorb(snap, ui.as_ref());
             }
         });
     });
@@ -1657,6 +1849,8 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
 thread_local! {
     /// The tray icon, when enabled (UI thread).
     static TRAY: RefCell<Option<tray::Tray>> = const { RefCell::new(None) };
+    /// The open window, if any.
+    static UI: RefCell<Option<MainWindow>> = const { RefCell::new(None) };
     /// The UI-thread view, for handlers queued from the core thread.
     static VIEW: RefCell<Option<Rc<RefCell<View>>>> = const { RefCell::new(None) };
 }

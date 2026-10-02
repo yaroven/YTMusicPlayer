@@ -138,8 +138,10 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 
-# Main-thread run loop for media key handlers.
+# Main-thread run loop for media key handlers; objc2 (already in the tree
+# via winit) to hide the Dock icon while the window is closed to the tray.
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
 core-foundation = "0.10"
 
 # Tests: a self-signed certificate for the fake Cast receiver.

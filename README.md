@@ -13,7 +13,8 @@ after YouTube Music, and a terminal UI. macOS, Linux and Windows.
 - **Playback:** gapless or crossfade, loudness normalization like YouTube
   Music, editable queue, sleep timer, offline downloads, Chromecast.
 - **Light:** the terminal UI uses ~10 MB of memory idle and ~15 MB while
-  playing, the window ~55–75 MB (macOS, Activity Monitor "Memory");
+  playing, the window ~50 MB while playing and ~30 MB closed to the tray
+  (macOS, Activity Monitor "Memory");
   near-zero CPU. A YouTube Music browser tab typically takes several hundred MB.
 - **Desktop window:** album art, full-screen "now playing" with the queue,
   resizable sidebar, layout that adapts to small windows.
@@ -196,8 +197,17 @@ Open **ytm-player** from your applications, or run `ytm gui`.
   instead of the sidebar, and icon-only buttons on small windows.
 
 Only one player runs at a time: launching it again brings the open window
-to the front. With the tray icon on, closing the window keeps the music
-playing; **Quit** in the tray menu exits. The bottom of the sidebar shows
+to the front.
+
+**Playing in the background:** with the tray icon on (default), closing
+the window keeps the music playing and frees the window's memory. The
+tray / menu bar icon has **Play / Pause**, **Next**, **Previous**, **Show
+ytm-player** and **Quit**; media keys keep working. On macOS the app also
+leaves the Dock until the window is shown again; launching it again opens
+the window too. (Linux needs a desktop with tray icons — on GNOME the
+AppIndicator extension; without one, closing the window quits.)
+
+The bottom of the sidebar shows
 the player's memory use (plus yt-dlp's while it fetches a track link). To
 make `ytm` open the window instead of the terminal UI, set `ui = "gui"` in
 the config.

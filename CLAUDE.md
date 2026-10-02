@@ -150,9 +150,19 @@ Domain terms are defined in `CONTEXT.md`.
 - **App stays in Google "Testing"**: publishing needs a public homepage +
   privacy policy (user's call). Testing ⇒ 7-day login; the app says so.
 - **GUI memory is dominated by window pixel buffers** (software renderer, ~10 MB
-  per Retina frame): measured ~57 MB idle at 900x580, ~70 MB playing at
-  980x640 (2026-10-01). Media glyphs (⏮⏸⏭) are missing from system fonts —
-  transport icons are Slint `Path`s.
+  per Retina frame, plus the window server's copy). softbuffer on macOS
+  allocates a fresh frame per redraw and macOS malloc cached freed ones:
+  the GUI re-execs itself once with `MallocLargeCache=0` (macOS only):
+  playing at 1040x660 80 → 53 MB, same CPU (2026-10-02). Media glyphs
+  (⏮⏸⏭) are missing from system fonts — transport icons are Slint `Path`s.
+- **Close to tray = destroy the window** (`gui::close_window`): state lives
+  in `View`, the `MainWindow` is rebuilt by `open_window` (tray "Show",
+  second launch). Needs `SLINT_DESTROY_WINDOW_ON_HIDE` (set by the
+  re-exec on macOS, `set_var` on Linux), else the last frame stays:
+  31 MB closed vs 31–53 MB. Art caches/cards are dropped on close, Lyrics/
+  Related fetching stops. macOS: Dock icon hidden (activation policy
+  Accessory) while closed. Windows only hides (SMTC needs the HWND).
+  Linux: without a StatusNotifier host closing quits.
 - **GUI album art**: `i.ytimg.com` thumbnails (`mqdefault` for rows,
   `sddefault`→`hqdefault` for the big cover), centre-square crop of the 16:9
   picture, decoded with `image` (jpeg + png) off the UI thread; thumb cache
