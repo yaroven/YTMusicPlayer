@@ -36,6 +36,7 @@ USAGE:
     ytm play <id|url>           play one track without the TUI
     ytm resolve <id> [--js]     print the direct audio URL (debug)
     ytm devices                 list audio output devices (for `audio_device`)
+    ytm lastfm-login            connect Last.fm scrobbling (API key in config)
     ytm config                  print config file location
     ytm status                  show setup state (config, sign-in, library)
     ytm uninstall [--purge]     remove ytm-player (asks about your library and sign-in)";
@@ -165,6 +166,7 @@ async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Resul
             import_client(paths, settings, file, Flow::Device).await
         }
         ["sync"] => sync(paths, settings).await,
+        ["lastfm-login"] => lastfm_login(paths, settings).await,
         ["play", input] => play(paths, settings, input).await,
         ["resolve", id] => resolve(paths, settings, id, false).await,
         ["resolve", id, "--js"] => resolve(paths, settings, id, true).await,
@@ -226,6 +228,24 @@ fn uninstall(_options: &[&str]) -> Result<()> {
     Ok(())
 }
 
+async fn lastfm_login(paths: &AppPaths, settings: &Settings) -> Result<()> {
+    let Some(credentials) = bootstrap::lastfm_credentials(settings) else {
+        bail!(
+            "set lastfm_api_key and lastfm_api_secret in {} first \
+             (create an API account at https://www.last.fm/api/account/create)",
+            paths.config_file().display()
+        );
+    };
+    let http = bootstrap::http_client()?;
+    let name = ytm_player::lastfm::login(&http, &credentials, paths.data_dir(), |url| {
+        println!("Allow ytm-player in your browser:\n    {url}\nWaiting…");
+        let _ = open::that_detached(url);
+    })
+    .await?;
+    println!("Scrobbling to Last.fm as {name}.");
+    Ok(())
+}
+
 async fn account(paths: &AppPaths, settings: &Settings) -> Result<Account> {
     bootstrap::account(paths, settings, &bootstrap::http_client()?).await
 }
@@ -239,7 +259,7 @@ fn run_gui(paths: &AppPaths, settings: &Settings) -> Result<()> {
     // The window owns the main thread; the runtime moves to the core thread.
     let rt = runtime()?;
     let deps = rt.block_on(bootstrap::deps(paths, settings))?;
-    ytm_player::gui::run(rt, deps)
+    ytm_player::gui::run(rt, deps, settings)
 }
 
 #[cfg(not(feature = "gui"))]

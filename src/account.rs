@@ -101,6 +101,11 @@ impl Account {
         self.youtube.clone()
     }
 
+    /// `config.toml`, where preferences are saved too.
+    pub fn config_file(&self) -> &Path {
+        &self.config_file
+    }
+
     pub fn signed_in(&self) -> bool {
         self.youtube.is_some()
     }

@@ -13,7 +13,10 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -148,8 +151,10 @@ impl Opened {
 pub struct SourceOptions {
     /// Persists resolved URLs and knows downloaded tracks.
     pub store: Option<Arc<Library>>,
-    /// For loudness normalization (`None`: off).
+    /// For loudness normalization (`None`: never).
     pub catalog: Option<Catalog>,
+    /// Normalization on (shared by clones, so it can change while playing).
+    pub normalize: Arc<AtomicBool>,
     /// Where downloads go.
     pub downloads: Option<PathBuf>,
 }
@@ -247,6 +252,9 @@ impl TrackSource {
         let Some(catalog) = &self.options.catalog else {
             return 1.0;
         };
+        if !self.options.normalize.load(Ordering::Relaxed) {
+            return 1.0;
+        }
         match tokio::time::timeout(LOUDNESS_TIMEOUT, catalog.loudness_db(video_id)).await {
             Ok(Ok(Some(db))) => gain_for(db),
             Ok(Err(err)) => {
@@ -255,6 +263,11 @@ impl TrackSource {
             }
             _ => 1.0,
         }
+    }
+
+    /// Turns loudness normalization on or off (from the next track).
+    pub fn set_normalize(&self, on: bool) {
+        self.options.normalize.store(on, Ordering::Relaxed);
     }
 
     /// Saves `track`'s audio for offline play.

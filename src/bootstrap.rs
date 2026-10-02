@@ -2,7 +2,10 @@
 //! Library, the Track source (with yt-dlp located or downloaded) and the
 //! Account. Shared by the terminal UI, the window and the CLI commands.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, atomic::AtomicBool},
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 
@@ -12,6 +15,7 @@ use crate::{
     audio::{JsPolicy, SourceOptions, TrackSource, extractor::YtDlp},
     catalog::Catalog,
     config::{paths::AppPaths, settings::Settings},
+    discord, lastfm,
     session::{Deps, Listener},
     storage::Library,
 };
@@ -64,9 +68,8 @@ pub fn track_source(
     let options = SourceOptions {
         downloads: store.as_ref().map(|_| paths.data_dir().join("downloads")),
         store,
-        catalog: settings
-            .normalize_volume
-            .then(|| Catalog::new(http.clone())),
+        catalog: Some(Catalog::new(http.clone())),
+        normalize: Arc::new(AtomicBool::new(settings.normalize_volume)),
     };
     TrackSource::new(
         Arc::new(ytdlp),
@@ -104,11 +107,36 @@ pub async fn deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
 
 /// Scrobbling and status integrations the settings turn on.
 fn listeners(
-    _paths: &AppPaths,
-    _settings: &Settings,
-    _http: &reqwest::Client,
+    paths: &AppPaths,
+    settings: &Settings,
+    http: &reqwest::Client,
 ) -> Vec<Box<dyn Listener>> {
-    Vec::new()
+    let mut listeners: Vec<Box<dyn Listener>> = Vec::new();
+    if let Some(credentials) = lastfm_credentials(settings) {
+        match lastfm::Scrobbler::new(http.clone(), credentials, paths.data_dir()) {
+            Some(s) => listeners.push(Box::new(s)),
+            None => tracing::info!("Last.fm configured but not signed in: `ytm lastfm-login`"),
+        }
+    }
+    let discord = settings.discord_client_id.trim();
+    if !discord.is_empty()
+        && let Some(p) = discord::Presence::new(discord)
+    {
+        listeners.push(Box::new(p));
+    }
+    listeners
+}
+
+/// Last.fm API account from the settings, when both parts are set.
+pub fn lastfm_credentials(settings: &Settings) -> Option<lastfm::Credentials> {
+    let (key, secret) = (
+        settings.lastfm_api_key.trim(),
+        settings.lastfm_api_secret.trim(),
+    );
+    (!key.is_empty() && !secret.is_empty()).then(|| lastfm::Credentials {
+        key: key.to_owned(),
+        secret: secret.to_owned(),
+    })
 }
 
 /// The Google account, with the token in the OS keyring.

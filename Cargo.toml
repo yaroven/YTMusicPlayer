@@ -16,7 +16,7 @@ path = "src/main.rs"
 [features]
 default = ["gui"]
 # Desktop window (`ytm gui`); off => terminal-only, smaller binary.
-gui = ["dep:slint", "dep:image"]
+gui = ["dep:slint", "dep:image", "dep:notify-rust"]
 
 [dependencies]
 # --- Async runtime -----------------------------------------------------------
@@ -108,10 +108,14 @@ slint = { version = "1.18", optional = true, default-features = false, features 
     "unstable-winit-030",
 ] }
 # Album art (GUI): JPEG decode + scale of YouTube thumbnails only.
+notify-rust = { version = "4.18", optional = true, default-features = false, features = ["z-with-tokio"] }
 image = { version = "0.25", optional = true, default-features = false, features = ["jpeg"] }
 
 # Unpacks the onedir yt-dlp zip.
 zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
+
+md5 = "0.8"              # Last.fm request signatures
+discord-rich-presence = "1.1"  # Discord "Listening to" status over local IPC
 
 # Process memory (macOS `proc_pid_rusage`), quiet SIGPIPE handling.
 [target.'cfg(unix)'.dependencies]

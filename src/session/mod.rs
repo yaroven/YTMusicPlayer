@@ -33,6 +33,7 @@ use crate::{
         queue::{Queue, Repeat},
     },
     catalog::{Catalog, Item, Page, SearchKind, Shelf},
+    config::settings::Settings,
     lyrics::Lyrics,
     media::{MediaAction, MediaControls},
     storage::{Download, Library},
@@ -740,6 +741,7 @@ impl Session {
         self.deps.autoplay = !self.deps.autoplay;
         let state = if self.deps.autoplay { "on" } else { "off" };
         self.set_info(format!("Autoplay {state}"));
+        self.store_setting("autoplay", &self.deps.autoplay.to_string());
     }
 
     /// Changes the overlap between tracks (0: gapless).
@@ -747,6 +749,21 @@ impl Session {
         self.deps.crossfade = overlap;
         self.player.set_crossfade(overlap);
         self.queue_changed();
+        self.store_setting("crossfade", &overlap.as_secs().to_string());
+    }
+
+    /// Loudness normalization on or off (from the next track).
+    pub fn set_normalize(&mut self, on: bool) {
+        self.deps.source.set_normalize(on);
+        self.store_setting("normalize_volume", &on.to_string());
+    }
+
+    /// Saves a preference into `config.toml` (`value` is a TOML literal).
+    pub fn store_setting(&mut self, key: &str, value: &str) {
+        let path = self.deps.account.config_file().to_owned();
+        if let Err(err) = Settings::store_value(&path, key, value) {
+            self.set_error(format!("Saving {key}: {err:#}"));
+        }
     }
 
     pub fn play_next(&mut self, track: Track) {

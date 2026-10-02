@@ -15,6 +15,8 @@ pub enum ArtSize {
     Thumb,
     /// The full-screen "now playing" view.
     Large,
+    /// Album / artist / playlist cards and page headers, by URL.
+    Card,
 }
 
 impl ArtSize {
@@ -23,6 +25,7 @@ impl ArtSize {
         match self {
             Self::Thumb => 96,
             Self::Large => 480,
+            Self::Card => 160,
         }
     }
 
@@ -31,6 +34,7 @@ impl ArtSize {
             Self::Thumb => &["mqdefault"],
             // sddefault is missing for some videos; hqdefault always exists.
             Self::Large => &["sddefault", "hqdefault"],
+            Self::Card => &[],
         }
     }
 }
@@ -41,10 +45,18 @@ pub struct Art {
     pub tint: (u8, u8, u8),
 }
 
-pub async fn fetch(http: &reqwest::Client, video_id: &str, size: ArtSize) -> Result<Art> {
+/// Art for `key`: a video id, or for [`ArtSize::Card`] the image URL.
+pub async fn fetch(http: &reqwest::Client, key: &str, size: ArtSize) -> Result<Art> {
+    let urls: Vec<String> = match size {
+        ArtSize::Card => vec![key.to_owned()],
+        _ => size
+            .sources()
+            .iter()
+            .map(|name| format!("https://i.ytimg.com/vi/{key}/{name}.jpg"))
+            .collect(),
+    };
     let mut last_err = None;
-    for name in size.sources() {
-        let url = format!("https://i.ytimg.com/vi/{video_id}/{name}.jpg");
+    for url in urls {
         match http
             .get(&url)
             .send()

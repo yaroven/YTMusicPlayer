@@ -8,13 +8,17 @@ pub mod audio;
 pub mod bootstrap;
 pub mod catalog;
 pub mod config;
+pub mod discord;
 pub mod fmt;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod instance;
+pub mod lastfm;
 pub mod library_view;
 pub mod lyrics;
 pub mod media;
+#[cfg(feature = "gui")]
+pub mod notify;
 pub mod session;
 pub mod storage;
 pub mod sync;

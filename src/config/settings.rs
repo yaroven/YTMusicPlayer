@@ -223,6 +223,38 @@ impl Settings {
     }
 }
 
+impl Settings {
+    /// Sets `key = value` (a TOML literal) in `path`, keeping comments and
+    /// the other settings; appends the key when the file lacks it.
+    pub fn store_value(path: &Path, key: &str, value: &str) -> Result<()> {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|_| TEMPLATE.to_owned());
+        let mut seen = false;
+        let mut out: Vec<String> = text
+            .lines()
+            .map(|line| {
+                if !line.trim_start().starts_with('#')
+                    && line.split('=').next().unwrap_or("").trim() == key
+                {
+                    seen = true;
+                    format!("{key} = {value}")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        if !seen {
+            // Before any table, so the key stays top-level.
+            let at = out
+                .iter()
+                .position(|l| l.trim_start().starts_with('['))
+                .unwrap_or(out.len());
+            out.insert(at, format!("{key} = {value}"));
+        }
+        std::fs::write(path, out.join("\n") + "\n")
+            .with_context(|| format!("writing {}", path.display()))
+    }
+}
+
 #[cfg(unix)]
 fn restrict_permissions(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -288,6 +320,23 @@ mod tests {
                 .contains("# Startup volume")
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn stored_values_keep_comments_and_reload() {
+        let dir = std::env::temp_dir().join(format!("ytm-cfg-value-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let _ = std::fs::remove_dir_all(&dir);
+        Settings::load(&path).unwrap();
+        Settings::store_value(&path, "autoplay", "false").unwrap();
+        Settings::store_value(&path, "crossfade", "5").unwrap();
+        Settings::store_value(&path, "brand_new", "true").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# When the queue runs out"));
+        let s = Settings::load(&path).unwrap();
+        assert!(!s.autoplay);
+        assert_eq!(s.crossfade, 5.0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
