@@ -47,6 +47,9 @@ stdout/stderr — the terminal belongs to the TUI.
   `--target` into the scratchpad), send keys, print `screen.display`. Mouse:
   write SGR sequences (`\x1b[<0;col;rowM` / `m`, 1-based); send both clicks of
   a double-click in one write (the driver pauses 0.3 s per step).
+- Unit tests use the seams instead of real devices: `Session::with_playback`
+  + a recording `Playback` fake, scripted `Extractor`s with a local HTTP
+  server, `Tokens::new(InMemory)`, `Library::open_in_memory`.
 - Seed a fake library with `sqlite3` into `<data_dir>/library.sqlite3`
   (real video ids; name columns explicitly), delete it afterwards.
 - Memory: compare `footprint -p PID` (phys_footprint, what Activity Monitor
@@ -72,23 +75,30 @@ main services the CFRunLoop for media keys).
 
 | Module | Role |
 |---|---|
-| `session` | UI-independent core: queue, playback, background work (resolve, sync, likes, adds), media keys; `next_event()` reports `Changes` |
-| `app` | TUI frontend: selection, filter, popups, mouse; `select!` over input + `session.next_event()`; redraws only when dirty |
+| `session` | UI-independent core: queue, playback, background work (sync, likes, adds, search, sign-in), media keys; `next_event()` reports `Changes`, `view()` returns one `SessionView`; takes a `Playback` adapter (`with_playback` in tests) |
+| `library_view` | what the track list shows (Playlist or Search results), filter, selection, action target, "save to" choices, reaction to `Changes`, last shown playlist; both frontends render it |
+| `account` | OAuth client setup, browser/device sign-in, sign-out, YouTube API client; token behind `api::token_store::Tokens` (Keyring / InMemory) |
+| `bootstrap` | builds the HTTP client, yt-dlp, Track source, Account and `Deps` for every frontend and CLI command |
+| `app` | TUI frontend: focus, popups, mouse; `select!` over input + `session.next_event()`; redraws only when dirty |
 | `ui::{keymap, views}` | ratatui rendering; track table builds widgets for visible rows only |
-| `audio::player` | rodio on its own thread (256 KiB stack); device opened lazily, closed after 30 s idle; events tagged with a load `generation` |
-| `audio::stream` | bounded `Read + Seek` over googlevideo: 256 KiB Range chunks, 4 ahead, max 8 cached (2 MiB) |
-| `audio::queue` | `Arc<[Track]>` + `u32` play order, shuffle/repeat, "play next" list |
-| `audio::{extractor, resolver, js_runtime, install}` | yt-dlp lookup/download, URL cache (16 in memory, rest in SQLite) + prefetch + fallback ladder |
-| `audio::open_track` | resolve + open stream; on 403/410 re-resolve once |
-| `api::{auth, token_store, client, models}` | OAuth PKCE loopback + device flow, tokens in keyring, Data API v3 (list, rate, insert), `Track` with `Arc<str>` fields |
+| `audio::source` | Track source: `open(track)` → bounded stream; owns URL cache, yt-dlp ladder, 403/410 refresh (at open and mid-track), duration fallback, prefetch, search, daily update; yt-dlp behind the `Extractor` seam |
+| `audio::resolver` (private) | URL cache (16 in memory, rest in SQLite), one yt-dlp at a time, JS switch, update-once |
+| `audio::player` | `Playback` trait; `PlayerHandle` = rodio on its own thread (256 KiB stack), device opened lazily, closed after 30 s idle; events tagged with a load `generation` |
+| `audio::stream` | bounded `Read + Seek` over googlevideo: 256 KiB Range chunks, 4 ahead, max 8 cached (2 MiB); asks `Refresh` for a new URL on 403/410 |
+| `audio::queue` | `Arc<[Track]>` + `u32` play order, shuffle/repeat, "play next" list, `revision()` |
+| `audio::{extractor, js_runtime, install}` | yt-dlp lookup/download (onedir), search; QuickJS fallback |
+| `api::{auth, token_store, client, models}` | OAuth PKCE loopback + device flow, token stores, Data API v3 (list, search, rate, insert), `Track` with `Arc<str>` fields |
 | `storage` | SQLite: library, playlist ETags, stream URL cache, `meta` (UI state) |
-| `sync` | API -> storage; skips playlists with unchanged ETag |
+| `sync` | API -> storage; skips playlists with unchanged ETag; `SyncReport::summary` |
 | `instance` | single player instance over a Unix socket in the runtime/temp dir (data dir paths exceed SUN_LEN); 2nd launch raises the window and exits |
 | `sysmem` | own + child (yt-dlp) memory for the status bar: macOS `proc_pid_rusage` phys_footprint, Linux `smaps_rollup` Pss |
 | `media` | souvlaki: media keys + Now Playing (macOS, Linux/MPRIS); stub on Windows |
-| `gui` (feature `gui`) | Slint window on the main thread; `Session` on a "core" thread with its own runtime; UI sends `Cmd`s, core pushes `Snapshot`s via `upgrade_in_event_loop`; `TracksModel` builds rows lazily over `Arc<[Track]>` |
+| `gui` (feature `gui`) | Slint window on the main thread; `Session` on a "core" thread with its own runtime; UI sends `Cmd`s, core pushes `Snapshot`s (`SessionView` + changes) via `upgrade_in_event_loop`; `TracksModel` reads rows straight from the `LibraryView` (or the queue) |
+| `fmt` | display formatting shared by both UIs |
 | `packaging/` | Linux .desktop, Arch PKGBUILD, Inno Setup script, macOS pkg builder |
 | `config::{paths, settings}` | per-OS dirs; `config.toml` (template on first run, `store_client` rewrites keys in place) |
+
+Domain terms are defined in `CONTEXT.md`.
 
 ## Decisions (with evidence — don't re-litigate without new data)
 
