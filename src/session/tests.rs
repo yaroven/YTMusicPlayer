@@ -167,6 +167,7 @@ async fn session_with(
         crossfade: Duration::ZERO,
         listeners: Vec::new(),
         download_limit: None,
+        check_updates: false,
     };
     let player = FakePlayer::new();
     let (events, rx) = mpsc::unbounded_channel();

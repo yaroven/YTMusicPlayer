@@ -103,6 +103,8 @@ enum Cmd {
     StoreSetting(&'static str, bool),
     CastScan,
     CookiesBrowser(String),
+    CheckUpdates,
+    InstallUpdate,
     OpenArtist(Track),
     CastTo(Option<usize>),
     SaveClient(String, String),
@@ -132,6 +134,8 @@ struct Snapshot {
     queue: Option<Arc<[Track]>>,
     /// Device names, when `changes.cast`.
     cast_devices: Option<Vec<String>>,
+    /// What installing an update did, and the release page.
+    update_done: Option<(crate::update::Installed, String)>,
     cast_scanning: bool,
 }
 
@@ -160,6 +164,7 @@ impl Snapshot {
                     .collect()
             }),
             cast_scanning: session.cast_scanning,
+            update_done: None,
             changes,
             queue,
         }
@@ -832,6 +837,7 @@ impl View {
         ui.set_set_crossfade(self.prefs.crossfade);
         ui.set_set_cookies(cookies_label(&self.prefs.cookies).into());
         ui.set_queue_source(self.queue_source.borrow().clone());
+        ui.set_app_version(env!("CARGO_PKG_VERSION").into());
         if let Some(width) = self
             .store
             .get_meta("sidebar_width")
@@ -887,6 +893,8 @@ impl View {
         ui.set_sleep_text(sleep_text(view.sleep).into());
         ui.set_casting(view.casting.clone().unwrap_or_default().into());
         ui.set_cast_scanning(self.cast_scanning);
+        ui.set_update_version(view.update.clone().unwrap_or_default().into());
+        ui.set_updating(view.updating);
         ui.set_syncing(view.syncing);
         ui.set_searching(view.searching);
         ui.set_signed_in(view.signed_in);
@@ -942,6 +950,27 @@ impl View {
 
     /// Takes in a snapshot from the core; renders it when a window is open.
     fn absorb(&mut self, snap: Snapshot, ui: Option<&MainWindow>) {
+        if let Some((done, page)) = &snap.update_done {
+            use crate::update::Installed;
+            match done {
+                Installed::Replaced => {
+                    // The new binary starts once this process is gone.
+                    match crate::update::relaunch_gui() {
+                        Ok(()) => {
+                            let _ = slint::quit_event_loop();
+                        }
+                        Err(err) => tracing::warn!(%err, "restarting after the update"),
+                    }
+                }
+                Installed::InstallerStarted { quit: true } => {
+                    let _ = slint::quit_event_loop();
+                }
+                Installed::InstallerStarted { quit: false } => {}
+                Installed::Manual(_) => {
+                    let _ = open::that_detached(page);
+                }
+            }
+        }
         if let Some(home) = &snap.home {
             self.home = Some(home.clone());
         }
@@ -1677,6 +1706,14 @@ fn wire_callbacks(
             send(Cmd::Crossfade(secs as u64), tx);
         }
     });
+    on!(on_update_now, [tx, view, ui], || send(
+        Cmd::InstallUpdate,
+        tx
+    ));
+    on!(on_check_updates, [tx, view, ui], || send(
+        Cmd::CheckUpdates,
+        tx
+    ));
     on!(on_show_all_songs, [tx, view, ui], || navigate(
         ui,
         view,
@@ -1781,7 +1818,12 @@ async fn core_loop(
         dirty |= session.refresh_status();
         let queue = queue_update(&session, &mut queue_revision);
         if dirty || queue.is_some() {
-            push(Snapshot::of(&session, changes, queue));
+            let mut snap = Snapshot::of(&session, changes, queue);
+            if let Some(done) = session.update_done.take() {
+                let page = session.update.as_ref().map(|u| u.page.clone());
+                snap.update_done = Some((done, page.unwrap_or_default()));
+            }
+            push(snap);
         }
     }
     session.shutdown();
@@ -1871,6 +1913,8 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::StoreSetting(key, on) => session.store_setting(key, &on.to_string()),
         Cmd::CastScan => session.find_cast_devices(),
         Cmd::CookiesBrowser(browser) => session.set_cookies_browser(&browser),
+        Cmd::CheckUpdates => session.check_for_update(true),
+        Cmd::InstallUpdate => session.install_update(),
         Cmd::OpenArtist(track) => session.open_artist(&track),
         Cmd::CastTo(i) => {
             let device = i.and_then(|i| session.cast_devices.get(i).cloned());

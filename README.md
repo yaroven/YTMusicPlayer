@@ -303,6 +303,22 @@ optional:
 Logs: `ytm-player/logs` in the OS cache directory (`YTM_LOG=debug` for
 more detail).
 
+## Updates
+
+The player checks GitHub for a newer release when it starts (one small
+request; `check_updates = false` turns it off). A new version shows as
+**Update to X** in the sidebar and a red dot on the settings button;
+**Settings → Update** installs it (also `ytm update` in a terminal), and
+**Check now** looks again. Downloads are checked against the release's
+SHA256SUMS.
+
+| Installed with | What Update does |
+|---|---|
+| install.sh, or an unpacked archive | replaces the binary and restarts the window |
+| the macOS .pkg | opens the new .pkg in Installer (asks for your password) |
+| the Windows setup | installs the new setup silently and starts the player again |
+| a Linux .deb / .rpm / Arch package | opens the release page and shows the install command (the package manager needs sudo) |
+
 ## Integrations
 
 - **Chromecast:** the Cast button in the player bar (or `C` in the terminal

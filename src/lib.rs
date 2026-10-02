@@ -25,3 +25,4 @@ pub mod storage;
 pub mod sync;
 pub mod sysmem;
 pub mod ui;
+pub mod update;

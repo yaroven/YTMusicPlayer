@@ -37,6 +37,9 @@ js_fallback = true
 # (System Settings → Privacy & Security); a cookies.txt file doesn't.
 cookies_from_browser = ""
 
+# Look for a newer ytm-player on GitHub at startup (one small request).
+check_updates = true
+
 # Extra yt-dlp flags.
 ytdlp_extra_args = []
 
@@ -91,6 +94,7 @@ pub struct Settings {
     pub js_fallback: bool,
     pub ytdlp_extra_args: Vec<String>,
     pub cookies_from_browser: String,
+    pub check_updates: bool,
     pub liked_music_only: bool,
     pub volume: f32,
     pub autoplay: bool,
@@ -118,6 +122,7 @@ impl Default for Settings {
             js_fallback: true,
             ytdlp_extra_args: Vec::new(),
             cookies_from_browser: String::new(),
+            check_updates: true,
             liked_music_only: true,
             volume: 0.8,
             autoplay: true,

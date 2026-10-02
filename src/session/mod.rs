@@ -11,6 +11,7 @@
 mod cast;
 mod discover;
 mod library;
+mod updates;
 
 use std::{
     collections::HashSet,
@@ -74,6 +75,8 @@ pub struct Deps {
     pub listeners: Vec<Box<dyn Listener>>,
     /// Bytes of downloads after which no more are started.
     pub download_limit: Option<u64>,
+    /// Look for a newer release at startup.
+    pub check_updates: bool,
 }
 
 /// Something that follows playback (Last.fm, Discord). Called on the core
@@ -125,6 +128,8 @@ pub struct Changes {
     pub account: bool,
     /// Cast devices or the cast target changed.
     pub cast: bool,
+    /// An update was found or installed.
+    pub update: bool,
 }
 
 /// Snapshot of what the UIs show; see [`Session::view`].
@@ -152,6 +157,9 @@ pub struct SessionView {
     pub sleep: Option<Sleep>,
     /// The Cast device playing, if any.
     pub casting: Option<String>,
+    /// A newer version, when one was found.
+    pub update: Option<String>,
+    pub updating: bool,
 }
 
 enum Background {
@@ -238,6 +246,11 @@ enum Background {
     },
     SignedOut(Result<()>),
     CastDevices(Result<Vec<crate::cast::Device>>),
+    UpdateChecked {
+        manual: bool,
+        result: Result<Option<crate::update::Update>>,
+    },
+    UpdateInstalled(Result<crate::update::Installed>),
     CastConnected {
         name: String,
         result: Result<(crate::cast::CastPlayer, UnboundedReceiver<PlayerEvent>)>,
@@ -304,6 +317,12 @@ pub struct Session {
     /// Where to continue the track that is being opened (after a switch
     /// between local and cast output).
     resume_at: Option<Duration>,
+    /// A newer release (from the last check).
+    pub update: Option<crate::update::Update>,
+    checking_update: bool,
+    updating: bool,
+    /// What the last install did (the frontend restarts / quits).
+    pub update_done: Option<crate::update::Installed>,
 }
 
 impl Session {
@@ -395,6 +414,10 @@ impl Session {
             cast_devices: Arc::from([]),
             cast_scanning: false,
             resume_at: None,
+            update: None,
+            checking_update: false,
+            updating: false,
+            update_done: None,
         }
     }
 
@@ -421,11 +444,16 @@ impl Session {
             autoplay: self.deps.autoplay,
             sleep: self.sleep,
             casting: self.casting.clone(),
+            update: self.update.as_ref().map(|u| u.version.clone()),
+            updating: self.updating,
         }
     }
 
     /// Kicks off the first sync, or explains why there's nothing to show.
     pub fn startup(&mut self, library_empty: bool) {
+        if self.deps.check_updates {
+            self.check_for_update(false);
+        }
         match (self.signed_in(), library_empty) {
             (true, true) => self.start_sync(),
             (false, true) => self.set_error(NOT_SIGNED_IN),
@@ -589,6 +617,9 @@ impl Session {
             | Background::Lyrics { .. } => self.discover_event(event, &mut changes),
             Background::CastDevices(_) | Background::CastConnected { .. } => {
                 self.cast_event(event, &mut changes)
+            }
+            Background::UpdateChecked { .. } | Background::UpdateInstalled(_) => {
+                self.update_event(event, &mut changes)
             }
         }
         changes

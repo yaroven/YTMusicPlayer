@@ -37,6 +37,7 @@ USAGE:
     ytm resolve <id> [--js]     print the direct audio URL (debug)
     ytm devices                 list audio output devices (for `audio_device`)
     ytm lastfm-login            connect Last.fm scrobbling (API key in config)
+    ytm update                  install the latest release
     ytm cast-devices            list Chromecasts on this network
     ytm config                  print config file location
     ytm status                  show setup state (config, sign-in, library)
@@ -179,6 +180,7 @@ async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Resul
         }
         ["sync"] => sync(paths, settings).await,
         ["lastfm-login"] => lastfm_login(paths, settings).await,
+        ["update"] => self_update().await,
         ["cast-devices"] => {
             let devices = ytm_player::cast::discover(std::time::Duration::from_secs(3)).await?;
             if devices.is_empty() {
@@ -246,6 +248,30 @@ fn uninstall(_options: &[&str]) -> Result<()> {
              from the repository, or delete {} and %APPDATA%\\ytm-player.",
             exe.display()
         );
+    }
+    Ok(())
+}
+
+async fn self_update() -> Result<()> {
+    use ytm_player::update::{self, Installed};
+    let http = bootstrap::http_client()?;
+    let Some(found) = update::check(&http).await? else {
+        println!(
+            "ytm-player {} is the latest version.",
+            env!("CARGO_PKG_VERSION")
+        );
+        return Ok(());
+    };
+    println!("Installing ytm-player {}…", found.version);
+    match update::install(&http, &found).await? {
+        Installed::Replaced => println!(
+            "Updated to {}. Restart ytm-player to use it.",
+            found.version
+        ),
+        Installed::InstallerStarted { .. } => {
+            println!("The installer is open — follow it to finish.")
+        }
+        Installed::Manual(how) => println!("{how}"),
     }
     Ok(())
 }

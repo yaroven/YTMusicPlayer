@@ -284,6 +284,16 @@ slint::slint! {
 
     // Two-line row: art, title over artist, duration (as in YT Music lists).
     // On hover: save to playlist, like, more (⋮); a liked heart stays.
+    // A red dot over a button: something waits there (an update).
+    component Badge inherits Rectangle {
+        width: 10px;
+        height: 10px;
+        border-radius: 5px;
+        background: Yt.red;
+        border-width: 2px;
+        border-color: Yt.bg;
+    }
+
     component TrackItem inherits Rectangle {
         in property <TrackRow> track;
         in property <bool> selected;
@@ -822,6 +832,10 @@ slint::slint! {
         // 0 none, 1 album, 2 artist, 3 playlist page.
         in property <int> page-kind;
         in property <bool> page-saved;
+        // A newer release ("" = none), and whether it's being installed.
+        in property <string> update-version;
+        in property <bool> updating;
+        in property <string> app-version;
         // All songs of the page (the list shows only a few of them).
         in property <int> page-songs;
         // A playlist of the user's (not Liked music): rename / delete.
@@ -963,6 +977,8 @@ slint::slint! {
         callback crossfade-changed(float);
         callback cookies-cycle();
         callback show-all-songs();
+        callback update-now();
+        callback check-updates();
         callback sidebar-resized(length);
         callback account-opened();
         callback save-client(string, string);
@@ -1031,6 +1047,12 @@ slint::slint! {
                                         clicked => { root.select-playlist(i); keys.focus(); }
                                     }
                                 }
+                                if root.update-version != "": Pill {
+                                    text: root.updating ? "Updating…" : "Update to " + root.update-version;
+                                    icon: "download";
+                                    filled: true;
+                                    clicked => { root.settings-open = true; }
+                                }
                                 HorizontalLayout {
                                     spacing: 2px;
                                     NavItem {
@@ -1040,7 +1062,11 @@ slint::slint! {
                                         clicked => { root.account-opened(); root.account-open = true; }
                                     }
                                     IconButton { icon: "sync"; size: 40px; icon-size: 20px; clicked => { root.sync(); } }
-                                    IconButton { icon: "settings"; size: 40px; icon-size: 20px; clicked => { root.settings-open = true; } }
+                                    Rectangle {
+                                        width: 40px;
+                                        IconButton { icon: "settings"; size: 40px; icon-size: 20px; clicked => { root.settings-open = true; } }
+                                        if root.update-version != "": Badge { x: 26px; y: 6px; }
+                                    }
                                 }
                                 Text {
                                     text: root.syncing ? "Syncing…" : root.status-text;
@@ -1221,7 +1247,11 @@ slint::slint! {
                                     }
                                     picker-touch := TouchArea { clicked => { playlists-popup.show(); } }
                                 }
-                                IconButton { icon: "settings"; y: (parent.height - self.height) / 2; clicked => { root.settings-open = true; } }
+                                Rectangle {
+                                    width: 40px;
+                                    IconButton { icon: "settings"; y: (parent.height - self.height) / 2; clicked => { root.settings-open = true; } }
+                                    if root.update-version != "": Badge { x: 26px; y: (parent.height - 40px) / 2 + 6px; }
+                                }
                             }
                             Rectangle { height: 1px; background: Yt.divider; }
                             if (root.list-mode == 0 && root.tracks.length == 0) || (root.list-mode == 1 && root.cards.length == 0): Text {
@@ -1563,6 +1593,29 @@ slint::slint! {
         if root.settings-open: Dialog {
             title: "Settings";
             close => { root.settings-open = false; keys.focus(); }
+            HorizontalLayout {
+                spacing: 12px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    Text { text: "ytm-player " + root.app-version; color: Yt.text; }
+                    Text {
+                        text: root.update-version != "" ? "Version " + root.update-version + " is available" : "Up to date (checked at start)";
+                        color: root.update-version != "" ? Yt.red : Yt.secondary;
+                        font-size: 12px;
+                    }
+                }
+                Pill {
+                    text: root.updating ? "Updating…" : root.update-version != "" ? "Update" : "Check now";
+                    icon: root.update-version != "" ? "download" : "sync";
+                    filled: root.update-version != "";
+                    y: (parent.height - self.height) / 2;
+                    clicked => {
+                        if (root.updating) { return; }
+                        if (root.update-version != "") { root.update-now(); } else { root.check-updates(); }
+                    }
+                }
+            }
             Toggle { text: "Autoplay: continue with similar songs"; on: root.autoplay; toggled => { root.toggle-autoplay(); } }
             Toggle { text: "Normalize volume (like YouTube Music)"; on: root.set-normalize; toggled => { root.setting-toggled("normalize_volume"); } }
             VerticalLayout {

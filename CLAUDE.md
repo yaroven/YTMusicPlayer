@@ -254,6 +254,14 @@ Domain terms are defined in `CONTEXT.md`.
 - **Measured footprint 2026-10-02** (M1, release, TUI, 2000 tracks): idle
   10 MB, playing 16 MB, peak 18–19 MB — same as v0.5.0. Binary +1.7 MB.
 
+- **Self-update** (`update`): GitHub "latest release" API at startup
+  (repo is public, no token), SHA256SUMS check, then by install kind:
+  replace in place (writable dir; macOS bundle re-signed ad hoc, the
+  `~/.local/bin/ytm` copy too), `.pkg` → `open` Installer, Windows setup
+  `/VERYSILENT` via a `cmd` that waits for us to exit, Linux packages →
+  instructions only. GUI restart: `sh -c 'sleep 1; open -n <app>'` (never
+  exec a LaunchServices app). No release signing yet (user's call).
+
 ## Open TODOs
 
 - Windows media keys in the TUI (needs a hidden window for SMTC).

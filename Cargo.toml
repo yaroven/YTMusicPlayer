@@ -111,6 +111,10 @@ slint = { version = "1.18", optional = true, default-features = false, features 
 notify-rust = { version = "4.18", optional = true, default-features = false, features = ["z-with-tokio"] }
 image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png"] }
 
+# Self-update: unpacks the release tarball (both already in the tree).
+flate2 = "1.1"
+tar = { version = "0.4", default-features = false }
+
 # Unpacks the onedir yt-dlp zip.
 zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
 
