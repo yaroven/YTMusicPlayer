@@ -42,12 +42,16 @@ USAGE:
     ytm status                  show setup state (config, sign-in, library)
     ytm uninstall [--purge]     remove ytm-player (asks about your library and sign-in)";
 
-/// Makes Slint destroy (not just hide) a window closed to the tray, so its
-/// pixel buffers go with it.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-const DESTROY_ON_HIDE: &str = "SLINT_DESTROY_WINDOW_ON_HIDE";
-
 fn main() -> Result<()> {
+    // Slint destroys (not just hides) a window closed to the tray, so its
+    // last frame and the window server's copy go with it: 31 MB closed vs
+    // 31–53 MB (macOS, 2026-10-02). Slint reads this when a window hides.
+    // Windows keeps its hidden window (media keys hang on to it).
+    #[cfg(unix)]
+    // SAFETY: first thing in main, before any other thread exists.
+    unsafe {
+        std::env::set_var("SLINT_DESTROY_WINDOW_ON_HIDE", "1");
+    }
     // Like other Unix tools, exit quietly when output is piped into
     // something that stops reading (`ytm --help | head`) instead of
     // panicking on a broken pipe (which aborts with panic = "abort").
@@ -70,13 +74,7 @@ fn main() -> Result<()> {
         || (args.is_empty() && (settings.ui.eq_ignore_ascii_case("gui") || in_app_bundle()));
     if gui {
         #[cfg(target_os = "macos")]
-        macos::restart_with_gui_env();
-        #[cfg(target_os = "linux")]
-        // SAFETY: set before the GUI and the core thread start; the only
-        // other thread (the log writer) doesn't read the environment.
-        unsafe {
-            std::env::set_var(DESTROY_ON_HIDE, "1");
-        }
+        macos::restart_without_large_malloc_cache();
         let Some(_instance) = single_instance(&paths, "gui")? else {
             return Ok(());
         };
@@ -505,18 +503,20 @@ mod macos {
     use anyhow::{Result, anyhow};
     use core_foundation::runloop::{CFRunLoop, CFRunLoopRunResult, kCFRunLoopDefaultMode};
 
-    /// Restarts the process once with settings that are read at startup:
+    /// The window's software renderer allocates a fresh full-window pixel
+    /// buffer every frame (~11 MB on Retina), and Core Animation its own
+    /// copies; macOS malloc kept freed large blocks cached and they counted
+    /// against us: 68–80 MB vs 52 MB while playing (measured 2026-10-02,
+    /// same CPU; a Rust allocator bypass only got 68). `MallocLargeCache=0`
+    /// is read when malloc starts, so:
     ///
-    /// - `MallocLargeCache=0`: the window's software renderer allocates a
-    ///   fresh full-window pixel buffer every frame (~11 MB on Retina) and
-    ///   macOS malloc kept freed ones cached, counted against us: 80 MB vs
-    ///   53 MB while playing (measured 2026-10-02, same CPU).
-    /// - `SLINT_DESTROY_WINDOW_ON_HIDE`: a window closed to the tray really
-    ///   goes (with its last frame and the window server's copy): 31 MB
-    ///   instead of 31–53 MB, varying with the last frame.
-    pub fn restart_with_gui_env() {
+    /// - the .app sets it in Info.plist (`LSEnvironment`);
+    /// - started from a terminal, the process restarts itself once with it.
+    ///   Not from the .app: an exec'd LaunchServices process loses its
+    ///   menu bar (tray) icon.
+    pub fn restart_without_large_malloc_cache() {
         const VAR: &str = "MallocLargeCache";
-        if std::env::var_os(VAR).is_some() {
+        if std::env::var_os(VAR).is_some() || super::in_app_bundle() {
             return;
         }
         let Ok(exe) = std::env::current_exe() else {
@@ -526,9 +526,8 @@ mod macos {
         let err = std::process::Command::new(exe)
             .args(std::env::args_os().skip(1))
             .env(VAR, "0")
-            .env(super::DESTROY_ON_HIDE, "1")
             .exec();
-        tracing::warn!(%err, "restarting with the GUI's malloc settings");
+        tracing::warn!(%err, "restarting without the large-allocation cache");
     }
 
     /// Runs `work` on a thread while the main thread services its run loop

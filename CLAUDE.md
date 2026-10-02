@@ -152,13 +152,17 @@ Domain terms are defined in `CONTEXT.md`.
 - **GUI memory is dominated by window pixel buffers** (software renderer, ~10 MB
   per Retina frame, plus the window server's copy). softbuffer on macOS
   allocates a fresh frame per redraw and macOS malloc cached freed ones:
-  the GUI re-execs itself once with `MallocLargeCache=0` (macOS only):
-  playing at 1040x660 80 → 53 MB, same CPU (2026-10-02). Media glyphs
+  `MallocLargeCache=0` (macOS): playing at 1040x660 68–80 → 52 MB, same
+  CPU (2026-10-02). Set via `LSEnvironment` in the .app's Info.plist; a
+  terminal `ytm gui` re-execs itself with it. Never re-exec a
+  LaunchServices-launched process: it loses its menu bar (tray) icon. A
+  Rust allocator that mmaps big blocks only got 68 MB (Core Animation's
+  own buffers are the rest). Media glyphs
   (⏮⏸⏭) are missing from system fonts — transport icons are Slint `Path`s.
 - **Close to tray = destroy the window** (`gui::close_window`): state lives
   in `View`, the `MainWindow` is rebuilt by `open_window` (tray "Show",
-  second launch). Needs `SLINT_DESTROY_WINDOW_ON_HIDE` (set by the
-  re-exec on macOS, `set_var` on Linux), else the last frame stays:
+  second launch). Needs `SLINT_DESTROY_WINDOW_ON_HIDE` (`set_var` first
+  thing in `main`), else the last frame stays:
   31 MB closed vs 31–53 MB. Art caches/cards are dropped on close, Lyrics/
   Related fetching stops. macOS: Dock icon hidden (activation policy
   Accessory) while closed. Windows only hides (SMTC needs the HWND).
