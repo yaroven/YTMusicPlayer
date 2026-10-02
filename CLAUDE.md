@@ -155,7 +155,7 @@ Domain terms are defined in `CONTEXT.md`.
   transport icons are Slint `Path`s.
 - **GUI album art**: `i.ytimg.com` thumbnails (`mqdefault` for rows,
   `sddefault`→`hqdefault` for the big cover), centre-square crop of the 16:9
-  picture, decoded with `image` (jpeg only) off the UI thread; thumb cache
+  picture, decoded with `image` (jpeg + png) off the UI thread; thumb cache
   capped at 80 (96x96 RGBA), one large cover. Window memory still dominates:
   ~46 MB at 1280x760 idle, up to ~90 MB with art while playing.
 - **Slint responsive layout**: breakpoints read `win-width`, copied from
@@ -177,7 +177,8 @@ Domain terms are defined in `CONTEXT.md`.
   only one of each remains.
 - Tests that launch the GUI/TUI must use their own `TMPDIR` (single-instance
   socket is per user, not per HOME) or they find the user's running player.
-- **Windows media keys skipped**: souvlaki needs an HWND.
+- **Windows media keys**: souvlaki SMTC needs an HWND, so only the GUI
+  has them (`media::set_window_handle` before the session starts).
 - **CI**: Linux only (fmt/clippy/test/shellcheck); no macOS on push (10x
   minutes on private repos).
 - **Release installers (user's request, 2026-10-01)**: `.deb` (cargo-deb),
