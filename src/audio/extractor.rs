@@ -748,7 +748,7 @@ fn first_sentence(message: &str) -> String {
         Some(rest) => rest.split_once(": ").map_or(text, |(_, reason)| reason),
         None => text,
     };
-    let end = text.find(". ").map_or(text.len(), |i| i);
+    let end = text.find(". ").unwrap_or(text.len());
     text[..end].trim_end_matches('.').to_owned()
 }
 
