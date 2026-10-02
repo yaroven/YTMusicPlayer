@@ -21,8 +21,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: YouTube Music catalog, lyrics, releases
         run: cargo test --locked -- --ignored live_catalog finds_synced_lyrics_live checks_github_live
-      # YouTube sometimes asks datacenter IPs (like GitHub's) to sign in;
-      # a failure here is a hint to check, not proof the player is broken.
-      - name: yt-dlp download and resolve
+      # YouTube's player endpoints challenge datacenter IPs (like GitHub's)
+      # — measured 2026-10-02: loudness comes back empty there; a failure
+      # here is a hint to check locally, not proof the player is broken.
+      - name: yt-dlp and loudness (YouTube's player endpoints)
         continue-on-error: true
-        run: cargo test --locked -- --ignored resolves_real_video migrates_onefile_to_onedir
+        run: cargo test --locked -- --ignored resolves_real_video migrates_onefile_to_onedir live_loudness

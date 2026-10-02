@@ -892,6 +892,14 @@ mod tests {
         assert!(radio.len() > 10);
         assert!(catalog.lyrics("YkLLcIKhJ64").await.unwrap().is_some());
         assert!(!catalog.home().await.unwrap().is_empty());
+    }
+
+    /// Separate from `live_catalog`: the player endpoint challenges
+    /// datacenter IPs (CI), unlike the browse / search ones.
+    #[tokio::test]
+    #[ignore]
+    async fn live_loudness() {
+        let catalog = Catalog::new(reqwest::Client::new());
         assert!(catalog.loudness_db("YkLLcIKhJ64").await.unwrap().is_some());
     }
 }
