@@ -1397,6 +1397,13 @@ slint::slint! {
                 Rectangle {
                     height: 76px;
                     background: Yt.bar;
+                    // Anywhere on the bar but its buttons opens / closes the
+                    // full-screen view (buttons sit on top and take their clicks).
+                    TouchArea {
+                        enabled: root.now-title != "";
+                        mouse-cursor: self.enabled ? pointer : default;
+                        clicked => { root.expanded = !root.expanded; keys.focus(); }
+                    }
                     Progress {
                         y: -6px;
                         width: parent.width;

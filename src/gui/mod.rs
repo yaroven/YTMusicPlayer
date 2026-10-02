@@ -11,6 +11,8 @@
 //! cover.
 
 mod art;
+#[cfg(target_os = "macos")]
+mod macos;
 mod tray;
 mod ui;
 
@@ -1128,9 +1130,10 @@ fn open_window() -> Result<MainWindow> {
         }
         slint::CloseRequestResponse::HideWindow
     });
-    if let Some((size, position)) = view.borrow().geometry {
+    // The size only: a restored position drifted by the title bar's height
+    // on every reopen (macOS); the system places the window instead.
+    if let Some((size, _)) = view.borrow().geometry {
         ui.window().set_size(size);
-        ui.window().set_position(position);
     }
     ui.show().context("cannot show the window")?;
     UI.with(|cell| *cell.borrow_mut() = Some(ui.clone_strong()));
@@ -1288,6 +1291,10 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Resu
             }
         });
     }
+
+    // Opening the app again (Finder, Dock) while it runs in the tray.
+    #[cfg(target_os = "macos")]
+    slint::Timer::single_shot(Duration::ZERO, macos::handle_reopen);
 
     // Freed frame buffers would otherwise stay in our footprint (Linux).
     let trim = slint::Timer::default();
