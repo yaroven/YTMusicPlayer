@@ -316,7 +316,7 @@ installs every package in a clean Debian, Ubuntu, Fedora, Arch, Windows and
 macOS environment and runs it.
 
 ```bash
-git tag v0.4.0 && git push origin v0.4.0
+git tag v0.5.0 && git push origin v0.5.0
 ```
 
 **Actions → Release → Run workflow** builds everything as workflow
