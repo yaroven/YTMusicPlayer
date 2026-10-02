@@ -56,6 +56,26 @@ enum Command {
     SetVolume(f32),
 }
 
+/// What a Session needs from audio output: rodio's [`PlayerHandle`] in the
+/// app, a scripted fake in tests. Events come back on the channel given to
+/// the adapter.
+pub trait Playback: Send {
+    /// Replaces whatever is playing; `generation` tags its events.
+    fn load(&self, stream: HttpStream, duration: Option<Duration>, generation: u64);
+    fn toggle_pause(&self);
+    fn set_paused(&self, paused: bool);
+    fn stop(&self);
+    fn seek_by(&self, secs: i64);
+    fn seek_to(&self, position: Duration);
+    /// Clamped to 0..=1.
+    fn set_volume(&self, volume: f32);
+    fn status(&self) -> PlayerStatus;
+
+    fn change_volume(&self, delta: f32) {
+        self.set_volume(self.status().volume + delta);
+    }
+}
+
 #[derive(Clone)]
 pub struct PlayerHandle {
     tx: mpsc::Sender<Command>,
@@ -87,8 +107,15 @@ impl PlayerHandle {
         Ok(Self { tx, status })
     }
 
-    /// Replaces whatever is playing. Decoding starts on the audio thread.
-    pub fn load(&self, stream: HttpStream, duration: Option<Duration>, generation: u64) {
+    fn send(&self, cmd: Command) {
+        // Only fails if the audio thread died.
+        let _ = self.tx.send(cmd);
+    }
+}
+
+/// Decoding starts on the audio thread; calls never block.
+impl Playback for PlayerHandle {
+    fn load(&self, stream: HttpStream, duration: Option<Duration>, generation: u64) {
         self.send(Command::Load {
             stream,
             duration,
@@ -96,41 +123,32 @@ impl PlayerHandle {
         });
     }
 
-    pub fn toggle_pause(&self) {
+    fn toggle_pause(&self) {
         self.send(Command::TogglePause);
     }
 
-    pub fn set_paused(&self, paused: bool) {
+    fn set_paused(&self, paused: bool) {
         self.send(Command::SetPaused(paused));
     }
 
-    pub fn stop(&self) {
+    fn stop(&self) {
         self.send(Command::Stop);
     }
 
-    pub fn seek_by(&self, secs: i64) {
+    fn seek_by(&self, secs: i64) {
         self.send(Command::SeekBy(secs));
     }
 
-    pub fn seek_to(&self, position: Duration) {
+    fn seek_to(&self, position: Duration) {
         self.send(Command::SeekTo(position));
     }
 
-    pub fn set_volume(&self, volume: f32) {
+    fn set_volume(&self, volume: f32) {
         self.send(Command::SetVolume(volume.clamp(0.0, 1.0)));
     }
 
-    pub fn change_volume(&self, delta: f32) {
-        self.set_volume(self.status().volume + delta);
-    }
-
-    pub fn status(&self) -> PlayerStatus {
+    fn status(&self) -> PlayerStatus {
         self.status.borrow().clone()
-    }
-
-    fn send(&self, cmd: Command) {
-        // Only fails if the audio thread died.
-        let _ = self.tx.send(cmd);
     }
 }
 

@@ -36,7 +36,7 @@ use crate::{
     api::models::{LIKED_PLAYLIST_ID, Playlist, Track},
     app::filter_indices,
     audio::{player::PlayState, queue::Repeat},
-    session::{Changes, Deps, Session},
+    session::{Changes, Deps, Session, SessionView},
     storage::Library,
     ui::fmt_time,
 };
@@ -76,23 +76,9 @@ enum Cmd {
     Quit(Option<String>),
 }
 
-/// Player state pushed to the UI. Small and cheap to clone.
+/// What the core pushes to the UI thread.
 struct Snapshot {
-    now: Option<Track>,
-    loading: bool,
-    state: PlayState,
-    position: Duration,
-    duration: Option<Duration>,
-    volume: f32,
-    shuffle: bool,
-    repeat: Repeat,
-    status: Option<(String, bool)>,
-    syncing: bool,
-    searching: bool,
-    signed_in: bool,
-    signing_in: bool,
-    client_id: String,
-    memory: String,
+    view: SessionView,
     changes: Changes,
     /// The latest search, when `changes.search`.
     search: Option<(String, Arc<[Track]>)>,
@@ -102,26 +88,8 @@ struct Snapshot {
 
 impl Snapshot {
     fn of(session: &Session, changes: Changes, queue: Option<Arc<[Track]>>) -> Self {
-        let p = &session.player_status;
         Self {
-            now: session.queue.current().cloned(),
-            loading: session.loading,
-            state: p.state,
-            position: p.position,
-            duration: p.duration,
-            volume: p.volume,
-            shuffle: session.queue.shuffle,
-            repeat: session.queue.repeat,
-            status: session
-                .status
-                .as_ref()
-                .map(|s| (s.text.clone(), s.is_error)),
-            syncing: session.syncing,
-            searching: session.searching,
-            signed_in: session.signed_in(),
-            signing_in: session.signing_in,
-            client_id: session.client_id().unwrap_or_default().to_owned(),
-            memory: session.memory.clone(),
+            view: session.view(),
             search: session
                 .search
                 .as_ref()
@@ -718,8 +686,8 @@ async fn core_loop(
     let fetches = Arc::new(Semaphore::new(ART_FETCHES));
     let mut session = Session::new(deps)?;
     session.startup(library_empty);
-    let mut queue_key = None;
-    let queue = queue_update(&session, &mut queue_key);
+    let mut queue_revision = None;
+    let queue = queue_update(&session, &mut queue_revision);
     push(&ui, Snapshot::of(&session, Changes::default(), queue));
 
     let mut tick = tokio::time::interval(Duration::from_millis(500));
@@ -750,7 +718,7 @@ async fn core_loop(
             _ = tick.tick() => {}
         }
         dirty |= session.refresh_status();
-        let queue = queue_update(&session, &mut queue_key);
+        let queue = queue_update(&session, &mut queue_revision);
         if dirty || queue.is_some() {
             push(&ui, Snapshot::of(&session, changes, queue));
         }
@@ -759,22 +727,13 @@ async fn core_loop(
     Ok(())
 }
 
-/// What identifies the queue's contents: current id, position, shuffle, len.
-type QueueKey = (Option<Arc<str>>, Option<usize>, bool, usize);
-
-/// The "Up next" rows when the queue changed since `key` was taken.
-fn queue_update(session: &Session, key: &mut Option<QueueKey>) -> Option<Arc<[Track]>> {
+/// The "Up next" rows when the queue changed since `revision`.
+fn queue_update(session: &Session, revision: &mut Option<u64>) -> Option<Arc<[Track]>> {
     let q = &session.queue;
-    let new_key = (
-        q.current().map(|t| t.video_id.clone()),
-        q.position(),
-        q.shuffle,
-        q.len(),
-    );
-    if key.as_ref() == Some(&new_key) {
+    if *revision == Some(q.revision()) {
         return None;
     }
-    *key = Some(new_key);
+    *revision = Some(q.revision());
     Some(
         q.current()
             .into_iter()
@@ -843,45 +802,45 @@ fn apply(session: &mut Session, cmd: Cmd) {
 /// Applies a snapshot on the UI thread.
 fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
     let _ = ui.upgrade_in_event_loop(move |ui| {
-        ui.set_loading(snap.loading);
-        ui.set_playing(snap.state == PlayState::Playing);
-        ui.set_volume(snap.volume);
-        ui.set_shuffle(snap.shuffle);
+        ui.set_loading(snap.view.loading);
+        ui.set_playing(snap.view.state == PlayState::Playing);
+        ui.set_volume(snap.view.volume);
+        ui.set_shuffle(snap.view.shuffle);
         // The UI's repeat-mode: 0 off, 1 all, 2 one.
-        ui.set_repeat_mode(match snap.repeat {
+        ui.set_repeat_mode(match snap.view.repeat {
             Repeat::Off => 0,
             Repeat::All => 1,
             Repeat::One => 2,
         });
-        ui.set_syncing(snap.syncing);
-        ui.set_searching(snap.searching);
-        ui.set_signed_in(snap.signed_in);
-        ui.set_signing_in(snap.signing_in);
-        ui.set_client_id(snap.client_id.as_str().into());
-        if snap.changes.account && snap.signed_in {
+        ui.set_syncing(snap.view.syncing);
+        ui.set_searching(snap.view.searching);
+        ui.set_signed_in(snap.view.signed_in);
+        ui.set_signing_in(snap.view.signing_in);
+        ui.set_client_id(snap.view.client_id.as_str().into());
+        if snap.changes.account && snap.view.signed_in {
             ui.set_account_open(false);
         }
-        ui.set_memory_text(snap.memory.as_str().into());
-        let (text, error) = snap.status.unwrap_or_default();
+        ui.set_memory_text(snap.view.memory.as_str().into());
+        let (text, error) = snap.view.status.unwrap_or_default();
         ui.set_status_text(text.into());
         ui.set_status_error(error);
-        match &snap.duration {
+        match &snap.view.duration {
             Some(d) if !d.is_zero() => {
-                ui.set_progress((snap.position.as_secs_f64() / d.as_secs_f64()) as f32);
+                ui.set_progress((snap.view.position.as_secs_f64() / d.as_secs_f64()) as f32);
                 ui.set_position_text(
-                    format!("{} / {}", fmt_time(snap.position), fmt_time(*d)).into(),
+                    format!("{} / {}", fmt_time(snap.view.position), fmt_time(*d)).into(),
                 );
             }
             _ => {
                 ui.set_progress(0.0);
-                ui.set_position_text(if snap.loading {
+                ui.set_position_text(if snap.view.loading {
                     "loading…".into()
                 } else {
                     "".into()
                 });
             }
         }
-        match &snap.now {
+        match &snap.view.now {
             Some(t) => {
                 ui.set_now_title(SharedString::from(&*t.title));
                 ui.set_now_artist(SharedString::from(&*t.artist));
@@ -922,7 +881,7 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
             if let Some(queue) = snap.queue {
                 v.queue.set(queue, "");
             }
-            let now_id = snap.now.as_ref().map(|t| t.video_id.clone());
+            let now_id = snap.view.now.as_ref().map(|t| t.video_id.clone());
             let changed = now_id != v.now.as_ref().map(|t| t.video_id.clone());
             if changed || snap.changes.playlist.is_some() {
                 let liked = now_id
@@ -932,7 +891,7 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
             }
             v.tracks.set_playing(now_id.clone());
             v.queue.set_playing(now_id);
-            v.now = snap.now;
+            v.now = snap.view.now;
             if changed {
                 v.show_now_art(&ui);
             }

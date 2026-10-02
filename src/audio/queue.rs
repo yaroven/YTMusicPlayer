@@ -55,11 +55,14 @@ pub struct Queue {
     pub shuffle: bool,
     pub repeat: Repeat,
     rng: u64,
+    /// Bumped whenever the current track or what comes next changes.
+    revision: u64,
 }
 
 impl Queue {
     /// Starts playing `source[start]`, keeping shuffle/repeat settings.
     pub fn set(&mut self, source: Arc<[Track]>, start: usize) {
+        self.revision += 1;
         self.source = source;
         self.detour = None;
         if start >= self.source.len() {
@@ -105,6 +108,7 @@ impl Queue {
     }
 
     pub fn toggle_shuffle(&mut self) {
+        self.revision += 1;
         self.shuffle = !self.shuffle;
         if let Some(cur) = self.pos.map(|p| self.order[p]) {
             self.rebuild_order(cur);
@@ -137,6 +141,7 @@ impl Queue {
     /// Moves to the next track (explicit "next" or natural end). Repeat-one
     /// is handled by the caller replaying on natural end.
     pub fn advance(&mut self) -> Option<&Track> {
+        self.revision += 1;
         if let Some(t) = self.next_up.pop_front() {
             self.detour = Some(t);
             return self.detour.as_ref();
@@ -152,6 +157,7 @@ impl Queue {
     }
 
     pub fn back(&mut self) -> Option<&Track> {
+        self.revision += 1;
         if self.detour.take().is_none() {
             self.pos = Some(self.pos?.saturating_sub(1));
         }
@@ -160,6 +166,7 @@ impl Queue {
 
     /// Queues `track` to play right after the current one (FIFO).
     pub fn play_next(&mut self, track: Track) {
+        self.revision += 1;
         self.next_up.push_back(track);
     }
 
@@ -179,6 +186,12 @@ impl Queue {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Changes whenever [`current`](Self::current) or
+    /// [`upcoming`](Self::upcoming) may have changed.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Index of the current track in the play order.

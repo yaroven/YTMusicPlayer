@@ -20,7 +20,7 @@ use crate::{
     },
     audio::{
         Opened, TrackSource,
-        player::{PlayState, PlayerEvent, PlayerHandle, PlayerStatus},
+        player::{PlayState, Playback, PlayerEvent, PlayerHandle, PlayerStatus},
         queue::{Queue, Repeat},
     },
     media::{MediaAction, MediaControls},
@@ -73,6 +73,28 @@ pub struct Changes {
     pub account: bool,
 }
 
+/// Snapshot of what the UIs show; see [`Session::view`].
+#[derive(Debug, Clone)]
+pub struct SessionView {
+    pub now: Option<Track>,
+    pub loading: bool,
+    pub state: PlayState,
+    pub position: Duration,
+    pub duration: Option<Duration>,
+    pub volume: f32,
+    pub shuffle: bool,
+    pub repeat: Repeat,
+    /// Status line text and whether it's an error.
+    pub status: Option<(String, bool)>,
+    pub syncing: bool,
+    pub searching: bool,
+    pub signed_in: bool,
+    pub signing_in: bool,
+    /// Configured OAuth client ID ("" when none).
+    pub client_id: String,
+    pub memory: String,
+}
+
 /// The last online search.
 pub struct SearchResults {
     pub query: String,
@@ -109,7 +131,7 @@ enum Background {
 
 pub struct Session {
     deps: Deps,
-    player: PlayerHandle,
+    player: Box<dyn Playback>,
     media: Option<MediaControls>,
     pub queue: Queue,
     /// Set while the current queue entry is being resolved/buffered.
@@ -139,26 +161,49 @@ pub struct Session {
 impl Session {
     /// Starts the audio thread and media controls; restores saved modes.
     pub fn new(deps: Deps) -> Result<Self> {
-        let (tx, rx) = mpsc::unbounded_channel();
         let (player_tx, player_rx) = mpsc::unbounded_channel();
         let (media_tx, media_rx) = mpsc::unbounded_channel();
-
-        let lib = &deps.library;
-        let meta = |key| lib.get_meta(key).ok().flatten();
-        let volume = meta("volume")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(deps.volume);
-        let mut queue = Queue::default();
-        queue.shuffle = meta("shuffle").as_deref() == Some("1");
-        queue.repeat = Repeat::parse(meta("repeat").as_deref().unwrap_or_default());
-
+        let volume = saved_volume(&deps);
         let player = PlayerHandle::spawn(volume, deps.audio_device.clone(), player_tx)?;
         let media = if deps.media_controls {
             MediaControls::new(media_tx)
         } else {
             None
         };
-        Ok(Self {
+        Ok(Self::assemble(
+            deps,
+            Box::new(player),
+            player_rx,
+            media,
+            media_rx,
+        ))
+    }
+
+    /// A Session over another [`Playback`] adapter (tests), without OS
+    /// media controls. `events` is where that adapter reports.
+    pub fn with_playback(
+        deps: Deps,
+        player: Box<dyn Playback>,
+        events: UnboundedReceiver<PlayerEvent>,
+    ) -> Self {
+        player.set_volume(saved_volume(&deps));
+        let (_media_tx, media_rx) = mpsc::unbounded_channel();
+        Self::assemble(deps, player, events, None, media_rx)
+    }
+
+    fn assemble(
+        deps: Deps,
+        player: Box<dyn Playback>,
+        player_rx: UnboundedReceiver<PlayerEvent>,
+        media: Option<MediaControls>,
+        media_rx: UnboundedReceiver<MediaAction>,
+    ) -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let meta = |key| deps.library.get_meta(key).ok().flatten();
+        let mut queue = Queue::default();
+        queue.shuffle = meta("shuffle").as_deref() == Some("1");
+        queue.repeat = Repeat::parse(meta("repeat").as_deref().unwrap_or_default());
+        Self {
             player_status: player.status(),
             deps,
             player,
@@ -181,7 +226,30 @@ impl Session {
             rx,
             player_rx,
             media_rx,
-        })
+        }
+    }
+
+    /// Everything the UIs show about playback and background work, in one
+    /// read (cheap: `Arc` strings, short texts).
+    pub fn view(&self) -> SessionView {
+        let p = &self.player_status;
+        SessionView {
+            now: self.queue.current().cloned(),
+            loading: self.loading,
+            state: p.state,
+            position: p.position,
+            duration: p.duration,
+            volume: p.volume,
+            shuffle: self.queue.shuffle,
+            repeat: self.queue.repeat,
+            status: self.status.as_ref().map(|s| (s.text.clone(), s.is_error)),
+            syncing: self.syncing,
+            searching: self.searching,
+            signed_in: self.signed_in(),
+            signing_in: self.signing_in,
+            client_id: self.client_id().unwrap_or_default().to_owned(),
+            memory: self.memory.clone(),
+        }
     }
 
     pub fn library(&self) -> &Library {
@@ -767,4 +835,280 @@ fn visible(s: &PlayerStatus) -> (PlayState, u64, Option<u64>, u32) {
         s.duration.map(|d| d.as_secs()),
         (s.volume * 100.0).round() as u32,
     )
+}
+
+/// Volume saved by the last run, else the config's start volume.
+fn saved_volume(deps: &Deps) -> f32 {
+    deps.library
+        .get_meta("volume")
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(deps.volume)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use futures_util::future::BoxFuture;
+    use tokio::sync::mpsc::UnboundedSender;
+
+    use super::*;
+    use crate::{
+        api::token_store::{InMemory, Tokens},
+        audio::{
+            Extractor, JsPolicy,
+            extractor::{self, AudioStream, ExtractorError},
+            js_runtime::JsRuntime,
+            stream::HttpStream,
+        },
+        config::settings::Settings,
+    };
+
+    /// Records calls; its status is set by the test.
+    #[derive(Clone)]
+    struct FakePlayer {
+        calls: Arc<Mutex<Vec<String>>>,
+        status: Arc<Mutex<PlayerStatus>>,
+    }
+
+    impl FakePlayer {
+        fn new() -> Self {
+            Self {
+                calls: Arc::default(),
+                status: Arc::new(Mutex::new(PlayerStatus {
+                    state: PlayState::Idle,
+                    position: Duration::ZERO,
+                    duration: None,
+                    volume: 1.0,
+                })),
+            }
+        }
+        fn record(&self, call: String) {
+            self.calls.lock().unwrap().push(call);
+        }
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+        fn at(&self, position: Duration) {
+            let mut s = self.status.lock().unwrap();
+            s.state = PlayState::Playing;
+            s.position = position;
+        }
+    }
+
+    impl Playback for FakePlayer {
+        fn load(&self, _: HttpStream, _: Option<Duration>, generation: u64) {
+            self.record(format!("load {generation}"));
+        }
+        fn toggle_pause(&self) {
+            self.record("toggle".into());
+        }
+        fn set_paused(&self, paused: bool) {
+            self.record(format!("paused {paused}"));
+        }
+        fn stop(&self) {
+            self.record("stop".into());
+        }
+        fn seek_by(&self, secs: i64) {
+            self.record(format!("seek_by {secs}"));
+        }
+        fn seek_to(&self, position: Duration) {
+            self.record(format!("seek_to {}", position.as_secs()));
+        }
+        fn set_volume(&self, volume: f32) {
+            self.status.lock().unwrap().volume = volume;
+            self.record(format!("volume {volume:.2}"));
+        }
+        fn status(&self) -> PlayerStatus {
+            self.status.lock().unwrap().clone()
+        }
+    }
+
+    /// Every track is unavailable, or every resolve hangs (track "loading").
+    #[derive(Clone, Copy)]
+    enum Resolves {
+        Fail,
+        Hang,
+    }
+
+    impl Extractor for Resolves {
+        fn resolve<'a>(
+            &'a self,
+            video_id: &'a str,
+            _: Option<&'a JsRuntime>,
+        ) -> BoxFuture<'a, extractor::Result<AudioStream>> {
+            match self {
+                Self::Fail => Box::pin(async move {
+                    Err(ExtractorError::Unavailable(format!("{video_id} is gone")))
+                }),
+                Self::Hang => Box::pin(std::future::pending()),
+            }
+        }
+        fn search<'a>(&'a self, _: &'a str, _: u8) -> BoxFuture<'a, extractor::Result<Vec<Track>>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+        fn update(&self) -> BoxFuture<'_, extractor::Result<String>> {
+            Box::pin(async { Err(ExtractorError::NotManaged) })
+        }
+        fn update_if_stale<'a>(
+            &'a self,
+            _: &'a reqwest::Client,
+            _: Duration,
+        ) -> BoxFuture<'a, extractor::Result<bool>> {
+            Box::pin(async { Ok(false) })
+        }
+    }
+
+    async fn session_with(
+        resolves: Resolves,
+        library: Arc<Library>,
+    ) -> (Session, FakePlayer, UnboundedSender<PlayerEvent>) {
+        let http = reqwest::Client::new();
+        let config = std::env::temp_dir().join(format!(
+            "ytm-session-test-{}-{:?}.toml",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let settings = Settings::load(&config).unwrap();
+        let account = Account::load(
+            &settings,
+            config,
+            http.clone(),
+            Tokens::new(InMemory::default()),
+        )
+        .await
+        .unwrap();
+        let deps = Deps {
+            library,
+            source: TrackSource::new(
+                Arc::new(resolves),
+                http.clone(),
+                std::env::temp_dir(),
+                JsPolicy::Never,
+                None,
+            ),
+            http,
+            account,
+            liked_music_only: true,
+            volume: 0.5,
+            media_controls: false,
+            audio_device: None,
+        };
+        let player = FakePlayer::new();
+        let (events, rx) = mpsc::unbounded_channel();
+        let session = Session::with_playback(deps, Box::new(player.clone()), rx);
+        (session, player, events)
+    }
+
+    async fn session(resolves: Resolves) -> (Session, FakePlayer, UnboundedSender<PlayerEvent>) {
+        session_with(resolves, Arc::new(Library::open_in_memory().unwrap())).await
+    }
+
+    fn tracks(prefix: &str, n: usize) -> Arc<[Track]> {
+        (0..n)
+            .map(|i| Track {
+                video_id: format!("{prefix}{i:0>10}").into(),
+                title: format!("{prefix}{i}").into(),
+                artist: "a".into(),
+                duration_secs: Some(100),
+            })
+            .collect()
+    }
+
+    fn current(s: &Session) -> String {
+        s.queue
+            .current()
+            .map_or("-".into(), |t| t.title.to_string())
+    }
+
+    /// Applies background results until nothing arrives for a while.
+    async fn settle(s: &mut Session) {
+        while tokio::time::timeout(Duration::from_millis(300), s.next_event())
+            .await
+            .is_ok()
+        {}
+    }
+
+    #[tokio::test]
+    async fn stops_skipping_after_three_failures_in_a_row() {
+        let (mut s, _, _) = session(Resolves::Fail).await;
+        s.play(tracks("t", 5), 0);
+        settle(&mut s).await;
+        assert_eq!(current(&s), "t2", "skipped twice, then stopped");
+        let status = s.status.as_ref().unwrap();
+        assert!(
+            status.is_error && status.text.contains("t2"),
+            "{}",
+            status.text
+        );
+        assert!(!s.loading);
+    }
+
+    #[tokio::test]
+    async fn results_of_a_replaced_selection_are_ignored() {
+        let (mut s, _, _) = session(Resolves::Fail).await;
+        s.play(tracks("old", 5), 0);
+        s.play(tracks("new", 5), 0);
+        settle(&mut s).await;
+        // Only the new list's failures count: three of them.
+        assert_eq!(current(&s), "new2");
+    }
+
+    #[tokio::test]
+    async fn previous_restarts_the_track_after_three_seconds() {
+        let (mut s, player, _) = session(Resolves::Hang).await;
+        s.play(tracks("t", 3), 1);
+        player.at(Duration::from_secs(5));
+        s.refresh_status();
+        s.skip(-1);
+        assert_eq!(current(&s), "t1");
+        assert!(player.calls().contains(&"seek_to 0".to_owned()));
+
+        player.at(Duration::from_secs(1));
+        s.refresh_status();
+        s.skip(-1);
+        assert_eq!(current(&s), "t0");
+    }
+
+    #[tokio::test]
+    async fn natural_end_advances_repeat_one_replays_stale_ends_ignored() {
+        let (mut s, _, events) = session(Resolves::Hang).await;
+        s.play(tracks("t", 3), 0);
+        events.send(PlayerEvent::Ended { generation: 1 }).unwrap();
+        s.next_event().await;
+        assert_eq!(current(&s), "t1");
+
+        s.queue.repeat = Repeat::One;
+        events.send(PlayerEvent::Ended { generation: 2 }).unwrap();
+        s.next_event().await;
+        assert_eq!(current(&s), "t1", "repeat one replays");
+
+        events.send(PlayerEvent::Ended { generation: 1 }).unwrap();
+        s.next_event().await;
+        assert_eq!(current(&s), "t1", "an old track's end changes nothing");
+    }
+
+    #[tokio::test]
+    async fn restores_saved_volume_and_modes() {
+        let library = Arc::new(Library::open_in_memory().unwrap());
+        library.set_meta("volume", "0.30").unwrap();
+        library.set_meta("repeat", "all").unwrap();
+        library.set_meta("shuffle", "1").unwrap();
+        let (s, player, _) = session_with(Resolves::Hang, library).await;
+        assert!(player.calls().contains(&"volume 0.30".to_owned()));
+        assert_eq!(s.queue.repeat, Repeat::All);
+        assert!(s.queue.shuffle);
+    }
+
+    #[tokio::test]
+    async fn view_shows_the_loading_track() {
+        let (mut s, _, _) = session(Resolves::Hang).await;
+        s.play(tracks("t", 2), 1);
+        let view = s.view();
+        assert!(view.loading);
+        assert_eq!(view.now.unwrap().title.as_ref(), "t1");
+        assert!(!view.signed_in);
+    }
 }

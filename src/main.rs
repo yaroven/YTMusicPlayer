@@ -14,7 +14,7 @@ use ytm_player::{
     audio::{
         Opened,
         extractor::YtDlp,
-        player::{PlayState, PlayerEvent, PlayerHandle},
+        player::{PlayState, Playback, PlayerEvent, PlayerHandle},
     },
     bootstrap,
     config::{paths::AppPaths, settings::Settings},
