@@ -1,4 +1,5 @@
-//! Caching, deduplicating front-end over [`YtDlp`].
+//! Caching, deduplicating front-end over an [`Extractor`] (internal to the
+//! Track source).
 //!
 //! - Resolved URLs are reused until shortly before they expire (~6 h).
 //! - Concurrent requests for the same id (play + prefetch) share one yt-dlp run.
@@ -23,8 +24,9 @@ use tokio::sync::{OnceCell, Semaphore};
 use crate::{api::models::Track, storage::Library};
 
 use super::{
-    extractor::{AudioStream, ExtractorError, Result, YtDlp},
+    extractor::{AudioStream, ExtractorError, Result},
     js_runtime::JsRuntime,
+    source::Extractor,
 };
 
 /// One yt-dlp process at a time: each takes ~90 MB for a few seconds, and
@@ -48,12 +50,12 @@ pub enum JsPolicy {
 }
 
 #[derive(Clone)]
-pub struct StreamResolver {
+pub(super) struct StreamResolver {
     inner: Arc<Inner>,
 }
 
 struct Inner {
-    ytdlp: YtDlp,
+    ytdlp: Arc<dyn Extractor>,
     http: reqwest::Client,
     bin_dir: PathBuf,
     policy: JsPolicy,
@@ -68,13 +70,9 @@ struct Inner {
 }
 
 impl StreamResolver {
-    pub fn new(ytdlp: YtDlp, http: reqwest::Client, bin_dir: PathBuf, policy: JsPolicy) -> Self {
-        Self::with_store(ytdlp, http, bin_dir, policy, None)
-    }
-
-    /// Like [`new`](Self::new), persisting resolved URLs in `store`.
-    pub fn with_store(
-        ytdlp: YtDlp,
+    /// Persists resolved URLs in `store` when given.
+    pub(super) fn new(
+        ytdlp: Arc<dyn Extractor>,
         http: reqwest::Client,
         bin_dir: PathBuf,
         policy: JsPolicy,
@@ -101,17 +99,13 @@ impl StreamResolver {
         }
     }
 
-    pub fn ytdlp(&self) -> &YtDlp {
-        &self.inner.ytdlp
-    }
-
     /// Whether resolves currently go through a JS runtime.
-    pub fn uses_js(&self) -> bool {
+    pub(super) fn uses_js(&self) -> bool {
         self.inner.js_required.load(Ordering::Relaxed)
     }
 
     /// Returns a fresh stream for `video_id`, from cache when possible.
-    pub async fn resolve(&self, video_id: &str) -> Result<AudioStream> {
+    pub(super) async fn resolve(&self, video_id: &str) -> Result<AudioStream> {
         let cell = {
             let mut cache = self.inner.cache.lock().unwrap_or_else(|e| e.into_inner());
             match cache.get(video_id) {
@@ -165,7 +159,7 @@ impl StreamResolver {
 
     /// Searches YouTube through yt-dlp (no API quota). Shares the
     /// one-yt-dlp-at-a-time permit with resolves.
-    pub async fn search(&self, query: &str, max: u8) -> Result<Vec<Track>> {
+    pub(super) async fn search(&self, query: &str, max: u8) -> Result<Vec<Track>> {
         let _permit = self
             .inner
             .permits
@@ -176,7 +170,7 @@ impl StreamResolver {
     }
 
     /// Warms the cache for the next queued track; errors are only logged.
-    pub fn prefetch(&self, video_id: &str) {
+    pub(super) fn prefetch(&self, video_id: &str) {
         let this = self.clone();
         let id = video_id.to_owned();
         tokio::spawn(async move {
@@ -188,7 +182,7 @@ impl StreamResolver {
 
     /// The player calls this when a resolved URL returns 403/410: drops the
     /// cached URL and, under [`JsPolicy::OnDemand`], switches to JS resolution.
-    pub fn report_playback_failure(&self, video_id: &str) {
+    pub(super) fn report_playback_failure(&self, video_id: &str) {
         self.inner
             .cache
             .lock()
@@ -205,7 +199,7 @@ impl StreamResolver {
     }
 
     /// Daily `yt-dlp -U` for the managed binary. Run in the background at startup.
-    pub fn spawn_maintenance(&self) {
+    pub(super) fn spawn_maintenance(&self) {
         let this = self.clone();
         tokio::spawn(async move {
             match this
@@ -251,12 +245,12 @@ impl StreamResolver {
     }
 
     async fn attempt(&self, video_id: &str, use_js: bool) -> Result<AudioStream> {
-        if use_js {
-            let js = self.js_runtime().await?;
-            self.inner.ytdlp.resolve_with_js(video_id, js).await
+        let js = if use_js {
+            Some(self.js_runtime().await?)
         } else {
-            self.inner.ytdlp.resolve(video_id).await
-        }
+            None
+        };
+        self.inner.ytdlp.resolve(video_id, js).await
     }
 
     /// Locates a JS runtime, or downloads QuickJS-NG once, on first need.

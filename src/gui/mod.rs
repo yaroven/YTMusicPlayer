@@ -847,6 +847,7 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
         ui.set_playing(snap.state == PlayState::Playing);
         ui.set_volume(snap.volume);
         ui.set_shuffle(snap.shuffle);
+        // The UI's repeat-mode: 0 off, 1 all, 2 one.
         ui.set_repeat_mode(match snap.repeat {
             Repeat::Off => 0,
             Repeat::All => 1,

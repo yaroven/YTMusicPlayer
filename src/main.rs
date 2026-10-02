@@ -9,14 +9,18 @@ use anyhow::{Context, Result, bail};
 use tracing_subscriber::EnvFilter;
 use ytm_player::{
     account,
-    api::{auth::OAuthClient, models::video_id_from_input, token_store},
-    app::{self, Deps},
-    audio::{
-        extractor::YtDlp,
-        open_track,
-        player::{PlayState, PlayerEvent, PlayerHandle},
-        resolver::{JsPolicy, StreamResolver},
+    api::{
+        auth::OAuthClient,
+        models::{Track, video_id_from_input},
+        token_store,
     },
+    app,
+    audio::{
+        Opened,
+        extractor::YtDlp,
+        player::{PlayState, PlayerEvent, PlayerHandle},
+    },
+    bootstrap,
     config::{paths::AppPaths, settings::Settings},
     instance::{self, Acquired, Instance},
     storage::Library,
@@ -225,16 +229,6 @@ fn uninstall(_options: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn http_client() -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
-        .user_agent(concat!("ytm-player/", env!("CARGO_PKG_VERSION")))
-        .connect_timeout(Duration::from_secs(10))
-        // Few hosts, sequential requests: don't hold idle sockets around.
-        .pool_max_idle_per_host(1)
-        .pool_idle_timeout(Duration::from_secs(30))
-        .build()?)
-}
-
 /// The browser-login client, or an error explaining how to set one up.
 fn oauth_client(settings: &Settings, paths: &AppPaths) -> Result<OAuthClient> {
     account::oauth_client(settings).with_context(|| {
@@ -247,68 +241,15 @@ fn oauth_client(settings: &Settings, paths: &AppPaths) -> Result<OAuthClient> {
     })
 }
 
-async fn resolver(
-    paths: &AppPaths,
-    settings: &Settings,
-    http: &reqwest::Client,
-    force_js: bool,
-    store: Option<Arc<Library>>,
-) -> Result<StreamResolver> {
-    let ytdlp = match YtDlp::find(&paths.bin_dir()) {
-        Some(found) => found,
-        None => {
-            eprintln!("Downloading yt-dlp (first run)…");
-            YtDlp::ensure(http, &paths.bin_dir())
-                .await
-                .context("yt-dlp is required")?
-        }
-    }
-    .with_extra_args(settings.ytdlp_extra_args.iter().cloned());
-    let policy = match (force_js, settings.js_fallback) {
-        (true, _) => JsPolicy::Always,
-        (false, true) => JsPolicy::OnDemand,
-        (false, false) => JsPolicy::Never,
-    };
-    Ok(StreamResolver::with_store(
-        ytdlp,
-        http.clone(),
-        paths.bin_dir(),
-        policy,
-        store,
-    ))
-}
-
-/// Shared setup for both interfaces.
-async fn player_deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
-    let http = http_client()?;
-    let library = Arc::new(Library::open(&paths.database())?);
-    let youtube = account::youtube_client(settings, &http).await?;
-    let resolver = resolver(paths, settings, &http, false, Some(library.clone())).await?;
-    resolver.spawn_maintenance();
-    Ok(Deps {
-        library,
-        resolver,
-        http,
-        youtube,
-        liked_music_only: settings.liked_music_only,
-        volume: settings.volume,
-        media_controls: settings.media_controls,
-        audio_device: settings.audio_device(),
-        config_file: paths.config_file(),
-        oauth_client: account::oauth_client(settings),
-        device_client: account::device_client(settings),
-    })
-}
-
 async fn run_tui(paths: &AppPaths, settings: &Settings) -> Result<()> {
-    app::run(player_deps(paths, settings).await?).await
+    app::run(bootstrap::deps(paths, settings).await?).await
 }
 
 #[cfg(feature = "gui")]
 fn run_gui(paths: &AppPaths, settings: &Settings) -> Result<()> {
     // The window owns the main thread; the runtime moves to the core thread.
     let rt = runtime()?;
-    let deps = rt.block_on(player_deps(paths, settings))?;
+    let deps = rt.block_on(bootstrap::deps(paths, settings))?;
     ytm_player::gui::run(rt, deps)
 }
 
@@ -399,7 +340,7 @@ async fn status(paths: &AppPaths, settings: &Settings) -> Result<()> {
 }
 
 async fn sync(paths: &AppPaths, settings: &Settings) -> Result<()> {
-    let http = http_client()?;
+    let http = bootstrap::http_client()?;
     let youtube = account::youtube_client(settings, &http)
         .await?
         .context("not logged in — run `ytm login`")?;
@@ -416,12 +357,23 @@ async fn sync(paths: &AppPaths, settings: &Settings) -> Result<()> {
 
 async fn play(paths: &AppPaths, settings: &Settings, input: &str) -> Result<()> {
     let video_id = video_id_from_input(input).context("not a YouTube video id or URL")?;
-    let http = http_client()?;
+    let http = bootstrap::http_client()?;
     let library = Arc::new(Library::open(&paths.database())?);
-    let resolver = resolver(paths, settings, &http, false, Some(library)).await?;
+    let ytdlp = bootstrap::ytdlp(paths, settings, &http).await?;
+    let source = bootstrap::track_source(paths, settings, &http, ytdlp, false, Some(library));
 
     let started = Instant::now();
-    let (body, stream) = open_track(&resolver, &http, &video_id).await?;
+    let track = Track {
+        video_id: video_id.as_str().into(),
+        title: "".into(),
+        artist: "".into(),
+        duration_secs: None,
+    };
+    let Opened {
+        body,
+        duration,
+        stream,
+    } = source.open(&track).await?;
     println!(
         "{} [{} {}, ready in {:.1?}]",
         stream.title.as_deref().unwrap_or(&video_id),
@@ -435,7 +387,7 @@ async fn play(paths: &AppPaths, settings: &Settings, input: &str) -> Result<()> 
 
     let (events_tx, mut events) = tokio::sync::mpsc::unbounded_channel();
     let player = PlayerHandle::spawn(settings.volume, settings.audio_device(), events_tx)?;
-    player.load(body, stream.duration, 1);
+    player.load(body, duration, 1);
 
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     let mut ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());
@@ -466,18 +418,18 @@ fn fmt(d: Duration) -> String {
 
 async fn resolve(paths: &AppPaths, settings: &Settings, id: &str, js: bool) -> Result<()> {
     let video_id = video_id_from_input(id).context("not a YouTube video id or URL")?;
-    let http = http_client()?;
-    // No persistent store: this command is for debugging resolution itself.
-    let resolver = resolver(paths, settings, &http, js, None).await?;
-    let ytdlp = resolver.ytdlp();
+    let http = bootstrap::http_client()?;
+    let ytdlp = bootstrap::ytdlp(paths, settings, &http).await?;
     println!("yt-dlp: {} ({:?})", ytdlp.path().display(), ytdlp.source());
+    // No persistent store: this command is for debugging resolution itself.
+    let source = bootstrap::track_source(paths, settings, &http, ytdlp, js, None);
 
     let started = Instant::now();
-    let stream = resolver.resolve(&video_id).await?;
+    let stream = source.resolve(&video_id).await?;
     println!(
         "resolved in {:.1?} (js: {})",
         started.elapsed(),
-        resolver.uses_js()
+        source.uses_js()
     );
     println!("title:    {}", stream.title.as_deref().unwrap_or("?"));
     println!(

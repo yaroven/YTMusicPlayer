@@ -5,6 +5,7 @@ pub mod account;
 pub mod api;
 pub mod app;
 pub mod audio;
+pub mod bootstrap;
 pub mod config;
 #[cfg(feature = "gui")]
 pub mod gui;

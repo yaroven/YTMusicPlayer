@@ -21,12 +21,9 @@ use crate::{
         token_store,
     },
     audio::{
-        extractor::AudioStream,
-        open_track,
+        Opened, TrackSource,
         player::{PlayState, PlayerEvent, PlayerHandle, PlayerStatus},
         queue::{Queue, Repeat},
-        resolver::StreamResolver,
-        stream::HttpStream,
     },
     config::settings::Settings,
     media::{MediaAction, MediaControls},
@@ -49,7 +46,7 @@ const MEMORY_STEP: u64 = 2 << 20;
 
 pub struct Deps {
     pub library: Arc<Library>,
-    pub resolver: StreamResolver,
+    pub source: TrackSource,
     pub http: reqwest::Client,
     /// `None` when not logged in.
     pub youtube: Option<Arc<YouTubeClient>>,
@@ -94,7 +91,7 @@ enum Background {
     Synced(Result<SyncReport>),
     Opened {
         generation: u64,
-        result: Result<Box<(HttpStream, AudioStream)>>,
+        result: Result<Box<Opened>>,
     },
     Rated {
         track: Track,
@@ -162,11 +159,7 @@ impl Session {
             .unwrap_or(deps.volume);
         let mut queue = Queue::default();
         queue.shuffle = meta("shuffle").as_deref() == Some("1");
-        queue.repeat = match meta("repeat").as_deref() {
-            Some("all") => Repeat::All,
-            Some("one") => Repeat::One,
-            _ => Repeat::Off,
-        };
+        queue.repeat = Repeat::parse(meta("repeat").as_deref().unwrap_or_default());
 
         let player = PlayerHandle::spawn(volume, deps.audio_device.clone(), player_tx)?;
         let media = if deps.media_controls {
@@ -217,11 +210,7 @@ impl Session {
 
     /// Persists volume, modes and the selected playlist.
     pub fn save_state(&self, selected_playlist: Option<&str>) {
-        let repeat = match self.queue.repeat {
-            Repeat::Off => "off",
-            Repeat::All => "all",
-            Repeat::One => "one",
-        };
+        let repeat = self.queue.repeat.as_str();
         let volume = format!("{:.2}", self.player.status().volume);
         let shuffle = if self.queue.shuffle { "1" } else { "0" };
         let mut pairs = vec![
@@ -315,14 +304,8 @@ impl Session {
                 self.loading = false;
                 match result {
                     Ok(opened) => {
-                        let (body, stream) = *opened;
+                        let Opened { body, duration, .. } = *opened;
                         self.failures = 0;
-                        let duration = stream.duration.or_else(|| {
-                            self.queue
-                                .current()
-                                .and_then(|t| t.duration_secs)
-                                .map(|s| Duration::from_secs(s.into()))
-                        });
                         self.player.load(body, duration, generation);
                         if let (Some(media), Some(track)) = (&mut self.media, self.queue.current())
                         {
@@ -542,12 +525,7 @@ impl Session {
 
     pub fn cycle_repeat(&mut self) {
         self.queue.repeat = self.queue.repeat.cycle();
-        let label = match self.queue.repeat {
-            Repeat::Off => "off",
-            Repeat::All => "all",
-            Repeat::One => "one",
-        };
-        self.set_info(format!("Repeat {label}"));
+        self.set_info(format!("Repeat {}", self.queue.repeat.as_str()));
     }
 
     pub fn play_next(&mut self, track: Track) {
@@ -573,22 +551,16 @@ impl Session {
         self.status = None;
 
         let generation = self.generation;
-        let (resolver, http, tx) = (
-            self.deps.resolver.clone(),
-            self.deps.http.clone(),
-            self.tx.clone(),
-        );
+        let (source, tx) = (self.deps.source.clone(), self.tx.clone());
         tokio::spawn(async move {
-            let result = open_track(&resolver, &http, &track.video_id)
-                .await
-                .map(Box::new);
+            let result = source.open(&track).await.map(Box::new);
             let _ = tx.send(Background::Opened { generation, result });
         });
     }
 
     fn prefetch_next(&self) {
         if let Some(next) = self.queue.peek_next() {
-            self.deps.resolver.prefetch(&next.video_id);
+            self.deps.source.prefetch(&next.video_id);
         }
     }
 
@@ -648,9 +620,9 @@ impl Session {
         self.search_generation += 1;
         self.searching = true;
         self.set_info(format!("Searching “{query}”…"));
-        let (youtube, resolver, tx, generation) = (
+        let (youtube, source, tx, generation) = (
             self.deps.youtube.clone(),
-            self.deps.resolver.clone(),
+            self.deps.source.clone(),
             self.tx.clone(),
             self.search_generation,
         );
@@ -667,10 +639,7 @@ impl Session {
             };
             let result = match api {
                 Some(tracks) => Ok(tracks),
-                None => resolver
-                    .search(&query, SEARCH_RESULTS)
-                    .await
-                    .map_err(Into::into),
+                None => source.search(&query, SEARCH_RESULTS).await,
             };
             let _ = tx.send(Background::Searched {
                 generation,

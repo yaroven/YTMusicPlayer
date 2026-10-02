@@ -17,6 +17,24 @@ pub enum Repeat {
 }
 
 impl Repeat {
+    /// Name used in settings and messages: "off", "all", "one".
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::All => "all",
+            Self::One => "one",
+        }
+    }
+
+    /// Inverse of [`as_str`](Self::as_str); anything else is `Off`.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "all" => Self::All,
+            "one" => Self::One,
+            _ => Self::Off,
+        }
+    }
+
     pub fn cycle(self) -> Self {
         match self {
             Self::Off => Self::All,
