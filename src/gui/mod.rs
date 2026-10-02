@@ -33,12 +33,12 @@ use tokio::sync::{
 
 use crate::{
     account,
-    api::models::{LIKED_PLAYLIST_ID, Playlist, Track},
-    app::filter_indices,
+    api::models::{Playlist, Track},
     audio::{player::PlayState, queue::Repeat},
-    session::{Changes, Deps, Session, SessionView},
+    fmt::fmt_time,
+    library_view::LibraryView,
+    session::{Changes, Deps, SearchResults, Session, SessionView},
     storage::Library,
-    ui::fmt_time,
 };
 use art::ArtSize;
 use ui::{MainWindow, PlaylistRow, TrackRow};
@@ -72,8 +72,8 @@ enum Cmd {
     SignIn,
     SignOut,
     FetchArt(Arc<str>, ArtSize),
-    /// Save state (selected playlist id) and stop.
-    Quit(Option<String>),
+    /// Save state and stop.
+    Quit,
 }
 
 /// What the core pushes to the UI thread.
@@ -81,7 +81,7 @@ struct Snapshot {
     view: SessionView,
     changes: Changes,
     /// The latest search, when `changes.search`.
-    search: Option<(String, Arc<[Track]>)>,
+    search: Option<SearchResults>,
     /// Current track followed by what's next; only when it changed.
     queue: Option<Arc<[Track]>>,
 }
@@ -90,11 +90,7 @@ impl Snapshot {
     fn of(session: &Session, changes: Changes, queue: Option<Arc<[Track]>>) -> Self {
         Self {
             view: session.view(),
-            search: session
-                .search
-                .as_ref()
-                .filter(|_| changes.search)
-                .map(|r| (r.query.clone(), r.tracks.clone())),
+            search: session.search.clone().filter(|_| changes.search),
             changes,
             queue,
         }
@@ -139,44 +135,43 @@ impl ArtCache {
     }
 }
 
-/// Track list backed by a shared `Arc<[Track]>`: rows (and their art
-/// requests) are built only when the virtualized ListView asks for them.
+/// Where a [`TracksModel`] gets its rows.
+enum Rows {
+    /// The library view's (filtered) list.
+    Library(Rc<RefCell<LibraryView>>),
+    /// The play queue: current track, then what's next.
+    Queue(RefCell<Arc<[Track]>>),
+}
+
+/// Track rows for a virtualized ListView: built (and their art requested)
+/// only when the list asks for them; no track is copied up front.
 struct TracksModel {
-    tracks: RefCell<Arc<[Track]>>,
-    visible: RefCell<Vec<u32>>,
+    rows: Rows,
     playing: RefCell<Option<Arc<str>>>,
     art: Rc<RefCell<ArtCache>>,
-    /// For the per-row heart: an indexed lookup per shown row, no id set
-    /// kept in memory.
-    library: Arc<Library>,
     notify: ModelNotify,
 }
 
 impl TracksModel {
-    fn new(art: Rc<RefCell<ArtCache>>, library: Arc<Library>) -> Self {
+    fn new(rows: Rows, art: Rc<RefCell<ArtCache>>) -> Self {
         Self {
-            tracks: RefCell::new(Arc::from([])),
-            visible: RefCell::default(),
+            rows,
             playing: RefCell::default(),
             art,
-            library,
             notify: ModelNotify::default(),
         }
     }
 
-    fn set(&self, tracks: Arc<[Track]>, filter: &str) {
-        filter_indices(&tracks, filter, &mut self.visible.borrow_mut());
-        *self.tracks.borrow_mut() = tracks;
+    /// All rows changed (new list, new filter).
+    fn reset(&self) {
         self.notify.reset();
     }
 
-    fn refilter(&self, filter: &str) {
-        filter_indices(
-            &self.tracks.borrow(),
-            filter,
-            &mut self.visible.borrow_mut(),
-        );
-        self.notify.reset();
+    fn set_queue(&self, tracks: Arc<[Track]>) {
+        if let Rows::Queue(cell) = &self.rows {
+            *cell.borrow_mut() = tracks;
+            self.notify.reset();
+        }
     }
 
     fn set_playing(&self, id: Option<Arc<str>>) {
@@ -189,32 +184,21 @@ impl TracksModel {
         }
     }
 
-    /// Re-renders rows showing `id` (art arrived, playing changed).
+    /// Re-renders rows showing `id` (art arrived, like or playing changed).
     fn rows_changed(&self, id: &str) {
-        let tracks = self.tracks.borrow();
-        let rows: Vec<usize> = self
-            .visible
-            .borrow()
-            .iter()
-            .enumerate()
-            .filter(|(_, i)| tracks.get(**i as usize).is_some_and(|t| &*t.video_id == id))
-            .map(|(row, _)| row)
-            .collect();
-        drop(tracks);
+        let rows = match &self.rows {
+            Rows::Library(view) => view.borrow().rows_of(id),
+            Rows::Queue(tracks) => tracks
+                .borrow()
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| &*t.video_id == id)
+                .map(|(row, _)| row)
+                .collect(),
+        };
         for row in rows {
             self.notify.row_changed(row);
         }
-    }
-
-    /// Track at a visible row.
-    fn track(&self, row: usize) -> Option<Track> {
-        let index = *self.visible.borrow().get(row)? as usize;
-        self.tracks.borrow().get(index).cloned()
-    }
-
-    /// Index into the full list for a visible row.
-    fn index(&self, row: usize) -> Option<usize> {
-        self.visible.borrow().get(row).map(|&i| i as usize)
     }
 }
 
@@ -222,18 +206,24 @@ impl Model for TracksModel {
     type Data = TrackRow;
 
     fn row_count(&self) -> usize {
-        self.visible.borrow().len()
+        match &self.rows {
+            Rows::Library(view) => view.borrow().len(),
+            Rows::Queue(tracks) => tracks.borrow().len(),
+        }
     }
 
     fn row_data(&self, row: usize) -> Option<TrackRow> {
-        let index = *self.visible.borrow().get(row)? as usize;
-        let t = self.tracks.borrow().get(index)?.clone();
+        let (t, liked) = match &self.rows {
+            Rows::Library(view) => {
+                let view = view.borrow();
+                let (_, t) = view.row(row)?;
+                (t.clone(), view.is_liked(&t.video_id))
+            }
+            // Queue rows show no like button.
+            Rows::Queue(tracks) => (tracks.borrow().get(row)?.clone(), false),
+        };
         let playing = self.playing.borrow().as_ref() == Some(&t.video_id);
         let art = self.art.borrow_mut().thumb(&t.video_id);
-        let liked = self
-            .library
-            .contains(LIKED_PLAYLIST_ID, &t.video_id)
-            .unwrap_or(false);
         Some(TrackRow {
             liked,
             initial: initial(&t.title),
@@ -274,109 +264,67 @@ fn hue(artist: &str) -> f32 {
     (h % 360) as f32 / 360.0
 }
 
-/// UI-thread state.
+/// UI-thread state. What the list shows is the [`LibraryView`]; this only
+/// mirrors it into the window's properties and models.
 struct View {
-    library: Arc<Library>,
-    playlists: Vec<Playlist>,
-    selected_playlist: Option<usize>,
-    filter: String,
-    /// Last online search: query and results.
-    search: Option<(String, Arc<[Track]>)>,
-    /// The track list shows `search` rather than a playlist.
-    showing_results: bool,
+    library: Rc<RefCell<LibraryView>>,
     tracks: Rc<TracksModel>,
     queue: Rc<TracksModel>,
     playlist_rows: Rc<VecModel<PlaylistRow>>,
+    /// "Save to playlist" choices (every playlist but Liked music).
+    add_rows: Rc<VecModel<SharedString>>,
     art: Rc<RefCell<ArtCache>>,
     /// The playing track (from the last snapshot).
     now: Option<Track>,
 }
 
 impl View {
-    fn reload_playlists(&mut self, ui: &MainWindow, prefer: Option<&str>) {
-        let keep = prefer.map(str::to_owned).or_else(|| self.selected_id());
-        self.refresh_playlist_rows();
-        let index = keep
-            .and_then(|id| self.playlists.iter().position(|p| p.id == id))
-            .or((!self.playlists.is_empty()).then_some(0));
-        self.select_playlist(ui, index);
-    }
-
-    fn refresh_playlist_rows(&mut self) {
-        self.playlists = self.library.playlists().unwrap_or_default();
-        self.playlist_rows.set_vec(
-            self.playlists
-                .iter()
-                .map(|p| PlaylistRow {
-                    title: p.title.as_str().into(),
-                    count: p.item_count as i32,
-                })
+    /// Playlist names and counts changed (sidebar, "save to" choices).
+    fn sync_playlists(&self) {
+        let lib = self.library.borrow();
+        let row = |p: &Playlist| PlaylistRow {
+            title: p.title.as_str().into(),
+            count: p.item_count as i32,
+        };
+        self.playlist_rows
+            .set_vec(lib.playlists().iter().map(row).collect::<Vec<_>>());
+        self.add_rows.set_vec(
+            lib.add_choices()
+                .map(|p| SharedString::from(p.title.as_str()))
                 .collect::<Vec<_>>(),
         );
     }
 
-    fn select_playlist(&mut self, ui: &MainWindow, index: Option<usize>) {
-        self.showing_results = false;
-        ui.set_showing_results(false);
-        self.selected_playlist = index;
-        ui.set_selected_playlist(index.map_or(-1, |i| i as i32));
-        ui.set_selected_track(-1);
-        let Some(p) = index.and_then(|i| self.playlists.get(i)) else {
-            self.tracks.set(Arc::from([]), "");
-            ui.set_tracks_title("".into());
-            ui.set_track_count(0);
-            return;
-        };
-        let tracks = self.library.tracks(&p.id).unwrap_or_else(|_| Arc::from([]));
-        ui.set_tracks_title(p.title.as_str().into());
-        ui.set_track_count(tracks.len() as i32);
-        self.tracks.set(tracks, &self.filter);
-    }
-
-    /// Lists the last search's results in place of a playlist.
-    fn show_results(&mut self, ui: &MainWindow) {
-        let Some((query, tracks)) = self.search.clone() else {
-            return;
-        };
-        self.showing_results = true;
-        self.selected_playlist = None;
-        ui.set_showing_results(true);
-        ui.set_selected_playlist(-1);
-        ui.set_selected_track(-1);
-        ui.set_tracks_title(format!("“{query}”").into());
-        ui.set_track_count(tracks.len() as i32);
-        // A new list starts unfiltered.
-        self.filter.clear();
-        ui.set_clear_search(ui.get_clear_search().wrapping_add(1));
-        self.tracks.set(tracks, "");
-    }
-
-    fn selected_id(&self) -> Option<String> {
-        self.selected_playlist
-            .and_then(|i| self.playlists.get(i))
-            .map(|p| p.id.clone())
-    }
-
-    fn selected_title(&self) -> String {
-        if self.showing_results {
-            return self
-                .search
-                .as_ref()
-                .map(|(q, _)| format!("Search: {q}"))
-                .unwrap_or_default();
+    /// The list was replaced: refresh everything the window shows about it.
+    fn sync_list(&self, ui: &MainWindow) {
+        self.sync_playlists();
+        let lib = self.library.borrow();
+        ui.set_selected_playlist(lib.selected_playlist().map_or(-1, |i| i as i32));
+        ui.set_showing_results(lib.showing_results());
+        ui.set_search_query(lib.search_query().unwrap_or_default().into());
+        ui.set_tracks_title(lib.title().into());
+        ui.set_track_count(lib.total() as i32);
+        ui.set_selected_track(lib.selected_row().map_or(-1, |r| r as i32));
+        if lib.filter().is_empty() {
+            // A new list starts unfiltered: empty the search field too.
+            ui.set_clear_search(ui.get_clear_search().wrapping_add(1));
         }
-        self.selected_playlist
-            .and_then(|i| self.playlists.get(i))
-            .map(|p| p.title.clone())
-            .unwrap_or_default()
+        drop(lib);
+        self.tracks.reset();
     }
 
-    /// Selected row's track, else the playing track.
-    fn target(&self, ui: &MainWindow, now: Option<Track>) -> Option<Track> {
-        usize::try_from(ui.get_selected_track())
-            .ok()
-            .and_then(|row| self.tracks.track(row))
-            .or(now)
+    /// Takes the row the window marked as selected (rows set it themselves
+    /// before "play next" / "save to playlist").
+    fn selection_from(&self, ui: &MainWindow) {
+        self.library
+            .borrow_mut()
+            .select_row(usize::try_from(ui.get_selected_track()).ok());
+    }
+
+    /// What an action applies to: the selected row, else the playing track.
+    fn target(&self, ui: &MainWindow) -> Option<Track> {
+        self.selection_from(ui);
+        self.library.borrow().target(self.now.as_ref())
     }
 
     /// Shows the playing track's covers, requesting them if needed.
@@ -457,6 +405,7 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps) -> Result<()> {
     let ui = MainWindow::new().context("cannot open a window (no display?)")?;
     *WINDOW.lock().unwrap_or_else(|e| e.into_inner()) = Some(ui.as_weak());
     let library = deps.library.clone();
+    let library_view = Rc::new(RefCell::new(LibraryView::new(library.clone())?));
     let (cmd_tx, cmd_rx) = unbounded_channel();
 
     let art = Rc::new(RefCell::new(ArtCache {
@@ -467,15 +416,17 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps) -> Result<()> {
         tx: cmd_tx.clone(),
     }));
     let view = Rc::new(RefCell::new(View {
-        library: library.clone(),
-        playlists: Vec::new(),
-        selected_playlist: None,
-        filter: String::new(),
-        search: None,
-        showing_results: false,
-        tracks: Rc::new(TracksModel::new(art.clone(), library.clone())),
-        queue: Rc::new(TracksModel::new(art.clone(), library.clone())),
+        tracks: Rc::new(TracksModel::new(
+            Rows::Library(library_view.clone()),
+            art.clone(),
+        )),
+        queue: Rc::new(TracksModel::new(
+            Rows::Queue(RefCell::new(Arc::from([]))),
+            art.clone(),
+        )),
+        library: library_view,
         playlist_rows: Rc::new(VecModel::default()),
+        add_rows: Rc::new(VecModel::default()),
         art,
         now: None,
     }));
@@ -485,6 +436,8 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps) -> Result<()> {
         ui.set_tracks(ModelRc::from(v.tracks.clone()));
         ui.set_queue_rows(ModelRc::from(v.queue.clone()));
         ui.set_playlists(ModelRc::from(v.playlist_rows.clone()));
+        ui.set_add_choices(ModelRc::from(v.add_rows.clone()));
+        v.sync_list(&ui);
     }
     if let Some(width) = library
         .get_meta("sidebar_width")
@@ -494,11 +447,9 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps) -> Result<()> {
     {
         ui.set_sidebar_width(width);
     }
-    let last = library.get_meta("playlist").ok().flatten();
-    view.borrow_mut().reload_playlists(&ui, last.as_deref());
-    let library_empty = view.borrow().playlists.is_empty();
+    let library_empty = view.borrow().library.borrow().playlists().is_empty();
 
-    wire_callbacks(&ui, &view, &cmd_tx);
+    wire_callbacks(&ui, &view, &cmd_tx, &library);
     // First start: nothing works without an account, so ask right away.
     if !deps.account.signed_in() {
         ui.set_download_file(downloaded_client_name().into());
@@ -513,12 +464,17 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps) -> Result<()> {
 
     ui.run().context("GUI event loop failed")?;
 
-    let selected = view.borrow().selected_id();
-    let _ = cmd_tx.send(Cmd::Quit(selected));
+    view.borrow().library.borrow().save();
+    let _ = cmd_tx.send(Cmd::Quit);
     core.join().map_err(|_| anyhow!("core thread panicked"))?
 }
 
-fn wire_callbacks(ui: &MainWindow, view: &Rc<RefCell<View>>, cmd_tx: &UnboundedSender<Cmd>) {
+fn wire_callbacks(
+    ui: &MainWindow,
+    view: &Rc<RefCell<View>>,
+    cmd_tx: &UnboundedSender<Cmd>,
+    library: &Arc<Library>,
+) {
     let send = |cmd: Cmd, tx: &UnboundedSender<Cmd>| {
         let _ = tx.send(cmd);
     };
@@ -540,47 +496,69 @@ fn wire_callbacks(ui: &MainWindow, view: &Rc<RefCell<View>>, cmd_tx: &UnboundedS
     }
 
     // Starting playback from the list remembers where the queue came from.
-    let play_from_list =
-        |ui: &MainWindow, view: &RefCell<View>, cmd: Cmd, tx: &UnboundedSender<Cmd>| {
-            ui.set_queue_source(view.borrow().selected_title().into());
-            let _ = tx.send(cmd);
+    let play =
+        |ui: &MainWindow, view: &RefCell<View>, cmd: Option<Cmd>, tx: &UnboundedSender<Cmd>| {
+            if let Some(cmd) = cmd {
+                ui.set_queue_source(view.borrow().library.borrow().source_name().into());
+                let _ = tx.send(cmd);
+            }
         };
+    // Shows playlist `index` (or the search results), then mirrors it.
+    let show = |ui: &MainWindow, view: &RefCell<View>, index: Option<usize>| {
+        let v = view.borrow();
+        let result = match index {
+            Some(i) => v.library.borrow_mut().select_playlist(Some(i)),
+            None => {
+                v.library.borrow_mut().show_results();
+                Ok(())
+            }
+        };
+        if let Err(err) = result {
+            tracing::warn!(%err, "loading playlist");
+            ui.set_status_text(format!("library: {err:#}").into());
+            ui.set_status_error(true);
+        }
+        v.sync_list(ui);
+    };
 
     on!(on_select_playlist, [tx, view, ui], |index| {
-        view.borrow_mut()
-            .select_playlist(ui, usize::try_from(index).ok());
+        if let Ok(i) = usize::try_from(index) {
+            show(ui, view, Some(i));
+        }
     });
-    on!(on_select_track, [tx, view, ui], |row| ui
-        .set_selected_track(row));
+    on!(on_show_results, [tx, view, ui], || show(ui, view, None));
+    on!(on_select_track, [tx, view, ui], |row| {
+        ui.set_selected_track(row);
+        view.borrow().selection_from(ui);
+    });
     on!(on_play_track, [tx, view, ui], |row| {
         ui.set_selected_track(row);
         let cmd = {
             let v = view.borrow();
-            usize::try_from(row)
-                .ok()
-                .and_then(|r| v.tracks.index(r))
-                .map(|index| Cmd::Play(v.tracks.tracks.borrow().clone(), index))
+            v.selection_from(ui);
+            let lib = v.library.borrow();
+            lib.play_from(lib.selected_row())
+                .map(|(tracks, index)| Cmd::Play(tracks, index))
         };
-        if let Some(cmd) = cmd {
-            play_from_list(ui, view, cmd, tx);
-        }
+        play(ui, view, cmd, tx);
     });
     on!(on_play_all, [tx, view, ui], || {
-        let cmd = {
-            let v = view.borrow();
-            v.tracks
-                .index(0)
-                .map(|index| Cmd::Play(v.tracks.tracks.borrow().clone(), index))
-        };
-        if let Some(cmd) = cmd {
-            play_from_list(ui, view, cmd, tx);
-        }
+        let cmd = view
+            .borrow()
+            .library
+            .borrow()
+            .play_from(None)
+            .map(|(tracks, index)| Cmd::Play(tracks, index));
+        play(ui, view, cmd, tx);
     });
     on!(on_shuffle_play, [tx, view, ui], || {
-        let tracks = view.borrow().tracks.tracks.borrow().clone();
-        if !tracks.is_empty() {
-            play_from_list(ui, view, Cmd::ShufflePlay(tracks), tx);
-        }
+        let cmd = view
+            .borrow()
+            .library
+            .borrow()
+            .all_tracks()
+            .map(Cmd::ShufflePlay);
+        play(ui, view, cmd, tx);
     });
     on!(on_jump, [tx, view, ui], |row| {
         // Row 0 is the playing track itself.
@@ -589,10 +567,10 @@ fn wire_callbacks(ui: &MainWindow, view: &Rc<RefCell<View>>, cmd_tx: &UnboundedS
         }
     });
     on!(on_filter_changed, [tx, view, ui], |text| {
-        let mut v = view.borrow_mut();
-        v.filter = text.to_string();
-        v.tracks.refilter(&v.filter);
+        let v = view.borrow();
+        v.library.borrow_mut().set_filter(&text);
         ui.set_selected_track(-1);
+        v.tracks.reset();
     });
     on!(on_toggle_pause, [tx, view, ui], || send(
         Cmd::TogglePause,
@@ -612,15 +590,15 @@ fn wire_callbacks(ui: &MainWindow, view: &Rc<RefCell<View>>, cmd_tx: &UnboundedS
     on!(on_cycle_repeat, [tx, view, ui], || send(Cmd::Repeat, tx));
     on!(on_sync, [tx, view, ui], || send(Cmd::Sync, tx));
     on!(on_toggle_like, [tx, view, ui], || {
-        // The heart reflects the playing track, so it acts on it too.
+        // The player bar's heart (and `f`) belongs to the playing track;
+        // rows have their own hearts.
         let v = view.borrow();
-        if let Some(track) = v.now.clone().or_else(|| v.target(ui, None)) {
+        if let Some(track) = v.now.clone().or_else(|| v.target(ui)) {
             send(Cmd::Like(track), tx);
         }
     });
     on!(on_play_next, [tx, view, ui], || {
-        let v = view.borrow();
-        if let Some(track) = v.target(ui, v.now.clone()) {
+        if let Some(track) = view.borrow().target(ui) {
             send(Cmd::PlayNext(track), tx);
         }
     });
@@ -630,19 +608,20 @@ fn wire_callbacks(ui: &MainWindow, view: &Rc<RefCell<View>>, cmd_tx: &UnboundedS
             send(Cmd::Search(query.to_owned()), tx);
         }
     });
-    on!(on_show_results, [tx, view, ui], || view
-        .borrow_mut()
-        .show_results(ui));
     on!(on_like_row, [tx, view, ui], |row| {
-        let track = usize::try_from(row)
-            .ok()
-            .and_then(|r| view.borrow().tracks.track(r));
+        let track = usize::try_from(row).ok().and_then(|r| {
+            view.borrow()
+                .library
+                .borrow()
+                .row(r)
+                .map(|(_, t)| t.clone())
+        });
         if let Some(track) = track {
             send(Cmd::Like(track), tx);
         }
     });
+    let library = library.clone();
     on!(on_sidebar_resized, [tx, view, ui], |width| {
-        let library = view.borrow().library.clone();
         if let Err(err) = library.set_meta("sidebar_width", &format!("{width:.0}")) {
             tracing::warn!(%err, "saving sidebar width");
         }
@@ -667,10 +646,8 @@ fn wire_callbacks(ui: &MainWindow, view: &Rc<RefCell<View>>, cmd_tx: &UnboundedS
         let v = view.borrow();
         let playlist = usize::try_from(index)
             .ok()
-            .and_then(|i| v.playlists.get(i))
-            .filter(|p| p.id != LIKED_PLAYLIST_ID)
-            .cloned();
-        if let (Some(playlist), Some(track)) = (playlist, v.target(ui, v.now.clone())) {
+            .and_then(|i| v.library.borrow().add_choice(i).cloned());
+        if let (Some(playlist), Some(track)) = (playlist, v.target(ui)) {
             send(Cmd::AddTo(playlist, track), tx);
         }
     });
@@ -700,8 +677,8 @@ async fn core_loop(
                 dirty = true;
                 match cmd {
                     None => break,
-                    Some(Cmd::Quit(selected)) => {
-                        session.save_state(selected.as_deref());
+                    Some(Cmd::Quit) => {
+                        session.save_state();
                         break;
                     }
                     Some(Cmd::FetchArt(id, size)) => {
@@ -795,7 +772,7 @@ fn apply(session: &mut Session, cmd: Cmd) {
         }
         Cmd::SignIn => session.sign_in(),
         Cmd::SignOut => session.sign_out(),
-        Cmd::FetchArt(..) | Cmd::Quit(_) => {}
+        Cmd::FetchArt(..) | Cmd::Quit => {}
     }
 }
 
@@ -859,34 +836,30 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
                 return;
             };
             let mut v = view.borrow_mut();
-            if let Some(search) = snap.search {
-                ui.set_search_query(search.0.as_str().into());
-                v.search = Some(search);
-                v.show_results(&ui);
+            let applied = v
+                .library
+                .borrow_mut()
+                .apply(&snap.changes, snap.search.as_ref());
+            match applied {
+                Ok(true) => v.sync_list(&ui),
+                // Counts may have changed (a like elsewhere).
+                Ok(false) if snap.changes.playlist.is_some() => v.sync_playlists(),
+                Ok(false) => {}
+                Err(err) => tracing::warn!(%err, "reloading the library view"),
             }
             if let Some(id) = &snap.changes.liked {
                 v.tracks.rows_changed(id);
                 v.queue.rows_changed(id);
             }
-            if snap.changes.library {
-                v.reload_playlists(&ui, None);
-            } else if let Some(id) = &snap.changes.playlist {
-                let viewing = !v.showing_results && v.selected_id().as_deref() == Some(id.as_str());
-                let index = v.selected_playlist;
-                v.refresh_playlist_rows();
-                if viewing {
-                    v.select_playlist(&ui, index);
-                }
-            }
             if let Some(queue) = snap.queue {
-                v.queue.set(queue, "");
+                v.queue.set_queue(queue);
             }
             let now_id = snap.view.now.as_ref().map(|t| t.video_id.clone());
             let changed = now_id != v.now.as_ref().map(|t| t.video_id.clone());
             if changed || snap.changes.playlist.is_some() {
                 let liked = now_id
                     .as_ref()
-                    .is_some_and(|id| v.library.contains(LIKED_PLAYLIST_ID, id).unwrap_or(false));
+                    .is_some_and(|id| v.library.borrow().is_liked(id));
                 ui.set_liked(liked);
             }
             v.tracks.set_playing(now_id.clone());

@@ -96,6 +96,7 @@ pub struct SessionView {
 }
 
 /// The last online search.
+#[derive(Debug, Clone)]
 pub struct SearchResults {
     pub query: String,
     pub tracks: Arc<[Track]>,
@@ -252,10 +253,6 @@ impl Session {
         }
     }
 
-    pub fn library(&self) -> &Library {
-        &self.deps.library
-    }
-
     /// Kicks off the first sync, or explains why there's nothing to show.
     pub fn startup(&mut self, library_empty: bool) {
         match (self.signed_in(), library_empty) {
@@ -266,28 +263,23 @@ impl Session {
         }
     }
 
-    /// Persists volume, modes and the selected playlist.
-    pub fn save_state(&self, selected_playlist: Option<&str>) {
+    /// Persists volume and modes (the shown playlist is [`LibraryView::save`]).
+    ///
+    /// [`LibraryView::save`]: crate::library_view::LibraryView::save
+    pub fn save_state(&self) {
         let repeat = self.queue.repeat.as_str();
         let volume = format!("{:.2}", self.player.status().volume);
         let shuffle = if self.queue.shuffle { "1" } else { "0" };
-        let mut pairs = vec![
+        let pairs = [
             ("volume", volume.as_str()),
             ("shuffle", shuffle),
             ("repeat", repeat),
         ];
-        if let Some(id) = selected_playlist {
-            pairs.push(("playlist", id));
-        }
         for (key, value) in pairs {
             if let Err(err) = self.deps.library.set_meta(key, value) {
                 tracing::warn!(%err, key, "saving state");
             }
         }
-    }
-
-    pub fn last_playlist(&self) -> Option<String> {
-        self.deps.library.get_meta("playlist").ok().flatten()
     }
 
     pub fn shutdown(&mut self) {

@@ -7,9 +7,11 @@ pub mod app;
 pub mod audio;
 pub mod bootstrap;
 pub mod config;
+pub mod fmt;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod instance;
+pub mod library_view;
 pub mod media;
 pub mod session;
 pub mod storage;

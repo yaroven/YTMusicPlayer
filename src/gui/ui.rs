@@ -428,6 +428,8 @@ slint::slint! {
         default-font-size: 14px;
 
         in property <[PlaylistRow]> playlists;
+        // "Save to playlist" choices: every playlist except Liked music.
+        in property <[string]> add-choices;
         in-out property <int> selected-playlist: -1;
         in property <[TrackRow]> tracks;
         in-out property <int> selected-track: -1;
@@ -990,7 +992,7 @@ slint::slint! {
             x: root.win-width - min(300px, root.win-width - 20px);
             y: root.win-height - 76px - self.height;
             width: min(280px, root.win-width - 20px);
-            height: min(root.win-height - 140px, 52px + 40px * max(root.playlists.length - 1, 1));
+            height: min(root.win-height - 140px, 52px + 40px * max(root.add-choices.length, 1));
             Rectangle {
                 background: #282828;
                 border-radius: Yt.radius;
@@ -1000,13 +1002,11 @@ slint::slint! {
                     padding: 8px;
                     Text { text: "Save to playlist"; color: Yt.text; font-weight: 600; height: 36px; vertical-alignment: center; x: 8px; }
                     ListView {
-                        for p[i] in root.playlists: Rectangle {
-                            // Index 0 is Liked music: the heart covers that.
-                            height: i > 0 ? 40px : 0px;
-                            visible: i > 0;
+                        for title[i] in root.add-choices: Rectangle {
+                            height: 40px;
                             border-radius: 4px;
                             background: pick.has-hover ? Yt.raised : transparent;
-                            Text { x: 8px; text: p.title; color: Yt.text; vertical-alignment: center; height: parent.height; }
+                            Text { x: 8px; text: title; color: Yt.text; vertical-alignment: center; height: parent.height; }
                             pick := TouchArea { clicked => { root.add-to(i); add-popup.close(); } }
                         }
                     }

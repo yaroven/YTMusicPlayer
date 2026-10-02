@@ -40,7 +40,7 @@ fn highlight(focused: bool) -> Style {
 pub fn draw_playlists(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Playlists;
     let block = pane(Line::from(" Library "), focused);
-    if app.playlists.is_empty() {
+    if app.library.playlists().is_empty() {
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let hint = match (app.session.syncing, app.session.signed_in()) {
@@ -51,7 +51,7 @@ pub fn draw_playlists(frame: &mut Frame, area: Rect, app: &mut App) {
         centered_text(frame, inner, hint);
         return;
     }
-    let items = app.playlists.iter().map(|p| {
+    let items = app.library.playlists().iter().map(|p| {
         ListItem::new(Line::from(vec![
             Span::raw(p.title.as_str()),
             format!(" {}", p.item_count).dark_gray(),
@@ -98,28 +98,24 @@ pub fn draw_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
 
 fn draw_playlist_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Tracks;
-    let results = app.results.as_ref().map(|q| format!("Search: {q}"));
-    let name = match &results {
-        Some(title) => title.as_str(),
-        None => app
-            .playlist_state
-            .selected()
-            .and_then(|i| app.playlists.get(i))
-            .map_or("Tracks", |p| p.title.as_str()),
+    let lib = &app.library;
+    let name = match lib.source_name() {
+        name if name.is_empty() => "Tracks".to_owned(),
+        name => name,
     };
-    let mut title = vec![Span::raw(format!(" {name} · {} ", app.visible.len()))];
+    let mut title = vec![Span::raw(format!(" {name} · {} ", lib.len()))];
     let searching = matches!(app.mode, Mode::Search);
-    if searching || !app.filter.is_empty() {
+    if searching || !lib.filter().is_empty() {
         let cursor = if searching { "▏" } else { "" };
-        title.push(Span::raw(format!("/{}{cursor} ", app.filter)).fg(ACCENT));
+        title.push(Span::raw(format!("/{}{cursor} ", lib.filter())).fg(ACCENT));
     }
     let block = pane(Line::from(title), focused);
-    if app.visible.is_empty() {
+    if lib.is_empty() {
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let hint = if app.results.is_some() {
+        let hint = if lib.showing_results() && lib.filter().is_empty() {
             "nothing found"
-        } else if app.filter.is_empty() {
+        } else if lib.filter().is_empty() {
             "no tracks"
         } else {
             "no matches"
@@ -130,16 +126,17 @@ fn draw_playlist_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Keep the selection on screen, then build widgets for that window only.
     let height = area.height.saturating_sub(3) as usize; // borders + header
-    let selected = app.track_selected.unwrap_or(0);
+    let selected = app.library.selected_row().unwrap_or(0);
     if selected < app.track_offset {
         app.track_offset = selected;
     } else if height > 0 && selected >= app.track_offset + height {
         app.track_offset = selected + 1 - height;
     }
-    let end = (app.track_offset + height).min(app.visible.len());
+    let lib = &app.library;
+    let end = (app.track_offset + height).min(lib.len());
     let playing_id = app.session.queue.current().map(|t| t.video_id.clone());
-    let rows = app.visible[app.track_offset..end].iter().map(|&i| {
-        let t = &app.tracks[i as usize];
+    let rows = (app.track_offset..end).filter_map(|row| {
+        let (i, t) = lib.row(row)?;
         let playing = playing_id.as_ref() == Some(&t.video_id);
         let marker = if playing {
             "▶".to_owned()
@@ -147,7 +144,7 @@ fn draw_playlist_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
             (i + 1).to_string()
         };
         // Indexed lookup for on-screen rows only.
-        track_row(marker, t, playing, app.session.is_liked(&t.video_id))
+        Some(track_row(marker, t, playing, lib.is_liked(&t.video_id)))
     });
     let table = Table::new(rows, WIDTHS)
         .header(Row::new(["#", "Title", "Artist", "Time"]).dark_gray())
