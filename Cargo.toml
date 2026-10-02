@@ -1,6 +1,6 @@
 [package]
 name = "ytm-player"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Lightweight cross-platform YouTube Music player: terminal UI and a desktop window"
