@@ -129,10 +129,12 @@ slint::slint! {
         height: root.size;
         border-radius: self.width / 2;
         background: touch.pressed ? #ffffff33 : touch.has-hover ? Yt.raised : transparent;
+        animate background { duration: 140ms; easing: ease-out; }
         touch := TouchArea { clicked => { root.clicked(); } }
         Icon {
             name: root.icon;
             color: touch.has-hover ? Yt.text : root.tint;
+            animate color { duration: 140ms; }
             width: root.icon-size;
             height: root.icon-size;
             x: (parent.width - self.width) / 2;
@@ -151,6 +153,9 @@ slint::slint! {
         width: root.compact ? 36px : label.preferred-width + 56px;
         border-radius: self.height / 2;
         background: root.filled ? (touch.has-hover ? #d9d9d9 : #ffffff) : (touch.has-hover ? Yt.raised : transparent);
+        animate background { duration: 140ms; easing: ease-out; }
+        opacity: touch.pressed ? 0.8 : 1;
+        animate opacity { duration: 90ms; }
         border-width: root.filled ? 0 : 1px;
         border-color: #ffffff33;
         touch := TouchArea { clicked => { root.clicked(); } }
@@ -184,6 +189,7 @@ slint::slint! {
         Rectangle {
             y: (parent.height - self.height) / 2;
             height: touch.has-hover ? 4px : 2px;
+            animate height { duration: 120ms; easing: ease-out; }
             background: #ffffff33;
             Rectangle {
                 x: 0;
@@ -269,8 +275,13 @@ slint::slint! {
             width: parent.width;
             height: parent.height;
             image-fit: cover;
+            opacity: 0;
+            init => { self.opacity = 1; }
+            animate opacity { duration: 220ms; easing: ease-out; }
         }
-        if root.show-play: Rectangle {
+        Rectangle {
+            opacity: root.show-play ? 1 : 0;
+            animate opacity { duration: 140ms; }
             background: #00000099;
             Icon {
                 name: "play";
@@ -310,6 +321,7 @@ slint::slint! {
         height: 64px;
         border-radius: 4px;
         background: root.selected ? Yt.raised : root.hovered ? Yt.hover : transparent;
+        animate background { duration: 140ms; easing: ease-out; }
         touch := TouchArea {
             clicked => { root.clicked(); }
             double-clicked => { root.double-clicked(); }
@@ -346,7 +358,9 @@ slint::slint! {
                 }
             }
             add-btn := IconButton {
-                visible: root.actions && root.hovered;
+                visible: root.actions;
+                opacity: root.hovered ? 1 : 0;
+                animate opacity { duration: 140ms; }
                 icon: "playlist-add";
                 size: 36px;
                 icon-size: 22px;
@@ -354,7 +368,9 @@ slint::slint! {
                 clicked => { root.add-to(); }
             }
             like-btn := IconButton {
-                visible: root.actions && (root.hovered || root.track.liked);
+                visible: root.actions;
+                opacity: root.hovered || root.track.liked ? 1 : 0;
+                animate opacity { duration: 140ms; }
                 icon: root.track.liked ? "heart" : "heart-outline";
                 active: root.track.liked;
                 size: 36px;
@@ -389,6 +405,7 @@ slint::slint! {
         height: 72px;
         border-radius: 4px;
         background: touch.has-hover ? Yt.hover : transparent;
+        animate background { duration: 140ms; easing: ease-out; }
         touch := TouchArea { clicked => { root.clicked(); } }
         HorizontalLayout {
             padding-left: 8px;
@@ -401,7 +418,7 @@ slint::slint! {
                 border-radius: root.card.round ? 28px : 4px;
                 clip: true;
                 background: root.card.has-art ? transparent : hsv(root.card.hue * 360, 0.45, 0.35);
-                if root.card.has-art: Image { source: root.card.art; width: parent.width; height: parent.height; image-fit: cover; }
+                if root.card.has-art: Image { source: root.card.art; width: parent.width; height: parent.height; image-fit: cover; opacity: 0; init => { self.opacity = 1; } animate opacity { duration: 220ms; } }
                 if !root.card.has-art: Text { text: root.card.initial; color: #ffffffcc; font-size: 22px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
             }
             VerticalLayout {
@@ -430,9 +447,13 @@ slint::slint! {
             border-radius: root.card.round ? root.size / 2 : 6px;
             clip: true;
             background: root.card.has-art ? transparent : hsv(root.card.hue * 360, 0.45, 0.35);
-            if root.card.has-art: Image { source: root.card.art; width: parent.width; height: parent.height; image-fit: cover; }
+            if root.card.has-art: Image { source: root.card.art; width: parent.width; height: parent.height; image-fit: cover; opacity: 0; init => { self.opacity = 1; } animate opacity { duration: 220ms; } }
             if !root.card.has-art: Text { text: root.card.initial; color: #ffffffcc; font-size: root.size * 0.35; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
-            if touch.has-hover: Rectangle { background: #00000055; }
+            Rectangle {
+                background: #00000055;
+                opacity: touch.has-hover ? 1 : 0;
+                animate opacity { duration: 160ms; }
+            }
         }
         Text {
             y: root.size + 6px;
@@ -484,10 +505,12 @@ slint::slint! {
         width: label.preferred-width + 28px;
         border-radius: 8px;
         background: root.selected ? Yt.text : touch.has-hover ? #ffffff33 : Yt.raised;
+        animate background { duration: 160ms; easing: ease-out; }
         touch := TouchArea { clicked => { root.clicked(); } }
         label := Text {
             text: root.text;
             color: root.selected ? #030303 : Yt.text;
+            animate color { duration: 160ms; }
             font-weight: 500;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -512,6 +535,7 @@ slint::slint! {
                 y: (parent.height - self.height) / 2;
                 border-radius: 11px;
                 background: root.on ? rgb(62, 166, 255) : #ffffff33;
+                animate background { duration: 160ms; }
                 Rectangle {
                     width: 18px;
                     height: 18px;
@@ -519,7 +543,7 @@ slint::slint! {
                     background: Yt.text;
                     x: root.on ? parent.width - self.width - 2px : 2px;
                     y: 2px;
-                    animate x { duration: 120ms; }
+                    animate x { duration: 160ms; easing: ease-out; }
                 }
             }
         }
@@ -546,6 +570,9 @@ slint::slint! {
                 width: parent.width;
                 height: parent.height;
                 image-fit: cover;
+                opacity: 0;
+                init => { self.opacity = 1; }
+                animate opacity { duration: 300ms; easing: ease-out; }
             }
             if !root.has-art: Text {
                 text: root.initial;
@@ -577,12 +604,14 @@ slint::slint! {
         callback toggle-autoplay();
         callback related-open(int, int);
         spacing: 8px;
-        HorizontalLayout {
-            for title[i] in ["UP NEXT", "LYRICS", "RELATED"]: VerticalLayout {
-                horizontal-stretch: 1;
-                Text {
+        tabs := Rectangle {
+            height: 38px;
+            HorizontalLayout {
+                for title[i] in ["UP NEXT", "LYRICS", "RELATED"]: Text {
+                    horizontal-stretch: 1;
                     text: title;
                     color: i == root.tab ? Yt.text : Yt.secondary;
+                    animate color { duration: 180ms; }
                     font-weight: 600;
                     letter-spacing: 1px;
                     horizontal-alignment: center;
@@ -590,10 +619,23 @@ slint::slint! {
                     vertical-alignment: center;
                     TouchArea { clicked => { root.tab = i; } }
                 }
-                Rectangle { height: 2px; background: i == root.tab ? Yt.text : Yt.divider; }
+            }
+            Rectangle { y: parent.height - 2px; height: 2px; background: Yt.divider; }
+            // One underline that slides to the chosen tab.
+            Rectangle {
+                y: parent.height - 2px;
+                height: 2px;
+                width: parent.width / 3;
+                x: root.tab * parent.width / 3;
+                animate x { duration: 220ms; easing: ease-in-out; }
+                background: Yt.text;
             }
         }
-        if root.tab == 0: VerticalLayout {
+        if root.tab == 0: Rectangle {
+          opacity: 0;
+          init => { self.opacity = 1; }
+          animate opacity { duration: 200ms; }
+          VerticalLayout {
             spacing: 6px;
             HorizontalLayout {
                 padding-top: 6px;
@@ -630,9 +672,13 @@ slint::slint! {
                     }
                 }
             }
+          }
         }
         if root.tab == 1: Rectangle {
             vertical-stretch: 1;
+            opacity: 0;
+            init => { self.opacity = 1; }
+            animate opacity { duration: 200ms; }
             if root.lyrics.length == 0: Text {
                 text: root.lyrics-loading ? "Looking for lyrics…" : "No lyrics for this song";
                 color: Yt.secondary;
@@ -662,6 +708,7 @@ slint::slint! {
                         font-size: l.state == 3 ? 16px : 20px;
                         font-weight: l.state == 1 ? 700 : 500;
                         color: l.state == 1 ? Yt.text : l.state == 2 ? #ffffff80 : l.state == 3 ? Yt.text : #ffffffb0;
+                        animate color { duration: 300ms; }
                     }
                     if root.lyrics-source != "": Text { text: root.lyrics-source; color: Yt.secondary; font-size: 12px; }
                 }
@@ -669,6 +716,9 @@ slint::slint! {
         }
         if root.tab == 2: Flickable {
             vertical-stretch: 1;
+            opacity: 0;
+            init => { self.opacity = 1; }
+            animate opacity { duration: 200ms; }
             content-height: shelves.preferred-height;
             shelves := VerticalLayout {
                 spacing: 20px;
@@ -693,6 +743,7 @@ slint::slint! {
         background: Yt.raised;
         border-width: 1px;
         border-color: input.has-focus ? #ffffff66 : transparent;
+        animate border-color { duration: 160ms; }
         if root.text == "": Text {
             x: 12px;
             text: root.placeholder;
@@ -719,6 +770,7 @@ slint::slint! {
         height: 52px;
         border-radius: Yt.radius;
         background: root.selected ? Yt.raised : touch.has-hover ? Yt.hover : transparent;
+        animate background { duration: 140ms; easing: ease-out; }
         touch := TouchArea { clicked => { root.clicked(); } }
         VerticalLayout {
             padding-left: 12px;
@@ -738,6 +790,7 @@ slint::slint! {
         height: 40px;
         border-radius: Yt.radius;
         background: root.selected ? Yt.raised : touch.has-hover ? Yt.hover : transparent;
+        animate background { duration: 140ms; easing: ease-out; }
         touch := TouchArea { clicked => { root.clicked(); } }
         HorizontalLayout {
             padding-left: 12px;
@@ -755,6 +808,7 @@ slint::slint! {
         height: 40px;
         border-radius: 4px;
         background: touch.has-hover ? Yt.raised : transparent;
+        animate background { duration: 120ms; }
         touch := TouchArea { clicked => { root.clicked(); } }
         HorizontalLayout {
             padding-left: 12px;
@@ -770,12 +824,18 @@ slint::slint! {
         in property <length> card-width: 420px;
         callback close();
         background: #000000b3;
+        // Fades in, the card rises a little.
+        opacity: 0;
+        property <length> rise: 16px;
+        init => { self.opacity = 1; self.rise = 0; }
+        animate opacity { duration: 180ms; easing: ease-out; }
+        animate rise { duration: 220ms; easing: ease-out; }
         TouchArea { } // swallow clicks behind the card
         Rectangle {
             width: min(root.card-width, root.width - 24px);
             height: min(body.preferred-height, root.height - 24px);
             x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
+            y: (parent.height - self.height) / 2 + root.rise;
             background: #282828;
             border-radius: 12px;
             drop-shadow-blur: 24px;
@@ -1271,6 +1331,9 @@ slint::slint! {
                             // Track list (virtualized: playlists can be long).
                             if root.list-mode == 0 && root.tracks.length > 0: ListView {
                                 vertical-stretch: 1;
+                                opacity: 0;
+                                init => { self.opacity = 1; }
+                                animate opacity { duration: 180ms; easing: ease-out; }
                                 for t[i] in root.tracks: TrackItem {
                                     track: t;
                                     selected: i == root.selected-track;
@@ -1285,6 +1348,9 @@ slint::slint! {
                             // Cards: albums, artists, playlists.
                             if root.list-mode == 1 && root.cards.length > 0: ListView {
                                 vertical-stretch: 1;
+                                opacity: 0;
+                                init => { self.opacity = 1; }
+                                animate opacity { duration: 180ms; easing: ease-out; }
                                 for c[i] in root.cards: CardItem {
                                     card: c;
                                     clicked => { root.open-card(i); keys.focus(); }
@@ -1293,6 +1359,9 @@ slint::slint! {
                             // Page: a few tracks, then shelves of cards.
                             if root.list-mode == 2: Flickable {
                                 vertical-stretch: 1;
+                                opacity: 0;
+                                init => { self.opacity = 1; }
+                                animate opacity { duration: 180ms; easing: ease-out; }
                                 content-height: page.preferred-height;
                                 page := VerticalLayout {
                                     spacing: 24px;
@@ -1331,6 +1400,13 @@ slint::slint! {
                     // --- full-screen now playing ---
                     if root.expanded: Rectangle {
                         background: @linear-gradient(180deg, root.now-tint.mix(Yt.bg, 0.55) 0%, Yt.bg 85%);
+                        // Slides up from the player bar.
+                        property <length> slide: 48px;
+                        opacity: 0;
+                        y: self.slide;
+                        init => { self.opacity = 1; self.slide = 0; }
+                        animate opacity { duration: 200ms; easing: ease-out; }
+                        animate slide { duration: 260ms; easing: ease-out; }
                         if root.wide-now: HorizontalLayout {
                             padding: 40px;
                             padding-bottom: 24px;
@@ -1707,6 +1783,9 @@ slint::slint! {
             height: 296px;
             Rectangle {
                 background: #282828;
+                opacity: 0;
+                init => { self.opacity = 1; }
+                animate opacity { duration: 140ms; easing: ease-out; }
                 border-radius: Yt.radius;
                 drop-shadow-blur: 16px;
                 drop-shadow-color: #00000099;
@@ -1730,6 +1809,9 @@ slint::slint! {
             height: 100px;
             Rectangle {
                 background: #282828;
+                opacity: 0;
+                init => { self.opacity = 1; }
+                animate opacity { duration: 140ms; easing: ease-out; }
                 border-radius: Yt.radius;
                 drop-shadow-blur: 16px;
                 drop-shadow-color: #00000099;
@@ -1748,6 +1830,9 @@ slint::slint! {
             height: 252px;
             Rectangle {
                 background: #282828;
+                opacity: 0;
+                init => { self.opacity = 1; }
+                animate opacity { duration: 140ms; easing: ease-out; }
                 border-radius: Yt.radius;
                 drop-shadow-blur: 16px;
                 drop-shadow-color: #00000099;
@@ -1768,6 +1853,9 @@ slint::slint! {
             height: 96px + 44px * max(root.cast-devices.length, 1);
             Rectangle {
                 background: #282828;
+                opacity: 0;
+                init => { self.opacity = 1; }
+                animate opacity { duration: 140ms; easing: ease-out; }
                 border-radius: Yt.radius;
                 drop-shadow-blur: 16px;
                 drop-shadow-color: #00000099;
@@ -1798,6 +1886,9 @@ slint::slint! {
             height: min(root.win-height - 140px, 96px + 40px * max(root.add-choices.length, 1));
             Rectangle {
                 background: #282828;
+                opacity: 0;
+                init => { self.opacity = 1; }
+                animate opacity { duration: 140ms; easing: ease-out; }
                 border-radius: Yt.radius;
                 drop-shadow-blur: 16px;
                 drop-shadow-color: #00000099;
@@ -1826,6 +1917,9 @@ slint::slint! {
             height: min(root.win-height - 240px, 240px + 52px * root.playlists.length);
             Rectangle {
                 background: #282828;
+                opacity: 0;
+                init => { self.opacity = 1; }
+                animate opacity { duration: 140ms; easing: ease-out; }
                 border-radius: Yt.radius;
                 drop-shadow-blur: 16px;
                 drop-shadow-color: #00000099;
@@ -1855,6 +1949,9 @@ slint::slint! {
             height: 260px;
             Rectangle {
                 background: #282828;
+                opacity: 0;
+                init => { self.opacity = 1; }
+                animate opacity { duration: 140ms; easing: ease-out; }
                 border-radius: Yt.radius;
                 VerticalLayout {
                     padding: 16px;
