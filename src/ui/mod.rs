@@ -56,13 +56,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             frame.render_widget(Clear, area);
             frame.render_stateful_widget(list, area, state);
         }
-        Mode::Menu { entries, state } => {
+        Mode::Menu {
+            title,
+            entries,
+            state,
+        } => {
             let items: Vec<ListItem> = entries.iter().map(|e| ListItem::new(e.label())).collect();
             let area = centered(frame.area(), 40, items.len() as u16 + 2);
             let list = List::new(items)
                 .block(
                     Block::bordered()
-                        .title(" Playlist ")
+                        .title(*title)
                         .border_style(Style::new().fg(ACCENT)),
                 )
                 .highlight_style(Style::new().add_modifier(Modifier::REVERSED))
@@ -155,7 +159,7 @@ fn draw_lyrics(frame: &mut Frame, app: &App) {
 }
 
 fn draw_help(frame: &mut Frame) {
-    let area = centered(frame.area(), 58, keymap::HELP.len() as u16 + 2);
+    let area = centered(frame.area(), 66, keymap::HELP.len() as u16 + 2);
     let rows = keymap::HELP
         .iter()
         .map(|(keys, desc)| Row::new([keys.bold(), (*desc).into()]));

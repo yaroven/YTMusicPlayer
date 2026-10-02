@@ -62,7 +62,12 @@ pub enum PlayerEvent {
 
 /// A track to play.
 pub struct Load {
-    pub media: Media,
+    /// The audio; `None` when only `url` is known (casting).
+    pub media: Option<Media>,
+    /// Direct stream URL, for players that fetch it themselves (Chromecast).
+    pub url: Option<String>,
+    /// What it is (for a receiver's "now playing").
+    pub track: Option<crate::api::models::Track>,
     /// When the media doesn't say.
     pub duration: Option<Duration>,
     /// Loudness normalization factor (1.0 = as is).
@@ -294,9 +299,10 @@ impl Engine {
 
     /// Reads the container header: may block briefly on the network.
     fn decode(load: Load) -> Result<(Decoded, Option<Duration>), String> {
-        let len = load.media.len();
+        let media = load.media.ok_or("nothing to play (no audio data)")?;
+        let len = media.len();
         let decoder = Decoder::builder()
-            .with_data(load.media)
+            .with_data(media)
             .with_byte_len(len)
             .with_seekable(true)
             .with_hint("m4a")

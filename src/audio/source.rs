@@ -125,7 +125,8 @@ impl Extractor for YtDlp {
 
 /// An opened track, ready for the player.
 pub struct Opened {
-    pub media: Media,
+    /// `None` when opened for a remote player (URL only).
+    pub media: Option<Media>,
     /// From the media, else from the library listing.
     pub duration: Option<Duration>,
     /// Loudness normalization factor (1.0: as is).
@@ -139,6 +140,8 @@ impl Opened {
     pub fn into_load(self, generation: u64) -> Load {
         Load {
             media: self.media,
+            url: self.stream.map(|s| s.url),
+            track: None,
             duration: self.duration,
             gain: self.gain,
             generation,
@@ -194,9 +197,19 @@ impl TrackSource {
 
     /// Opens `track`: the downloaded file if there is one, else resolves
     /// and starts streaming it. Errors are final for this attempt (the URL
-    /// ladder and one re-resolve already ran).
-    pub async fn open(&self, track: &Track) -> Result<Opened> {
+    /// ladder and one re-resolve already ran). `remote`: only resolve the
+    /// URL, for a player that streams it itself (Chromecast).
+    pub async fn open(&self, track: &Track, remote: bool) -> Result<Opened> {
         let listed = track.duration_secs.map(|s| Duration::from_secs(s.into()));
+        if remote {
+            let stream = self.resolver.resolve(&track.video_id).await?;
+            return Ok(Opened {
+                media: None,
+                duration: stream.duration.or(listed),
+                gain: 1.0,
+                stream: Some(stream),
+            });
+        }
         let local = self
             .options
             .store
@@ -206,7 +219,7 @@ impl TrackSource {
         if let Some(path) = local {
             let gain = self.gain(&track.video_id).await;
             return Ok(Opened {
-                media: Media::file(&path)?,
+                media: Some(Media::file(&path)?),
                 duration: listed,
                 gain,
                 stream: None,
@@ -215,7 +228,7 @@ impl TrackSource {
         let (opened, gain) = tokio::join!(self.stream(track), self.gain(&track.video_id));
         let (body, stream) = opened?;
         Ok(Opened {
-            media: Media::Http(body),
+            media: Some(Media::Http(body)),
             duration: stream.duration.or(listed),
             gain,
             stream: Some(stream),
@@ -489,7 +502,7 @@ mod tests {
 
     async fn read_all(opened: Opened) -> std::io::Result<Vec<u8>> {
         tokio::task::spawn_blocking(move || {
-            let mut body = opened.media;
+            let mut body = opened.media.expect("opened locally");
             let mut out = Vec::new();
             body.read_to_end(&mut out).map(|_| out)
         })
@@ -506,7 +519,7 @@ mod tests {
         let body = body();
         let base = media_server(body.clone()).await;
         let (source, scripted) = source(vec![format!("{base}/limited"), format!("{base}/ok")]);
-        let opened = source.open(&track(Some(200))).await.unwrap();
+        let opened = source.open(&track(Some(200)), false).await.unwrap();
         assert_eq!(
             opened.duration,
             Some(Duration::from_secs(200)),
@@ -521,7 +534,7 @@ mod tests {
         let body = body();
         let base = media_server(body.clone()).await;
         let (source, scripted) = source(vec![format!("{base}/gone"), format!("{base}/ok")]);
-        let opened = source.open(&track(None)).await.unwrap();
+        let opened = source.open(&track(None), false).await.unwrap();
         assert_eq!(read_all(opened).await.unwrap(), *body);
         assert_eq!(scripted.calls.load(Ordering::SeqCst), 2);
     }
@@ -530,7 +543,7 @@ mod tests {
     async fn gives_up_when_every_url_fails() {
         let base = media_server(body()).await;
         let (source, _) = source(vec![format!("{base}/gone"), format!("{base}/gone")]);
-        assert!(source.open(&track(None)).await.is_err());
+        assert!(source.open(&track(None), false).await.is_err());
     }
 
     #[tokio::test(flavor = "multi_thread")]

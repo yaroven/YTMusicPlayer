@@ -48,22 +48,28 @@ pub enum Prompt {
     Rename(Playlist),
 }
 
-/// Entries of the playlist menu (`m`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Entries of the playlist menu (`m`) and the cast menu (`C`).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuEntry {
     NewPlaylist,
     Rename,
     Delete,
     DownloadAll,
+    /// Play on this computer (`None`) or on a found Cast device.
+    CastTo(Option<usize>, String),
+    /// A line that does nothing ("Looking for devices…").
+    Note(&'static str),
 }
 
 impl MenuEntry {
-    pub fn label(self) -> &'static str {
+    pub fn label(&self) -> &str {
         match self {
             Self::NewPlaylist => "New playlist…",
             Self::Rename => "Rename this playlist…",
             Self::Delete => "Delete this playlist",
             Self::DownloadAll => "Download all for offline",
+            Self::CastTo(_, name) => name,
+            Self::Note(text) => text,
         }
     }
 }
@@ -84,6 +90,7 @@ pub enum Mode {
         text: String,
     },
     Menu {
+        title: &'static str,
         entries: Vec<MenuEntry>,
         state: ListState,
     },
@@ -188,8 +195,42 @@ impl App {
         Ok(())
     }
 
+    /// "This computer", then the Cast devices found.
+    fn cast_entries(&self) -> Vec<MenuEntry> {
+        let mark = |on: bool, name: &str| format!("{} {name}", if on { "●" } else { " " });
+        let casting = self.session.casting.as_deref();
+        let mut entries = vec![MenuEntry::CastTo(
+            None,
+            mark(casting.is_none(), "This computer"),
+        )];
+        for (i, d) in self.session.cast_devices.iter().enumerate() {
+            entries.push(MenuEntry::CastTo(
+                Some(i),
+                mark(casting == Some(d.name.as_str()), &d.name),
+            ));
+        }
+        if self.session.cast_devices.is_empty() {
+            entries.push(MenuEntry::Note(if self.session.cast_scanning {
+                "  Looking for Chromecasts…"
+            } else {
+                "  No Chromecasts found"
+            }));
+        }
+        entries
+    }
+
     /// Reloads whatever the session changed.
     fn apply(&mut self, changes: Changes) {
+        if changes.cast
+            && let Mode::Menu {
+                title: " Play on ", ..
+            } = self.mode
+        {
+            let entries = self.cast_entries();
+            if let Mode::Menu { entries: e, .. } = &mut self.mode {
+                *e = entries;
+            }
+        }
         let data = SessionData {
             search: self.session.search.as_ref(),
             page: self.session.page.as_deref(),
@@ -335,7 +376,7 @@ impl App {
                 }
                 return;
             }
-            Mode::Menu { entries, state } => {
+            Mode::Menu { entries, state, .. } => {
                 let len = entries.len();
                 match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => self.mode = Mode::Normal,
@@ -513,13 +554,25 @@ impl App {
                 }
                 let mut state = ListState::default();
                 state.select(Some(0));
-                self.mode = Mode::Menu { entries, state };
+                self.mode = Mode::Menu {
+                    title: " Playlist ",
+                    entries,
+                    state,
+                };
             }
             Action::Lyrics => {
                 self.session.want_lyrics(true);
                 self.mode = Mode::Lyrics;
             }
             Action::Sleep => self.cycle_sleep(),
+            Action::Cast => {
+                self.session.find_cast_devices();
+                self.mode = Mode::Menu {
+                    title: " Play on ",
+                    entries: self.cast_entries(),
+                    state: ListState::default().with_selected(Some(0)),
+                };
+            }
             Action::Home => {
                 self.session.load_home(false);
                 let home = self.session.home.clone();
@@ -790,10 +843,11 @@ impl App {
     }
 
     fn confirm_menu(&mut self) {
-        let Mode::Menu { entries, state } = std::mem::replace(&mut self.mode, Mode::Normal) else {
+        let Mode::Menu { entries, state, .. } = std::mem::replace(&mut self.mode, Mode::Normal)
+        else {
             return;
         };
-        let Some(entry) = state.selected().and_then(|i| entries.get(i)).copied() else {
+        let Some(entry) = state.selected().and_then(|i| entries.get(i)).cloned() else {
             return;
         };
         let shown = self.library.shown_playlist().cloned();
@@ -815,6 +869,10 @@ impl App {
                 if let Some(tracks) = self.library.all_tracks() {
                     self.session.download(tracks.to_vec());
                 }
+            }
+            (MenuEntry::CastTo(index, _), _) => {
+                let device = index.and_then(|i| self.session.cast_devices.get(i).cloned());
+                self.session.cast_to(device);
             }
             _ => {}
         }

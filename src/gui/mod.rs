@@ -11,6 +11,7 @@
 //! cover.
 
 mod art;
+mod tray;
 mod ui;
 
 use std::{
@@ -98,6 +99,8 @@ enum Cmd {
     Crossfade(u64),
     Normalize(bool),
     StoreSetting(&'static str, bool),
+    CastScan,
+    CastTo(Option<usize>),
     SaveClient(String, String),
     ImportClient(std::path::PathBuf),
     SignIn,
@@ -123,6 +126,9 @@ struct Snapshot {
     related: Option<Arc<[Shelf]>>,
     /// Current track followed by what's next; only when it changed.
     queue: Option<Arc<[Track]>>,
+    /// Device names, when `changes.cast`.
+    cast_devices: Option<Vec<String>>,
+    cast_scanning: bool,
 }
 
 impl Snapshot {
@@ -142,6 +148,14 @@ impl Snapshot {
                 .as_ref()
                 .map(|(_, r)| r.clone())
                 .filter(|_| changes.related),
+            cast_devices: changes.cast.then(|| {
+                session
+                    .cast_devices
+                    .iter()
+                    .map(|d| d.name.clone())
+                    .collect()
+            }),
+            cast_scanning: session.cast_scanning,
             changes,
             queue,
         }
@@ -833,17 +847,74 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Resu
         ui.set_account_open(true);
     }
 
+    // With a tray icon, closing the window only hides it.
+    let use_tray = settings.tray;
+    ui.window().on_close_requested(move || {
+        if !use_tray {
+            let _ = slint::quit_event_loop();
+        }
+        slint::CloseRequestResponse::HideWindow
+    });
+    if use_tray {
+        let (rt, tx) = (rt.handle().clone(), cmd_tx.clone());
+        // macOS wants the status item created inside the running event loop.
+        slint::Timer::single_shot(Duration::ZERO, move || {
+            let handler = move |action| match action {
+                tray::Action::TogglePause => {
+                    let _ = tx.send(Cmd::TogglePause);
+                }
+                tray::Action::Next => {
+                    let _ = tx.send(Cmd::Next);
+                }
+                tray::Action::Prev => {
+                    let _ = tx.send(Cmd::Prev);
+                }
+                tray::Action::Show => raise(),
+                tray::Action::Quit => {
+                    let _ = slint::quit_event_loop();
+                }
+            };
+            match tray::Tray::new(&rt, handler) {
+                Ok(t) => TRAY.with(|cell| *cell.borrow_mut() = Some(t)),
+                Err(err) => tracing::warn!("tray icon: {err:#}"),
+            }
+        });
+    }
+
+    ui.show().context("cannot show the window")?;
+    #[cfg(windows)]
+    if let Some(hwnd) = window_handle(&ui) {
+        // Media keys (SMTC) attach to the window; the session creates them.
+        crate::media::set_window_handle(hwnd);
+    }
+
     // Core thread: session + background work. Pushes snapshots to the UI.
     let weak = ui.as_weak();
     let core = std::thread::Builder::new()
         .name("core".into())
         .spawn(move || rt.block_on(core_loop(deps, cmd_rx, weak, library_empty)))?;
 
-    ui.run().context("GUI event loop failed")?;
+    slint::run_event_loop_until_quit().context("GUI event loop failed")?;
+    TRAY.with(|cell| cell.borrow_mut().take());
 
     view.borrow().library.borrow().save();
     let _ = cmd_tx.send(Cmd::Quit);
     core.join().map_err(|_| anyhow!("core thread panicked"))?
+}
+
+/// The window's HWND.
+#[cfg(windows)]
+fn window_handle(ui: &MainWindow) -> Option<usize> {
+    use slint::winit_030::{
+        WinitWindowAccessor,
+        winit::raw_window_handle::{HasWindowHandle, RawWindowHandle},
+    };
+    ui.window()
+        .with_winit_window(|w| match w.window_handle().ok()?.as_raw() {
+            RawWindowHandle::Win32(h) => Some(h.hwnd.get() as usize),
+            _ => None,
+        })
+        .flatten()
 }
 
 fn wire_callbacks(
@@ -1183,6 +1254,11 @@ fn wire_callbacks(
         Cmd::Sleep(minutes),
         tx
     ));
+    on!(on_cast_scan, [tx, view, ui], || send(Cmd::CastScan, tx));
+    on!(on_cast_to, [tx, view, ui], |i| send(
+        Cmd::CastTo(usize::try_from(i).ok()),
+        tx
+    ));
     on!(on_now_tab_changed, [tx, view, ui], |tab| send(
         Cmd::Tabs(tab == 1, tab == 2),
         tx
@@ -1394,6 +1470,11 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::Crossfade(secs) => session.set_crossfade(Duration::from_secs(secs)),
         Cmd::Normalize(on) => session.set_normalize(on),
         Cmd::StoreSetting(key, on) => session.store_setting(key, &on.to_string()),
+        Cmd::CastScan => session.find_cast_devices(),
+        Cmd::CastTo(i) => {
+            let device = i.and_then(|i| session.cast_devices.get(i).cloned());
+            session.cast_to(device);
+        }
         Cmd::SaveClient(id, secret) => {
             session.set_client(&id, &secret);
         }
@@ -1433,6 +1514,12 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
         });
         ui.set_autoplay(snap.view.autoplay);
         ui.set_sleep_text(sleep_text(snap.view.sleep).into());
+        ui.set_casting(snap.view.casting.clone().unwrap_or_default().into());
+        ui.set_cast_scanning(snap.cast_scanning);
+        if let Some(devices) = &snap.cast_devices {
+            let names: Vec<SharedString> = devices.iter().map(|d| d.as_str().into()).collect();
+            ui.set_cast_devices(ModelRc::new(VecModel::from(names)));
+        }
         ui.set_syncing(snap.view.syncing);
         ui.set_searching(snap.view.searching);
         ui.set_signed_in(snap.view.signed_in);
@@ -1448,8 +1535,14 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
         match &snap.view.duration {
             Some(d) if !d.is_zero() => {
                 ui.set_progress((snap.view.position.as_secs_f64() / d.as_secs_f64()) as f32);
+                let on = snap
+                    .view
+                    .casting
+                    .as_ref()
+                    .map(|name| format!(" · {name}"))
+                    .unwrap_or_default();
                 ui.set_position_text(
-                    format!("{} / {}", fmt_time(snap.view.position), fmt_time(*d)).into(),
+                    format!("{} / {}{on}", fmt_time(snap.view.position), fmt_time(*d)).into(),
                 );
             }
             _ => {
@@ -1542,6 +1635,15 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
             v.now = snap.view.now.clone();
             if changed {
                 v.show_now_art(&ui);
+                let tip = v.now.as_ref().map_or_else(
+                    || "ytm-player".to_owned(),
+                    |t| format!("{} — {}", t.title, t.artist),
+                );
+                TRAY.with(|cell| {
+                    if let Some(tray) = cell.borrow().as_ref() {
+                        tray.set_tooltip(&tip);
+                    }
+                });
                 if v.notifications
                     && let Some(track) = &v.now
                 {
@@ -1553,6 +1655,8 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
 }
 
 thread_local! {
+    /// The tray icon, when enabled (UI thread).
+    static TRAY: RefCell<Option<tray::Tray>> = const { RefCell::new(None) };
     /// The UI-thread view, for handlers queued from the core thread.
     static VIEW: RefCell<Option<Rc<RefCell<View>>>> = const { RefCell::new(None) };
 }

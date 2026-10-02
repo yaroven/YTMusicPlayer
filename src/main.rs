@@ -37,6 +37,7 @@ USAGE:
     ytm resolve <id> [--js]     print the direct audio URL (debug)
     ytm devices                 list audio output devices (for `audio_device`)
     ytm lastfm-login            connect Last.fm scrobbling (API key in config)
+    ytm cast-devices            list Chromecasts on this network
     ytm config                  print config file location
     ytm status                  show setup state (config, sign-in, library)
     ytm uninstall [--purge]     remove ytm-player (asks about your library and sign-in)";
@@ -167,6 +168,16 @@ async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Resul
         }
         ["sync"] => sync(paths, settings).await,
         ["lastfm-login"] => lastfm_login(paths, settings).await,
+        ["cast-devices"] => {
+            let devices = ytm_player::cast::discover(std::time::Duration::from_secs(3)).await?;
+            if devices.is_empty() {
+                println!("No Cast devices found on this network.");
+            }
+            for d in devices {
+                println!("{}  ({})", d.name, d.addr);
+            }
+            Ok(())
+        }
         ["play", input] => play(paths, settings, input).await,
         ["resolve", id] => resolve(paths, settings, id, false).await,
         ["resolve", id, "--js"] => resolve(paths, settings, id, true).await,
@@ -377,7 +388,7 @@ async fn play(paths: &AppPaths, settings: &Settings, input: &str) -> Result<()> 
         artist: "".into(),
         duration_secs: None,
     };
-    let opened = source.open(&track).await?;
+    let opened = source.open(&track, false).await?;
     let (title, codec, bitrate) = match &opened.stream {
         Some(stream) => (
             stream.title.clone().unwrap_or_else(|| video_id.clone()),

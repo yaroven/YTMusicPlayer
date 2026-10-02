@@ -2,10 +2,11 @@
 //! "Now Playing" widget (MPRIS on Linux, Now Playing on macOS).
 //!
 //! Optional (`media_controls` in config). On macOS the handlers need a run
-//! loop on the main thread — see `main.rs`. Windows needs a window handle and
-//! isn't supported yet; [`MediaControls::new`] returns `None` there.
+//! loop on the main thread — see `main.rs`. Windows (SMTC) needs a window
+//! handle: only the GUI has one ([`set_window_handle`]); without it
+//! [`MediaControls::new`] returns `None`.
 
-use std::time::Duration;
+use std::{sync::OnceLock, time::Duration};
 
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -22,21 +23,30 @@ pub enum MediaAction {
     SeekTo(Duration),
 }
 
-#[cfg(not(windows))]
+/// The GUI window's HWND (Windows), set before the session starts.
+static WINDOW_HANDLE: OnceLock<usize> = OnceLock::new();
+
+pub fn set_window_handle(handle: usize) {
+    let _ = WINDOW_HANDLE.set(handle);
+}
+
 pub struct MediaControls {
     inner: souvlaki::MediaControls,
     last_state: Option<PlayState>,
 }
 
-#[cfg(not(windows))]
 impl MediaControls {
     pub fn new(tx: UnboundedSender<MediaAction>) -> Option<Self> {
         use souvlaki::{MediaControlEvent as E, PlatformConfig, SeekDirection};
 
+        let hwnd = WINDOW_HANDLE.get().map(|&h| h as *mut std::ffi::c_void);
+        if cfg!(windows) && hwnd.is_none() {
+            return None;
+        }
         let config = PlatformConfig {
             display_name: "ytm-player",
             dbus_name: "ytm_player",
-            hwnd: None,
+            hwnd,
         };
         let mut inner = souvlaki::MediaControls::new(config)
             .map_err(|e| tracing::warn!("media controls unavailable: {e:?}"))
@@ -99,16 +109,4 @@ impl MediaControls {
         };
         let _ = self.inner.set_playback(playback);
     }
-}
-
-#[cfg(windows)]
-pub struct MediaControls;
-
-#[cfg(windows)]
-impl MediaControls {
-    pub fn new(_tx: UnboundedSender<MediaAction>) -> Option<Self> {
-        None
-    }
-    pub fn set_track(&mut self, _track: &Track, _duration: Option<Duration>) {}
-    pub fn set_state(&mut self, _state: PlayState, _position: Duration, _force: bool) {}
 }

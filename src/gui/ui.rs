@@ -105,6 +105,8 @@ slint::slint! {
             : name == "more" ? "M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"
             : name == "back" ? "M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"
             : name == "radio" ? "M3.24 6.15C2.51 6.43 2 7.17 2 8v12c0 1.1.89 2 2 2h16c1.11 0 2-.9 2-2V8c0-1.11-.89-2-2-2H8.3l8.26-3.34L15.88 1 3.24 6.15zM7 20c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm13-8h-2v-2h-2v2H4V8h16v4z"
+            : name == "cast" ? "M21 3H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11z"
+            : name == "computer" ? "M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"
             : name == "moon" ? "M12.34 2.02C6.59 1.82 2 6.42 2 12c0 5.52 4.48 10 10 10 3.71 0 6.93-2.02 8.66-5.02-7.51-.25-12.09-8.43-8.32-14.96z"
             : name == "settings" ? "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
             : name == "plus" ? "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"
@@ -837,6 +839,10 @@ slint::slint! {
         in property <bool> autoplay;
         // "" or "23 min" / "end of track".
         in property <string> sleep-text;
+        // Name of the Cast device playing ("" = this computer).
+        in property <string> casting;
+        in property <[string]> cast-devices;
+        in property <bool> cast-scanning;
         in-out property <bool> expanded;
         in-out property <int> now-tab;
         in property <[TrackRow]> queue-rows;
@@ -930,6 +936,9 @@ slint::slint! {
         callback clear-queue();
         callback toggle-autoplay();
         callback set-sleep(int);
+        callback cast-scan();
+        // Device index, or -1 for this computer.
+        callback cast-to(int);
         callback now-tab-changed(int);
         callback setting-toggled(string);
         callback crossfade-changed(float);
@@ -1412,6 +1421,12 @@ slint::slint! {
                             }
                             if !root.tiny: IconButton { icon: "shuffle"; active: root.shuffle; y: (parent.height - self.height) / 2; clicked => { root.toggle-shuffle(); keys.focus(); } }
                             if !root.tiny: IconButton {
+                                icon: "cast";
+                                active: root.casting != "";
+                                y: (parent.height - self.height) / 2;
+                                clicked => { root.cast-scan(); cast-menu.show(); }
+                            }
+                            if !root.tiny: IconButton {
                                 icon: "moon";
                                 active: root.sleep-text != "";
                                 y: (parent.height - self.height) / 2;
@@ -1622,6 +1637,36 @@ slint::slint! {
                     for m in [15, 30, 45, 60]: MenuItem { icon: "moon"; text: m + " minutes"; clicked => { root.set-sleep(m); } }
                     MenuItem { icon: "moon"; text: "End of song"; clicked => { root.set-sleep(0); } }
                     if root.sleep-text != "": MenuItem { icon: "close"; text: "Turn off"; clicked => { root.set-sleep(-1); } }
+                }
+            }
+        }
+
+        cast-menu := PopupWindow {
+            x: root.win-width - 300px;
+            y: root.win-height - 76px - self.height;
+            width: 280px;
+            height: 96px + 44px * max(root.cast-devices.length, 1);
+            Rectangle {
+                background: #282828;
+                border-radius: Yt.radius;
+                drop-shadow-blur: 16px;
+                drop-shadow-color: #00000099;
+                VerticalLayout {
+                    padding: 6px;
+                    Text { text: "Play on"; color: Yt.text; font-weight: 600; height: 36px; vertical-alignment: center; x: 12px; }
+                    MenuItem { icon: root.casting == "" ? "check" : "computer"; text: "This computer"; clicked => { root.cast-to(-1); } }
+                    for d[i] in root.cast-devices: MenuItem {
+                        icon: d == root.casting ? "check" : "cast";
+                        text: d;
+                        clicked => { root.cast-to(i); }
+                    }
+                    if root.cast-devices.length == 0: Text {
+                        text: root.cast-scanning ? "Looking for Chromecasts…" : "No Chromecasts found";
+                        color: Yt.secondary;
+                        height: 44px;
+                        vertical-alignment: center;
+                        x: 12px;
+                    }
                 }
             }
         }

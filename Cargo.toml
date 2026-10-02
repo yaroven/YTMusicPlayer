@@ -16,7 +16,7 @@ path = "src/main.rs"
 [features]
 default = ["gui"]
 # Desktop window (`ytm gui`); off => terminal-only, smaller binary.
-gui = ["dep:slint", "dep:image", "dep:notify-rust"]
+gui = ["dep:slint", "dep:image", "dep:notify-rust", "dep:tray-icon", "dep:ksni"]
 
 [dependencies]
 # --- Async runtime -----------------------------------------------------------
@@ -109,22 +109,30 @@ slint = { version = "1.18", optional = true, default-features = false, features 
 ] }
 # Album art (GUI): JPEG decode + scale of YouTube thumbnails only.
 notify-rust = { version = "4.18", optional = true, default-features = false, features = ["z-with-tokio"] }
-image = { version = "0.25", optional = true, default-features = false, features = ["jpeg"] }
+image = { version = "0.25", optional = true, default-features = false, features = ["jpeg", "png"] }
 
 # Unpacks the onedir yt-dlp zip.
 zip = { version = "7.2.0", default-features = false, features = ["deflate"] }
 
+# Media keys + "Now Playing" (MPRIS over pure-Rust zbus on Linux, SMTC on
+# Windows, where it needs the GUI window's handle).
+souvlaki = { version = "0.8", default-features = false, features = ["use_zbus"] }
+# Chromecast: TLS to the device (reqwest already brings these in).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 md5 = "0.8"              # Last.fm request signatures
 discord-rich-presence = "1.1"  # Discord "Listening to" status over local IPC
+
+# Tray icon: StatusNotifierItem over zbus on Linux, native elsewhere.
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3", optional = true }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tray-icon = { version = "0.26", optional = true, default-features = false }
 
 # Process memory (macOS `proc_pid_rusage`), quiet SIGPIPE handling.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
-# Media keys + "Now Playing" (MPRIS over pure-Rust zbus on Linux). Windows
-# needs a window handle, so it's left out there for now.
-[target.'cfg(not(windows))'.dependencies]
-souvlaki = { version = "0.8", default-features = false, features = ["use_zbus"] }
 
 # Hides the console window when the GUI is started from the Start menu.
 [target.'cfg(windows)'.dependencies]
@@ -133,6 +141,10 @@ windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 # Main-thread run loop for media key handlers.
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
+
+# Tests: a self-signed certificate for the fake Cast receiver.
+[dev-dependencies]
+rcgen = { version = "0.14", default-features = false, features = ["ring", "crypto"] }
 
 [profile.release]
 lto = "thin"

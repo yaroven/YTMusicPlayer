@@ -8,12 +8,13 @@
 //! - `library.rs`: account, sync, likes, playlists, follows, downloads;
 //! - `discover.rs`: search, pages, home, radio, related, lyrics.
 
+mod cast;
 mod discover;
 mod library;
 
 use std::{
     collections::HashSet,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},
 };
 
@@ -122,6 +123,8 @@ pub struct Changes {
     pub downloads: bool,
     /// OAuth client or sign-in state changed.
     pub account: bool,
+    /// Cast devices or the cast target changed.
+    pub cast: bool,
 }
 
 /// Snapshot of what the UIs show; see [`Session::view`].
@@ -147,6 +150,8 @@ pub struct SessionView {
     pub autoplay: bool,
     /// Minutes left on the sleep timer, or "end of track".
     pub sleep: Option<Sleep>,
+    /// The Cast device playing, if any.
+    pub casting: Option<String>,
 }
 
 enum Background {
@@ -232,6 +237,11 @@ enum Background {
         result: Result<()>,
     },
     SignedOut(Result<()>),
+    CastDevices(Result<Vec<crate::cast::Device>>),
+    CastConnected {
+        name: String,
+        result: Result<(crate::cast::CastPlayer, UnboundedReceiver<PlayerEvent>)>,
+    },
 }
 
 pub struct Session {
@@ -284,6 +294,16 @@ pub struct Session {
     rx: UnboundedReceiver<Background>,
     player_rx: UnboundedReceiver<PlayerEvent>,
     media_rx: UnboundedReceiver<MediaAction>,
+    /// Casting: the device's name, and the local player put aside.
+    pub casting: Option<String>,
+    local: Option<(Box<dyn Playback>, UnboundedReceiver<PlayerEvent>)>,
+    cast_alive: Option<Arc<AtomicBool>>,
+    /// Cast devices found by the last scan.
+    pub cast_devices: Arc<[crate::cast::Device]>,
+    pub cast_scanning: bool,
+    /// Where to continue the track that is being opened (after a switch
+    /// between local and cast output).
+    resume_at: Option<Duration>,
 }
 
 impl Session {
@@ -369,6 +389,12 @@ impl Session {
             rx,
             player_rx,
             media_rx,
+            casting: None,
+            local: None,
+            cast_alive: None,
+            cast_devices: Arc::from([]),
+            cast_scanning: false,
+            resume_at: None,
         }
     }
 
@@ -394,6 +420,7 @@ impl Session {
             memory: self.memory.clone(),
             autoplay: self.deps.autoplay,
             sleep: self.sleep,
+            casting: self.casting.clone(),
         }
     }
 
@@ -443,6 +470,7 @@ impl Session {
     /// starts preloading the next track near the end; true when anything
     /// shown changed.
     pub fn refresh_status(&mut self) -> bool {
+        self.check_cast();
         let status = self.player.status();
         if let Some(media) = &mut self.media {
             media.set_state(status.state, status.position, false);
@@ -510,7 +538,12 @@ impl Session {
                     Ok(opened) => {
                         self.failures = 0;
                         let duration = opened.duration;
-                        self.player.load(opened.into_load(generation));
+                        let mut load = opened.into_load(generation);
+                        load.track = self.queue.current().cloned();
+                        self.player.load(load);
+                        if let Some(position) = self.resume_at.take() {
+                            self.player.seek_to(position);
+                        }
                         self.track_started(duration);
                     }
                     Err(err) => self.track_failed(format!("{err:#}")),
@@ -519,7 +552,11 @@ impl Session {
             Background::Opened { .. } => {} // superseded by a newer selection
             Background::Preloaded { generation, result } if self.preload == Some(generation) => {
                 match result {
-                    Ok(opened) => self.player.preload(opened.into_load(generation)),
+                    Ok(opened) => {
+                        let mut load = opened.into_load(generation);
+                        load.track = self.queue.peek_next().cloned();
+                        self.player.preload(load);
+                    }
                     // Not fatal: the normal path opens it when its turn comes.
                     Err(err) => {
                         tracing::debug!(%err, "preload failed");
@@ -550,6 +587,9 @@ impl Session {
             | Background::Home(_)
             | Background::Related { .. }
             | Background::Lyrics { .. } => self.discover_event(event, &mut changes),
+            Background::CastDevices(_) | Background::CastConnected { .. } => {
+                self.cast_event(event, &mut changes)
+            }
         }
         changes
     }
@@ -841,9 +881,13 @@ impl Session {
         self.status = None;
 
         let generation = self.generation;
-        let (source, tx) = (self.deps.source.clone(), self.tx.clone());
+        let (source, tx, remote) = (
+            self.deps.source.clone(),
+            self.tx.clone(),
+            self.casting.is_some(),
+        );
         tokio::spawn(async move {
-            let result = source.open(&track).await.map(Box::new);
+            let result = source.open(&track, remote).await.map(Box::new);
             let _ = tx.send(Background::Opened { generation, result });
         });
         self.now_changed();
@@ -890,9 +934,13 @@ impl Session {
         self.preload_for = Some(self.generation);
         let generation = self.next_load();
         self.preload = Some(generation);
-        let (source, tx) = (self.deps.source.clone(), self.tx.clone());
+        let (source, tx, remote) = (
+            self.deps.source.clone(),
+            self.tx.clone(),
+            self.casting.is_some(),
+        );
         tokio::spawn(async move {
-            let result = source.open(&next).await.map(Box::new);
+            let result = source.open(&next, remote).await.map(Box::new);
             let _ = tx.send(Background::Preloaded { generation, result });
         });
     }
