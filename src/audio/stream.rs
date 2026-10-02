@@ -374,6 +374,57 @@ impl Drop for HttpStream {
     }
 }
 
+/// What the player decodes: a streamed track or a downloaded file.
+pub enum Media {
+    Http(HttpStream),
+    File {
+        file: io::BufReader<std::fs::File>,
+        len: u64,
+    },
+}
+
+impl Media {
+    /// A downloaded track.
+    pub fn file(path: &std::path::Path) -> io::Result<Self> {
+        let file = std::fs::File::open(path)?;
+        let len = file.metadata()?.len();
+        // Small buffer: decoding reads sequentially in small pieces.
+        Ok(Self::File {
+            file: io::BufReader::with_capacity(16 * 1024, file),
+            len,
+        })
+    }
+
+    pub fn len(&self) -> u64 {
+        match self {
+            Self::Http(stream) => stream.len(),
+            Self::File { len, .. } => *len,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Read for Media {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Http(stream) => stream.read(buf),
+            Self::File { file, .. } => file.read(buf),
+        }
+    }
+}
+
+impl Seek for Media {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        match self {
+            Self::Http(stream) => stream.seek(pos),
+            Self::File { file, .. } => file.seek(pos),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

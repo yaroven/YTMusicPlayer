@@ -9,9 +9,10 @@ use anyhow::{Context, Result};
 use crate::{
     account::Account,
     api::token_store::Tokens,
-    audio::{JsPolicy, TrackSource, extractor::YtDlp},
+    audio::{JsPolicy, SourceOptions, TrackSource, extractor::YtDlp},
+    catalog::Catalog,
     config::{paths::AppPaths, settings::Settings},
-    session::Deps,
+    session::{Deps, Listener},
     storage::Library,
 };
 
@@ -51,6 +52,7 @@ pub fn js_policy(settings: &Settings, force_js: bool) -> JsPolicy {
     }
 }
 
+/// `store`: persist URLs and play downloads (off for `ytm resolve`).
 pub fn track_source(
     paths: &AppPaths,
     settings: &Settings,
@@ -59,12 +61,19 @@ pub fn track_source(
     force_js: bool,
     store: Option<Arc<Library>>,
 ) -> TrackSource {
+    let options = SourceOptions {
+        downloads: store.as_ref().map(|_| paths.data_dir().join("downloads")),
+        store,
+        catalog: settings
+            .normalize_volume
+            .then(|| Catalog::new(http.clone())),
+    };
     TrackSource::new(
         Arc::new(ytdlp),
         http.clone(),
         paths.bin_dir(),
         js_policy(settings, force_js),
-        store,
+        options,
     )
 }
 
@@ -79,12 +88,27 @@ pub async fn deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
         account: account(paths, settings, &http).await?,
         library,
         source,
-        http,
+        http: http.clone(),
         liked_music_only: settings.liked_music_only,
         volume: settings.volume,
         media_controls: settings.media_controls,
         audio_device: settings.audio_device(),
+        catalog: Catalog::new(http.clone()),
+        autoplay: settings.autoplay,
+        crossfade: Duration::from_secs_f32(settings.crossfade),
+        listeners: listeners(paths, settings, &http),
+        download_limit: (settings.download_limit_mb > 0)
+            .then(|| settings.download_limit_mb * 1_000_000),
     })
+}
+
+/// Scrobbling and status integrations the settings turn on.
+fn listeners(
+    _paths: &AppPaths,
+    _settings: &Settings,
+    _http: &reqwest::Client,
+) -> Vec<Box<dyn Listener>> {
+    Vec::new()
 }
 
 /// The Google account, with the token in the OS keyring.

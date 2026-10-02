@@ -35,8 +35,9 @@ use crate::{
     account,
     api::models::{Playlist, Track},
     audio::{player::PlayState, queue::Repeat},
+    catalog::SearchKind,
     fmt::fmt_time,
-    library_view::LibraryView,
+    library_view::{LibraryView, SessionData},
     session::{Changes, Deps, SearchResults, Session, SessionView},
     storage::Library,
 };
@@ -763,7 +764,7 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::PlayNext(track) => session.play_next(track),
         Cmd::AddTo(playlist, track) => session.add_to_playlist(playlist, track),
         Cmd::Sync => session.start_sync(),
-        Cmd::Search(query) => session.search(&query),
+        Cmd::Search(query) => session.search(&query, SearchKind::Songs),
         Cmd::SaveClient(id, secret) => {
             session.set_client(&id, &secret);
         }
@@ -836,10 +837,13 @@ fn push(ui: &slint::Weak<MainWindow>, snap: Snapshot) {
                 return;
             };
             let mut v = view.borrow_mut();
-            let applied = v
-                .library
-                .borrow_mut()
-                .apply(&snap.changes, snap.search.as_ref());
+            let applied = v.library.borrow_mut().apply(
+                &snap.changes,
+                SessionData {
+                    search: snap.search.as_ref(),
+                    ..Default::default()
+                },
+            );
             match applied {
                 Ok(true) => v.sync_list(&ui),
                 // Counts may have changed (a like elsewhere).

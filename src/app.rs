@@ -1,7 +1,7 @@
 //! Terminal frontend: focus, popups, mouse areas and the main
-//! `tokio::select!` loop. What the track list shows lives in
-//! [`LibraryView`]; playback, queue and library changes in [`Session`].
-//! Redraws only when something changed.
+//! `tokio::select!` loop. What the list shows lives in [`LibraryView`];
+//! playback, queue, library changes and browsing in [`Session`]. Redraws
+//! only when something changed.
 
 use std::time::{Duration, Instant};
 
@@ -18,13 +18,16 @@ use ratatui::{DefaultTerminal, layout::Rect, widgets::ListState};
 
 pub use crate::session::{Deps, Status};
 use crate::{
-    api::models::Track,
-    library_view::LibraryView,
-    session::{Changes, SEEK_STEP_SECS, Session, VOLUME_STEP},
+    api::models::{LIKED_PLAYLIST_ID, Playlist, Track},
+    catalog::{Item, ItemKind, SearchKind},
+    library_view::{LibraryView, SessionData, Source},
+    session::{Changes, SEEK_STEP_SECS, Session, Sleep, VOLUME_STEP},
     ui::{self, keymap::Action},
 };
 
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+/// Sleep timer steps for `z` (minutes; `None` = end of track).
+const SLEEP_STEPS: [Option<u32>; 4] = [Some(15), Some(30), Some(60), None];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
@@ -39,17 +42,52 @@ pub enum TracksView {
     Queue,
 }
 
+/// What a text prompt is for.
+pub enum Prompt {
+    NewPlaylist(Option<Track>),
+    Rename(Playlist),
+}
+
+/// Entries of the playlist menu (`m`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuEntry {
+    NewPlaylist,
+    Rename,
+    Delete,
+    DownloadAll,
+}
+
+impl MenuEntry {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NewPlaylist => "New playlist…",
+            Self::Rename => "Rename this playlist…",
+            Self::Delete => "Delete this playlist",
+            Self::DownloadAll => "Download all for offline",
+        }
+    }
+}
+
 pub enum Mode {
     Normal,
-    /// Typing a filter for the track list.
+    /// Typing a filter for the list.
     Search,
     /// Typing an online search query.
     Find(String),
-    /// Choosing a playlist to add `track` to.
+    /// Choosing a playlist to add `track` to (last entry: a new one).
     AddTo {
         track: Track,
         state: ListState,
     },
+    Prompt {
+        purpose: Prompt,
+        text: String,
+    },
+    Menu {
+        entries: Vec<MenuEntry>,
+        state: ListState,
+    },
+    Lyrics,
     Help,
 }
 
@@ -68,6 +106,12 @@ pub struct App {
     pub(crate) playlist_state: ListState,
     /// First track row on screen.
     pub(crate) track_offset: usize,
+    /// Cards (albums, artists) shown instead of the tracks.
+    pub(crate) cards: bool,
+    pub(crate) card_selected: usize,
+    pub(crate) card_offset: usize,
+    /// Cursor in the queue view (index among upcoming tracks).
+    pub(crate) queue_selected: usize,
     pub(crate) focus: Focus,
     pub(crate) view: TracksView,
     pub(crate) mode: Mode,
@@ -83,6 +127,10 @@ pub async fn run(deps: Deps) -> Result<()> {
         library,
         playlist_state: ListState::default(),
         track_offset: 0,
+        cards: false,
+        card_selected: 0,
+        card_offset: 0,
+        queue_selected: 0,
         focus: Focus::Playlists,
         view: TracksView::Playlist,
         mode: Mode::Normal,
@@ -142,9 +190,14 @@ impl App {
 
     /// Reloads whatever the session changed.
     fn apply(&mut self, changes: Changes) {
-        match self.library.apply(&changes, self.session.search.as_ref()) {
+        let data = SessionData {
+            search: self.session.search.as_ref(),
+            page: self.session.page.as_deref(),
+            home: self.session.home.as_deref(),
+        };
+        match self.library.apply(&changes, data) {
             Ok(true) => {
-                if changes.search {
+                if changes.search || changes.page {
                     self.view = TracksView::Playlist;
                     self.focus = Focus::Tracks;
                 }
@@ -155,12 +208,65 @@ impl App {
         }
     }
 
-    /// The track list got new rows: a cursor at the top, scrolled up, and
-    /// the playlist pane pointing at the shown playlist.
+    /// The list got new rows: a cursor at the top, scrolled up, cards off,
+    /// and the playlist pane pointing at the shown playlist.
     fn list_replaced(&mut self) {
         self.library.ensure_selection();
         self.track_offset = 0;
-        self.playlist_state.select(self.library.selected_playlist());
+        self.cards = false;
+        self.card_selected = 0;
+        self.card_offset = 0;
+        if let Some(i) = self.library.selected_playlist() {
+            self.playlist_state.select(Some(i));
+        }
+    }
+
+    // --- cards (albums, artists, playlists) ---------------------------------------
+
+    /// Number of cards: the list's own items, else the page's shelves.
+    pub(crate) fn card_count(&self) -> usize {
+        match self.library.items().len() {
+            0 => self.library.shelves().iter().map(|s| s.items.len()).sum(),
+            n => n,
+        }
+    }
+
+    /// Card `i` with the title of its shelf ("" for plain lists).
+    pub(crate) fn card(&self, i: usize) -> Option<(&str, &Item)> {
+        if !self.library.items().is_empty() {
+            return self.library.items().get(i).map(|item| ("", item));
+        }
+        let mut i = i;
+        for shelf in self.library.shelves().iter() {
+            if i < shelf.items.len() {
+                return Some((shelf.title.as_str(), &shelf.items[i]));
+            }
+            i -= shelf.items.len();
+        }
+        None
+    }
+
+    /// The pane shows cards: there are no tracks, or `i` switched to them.
+    pub(crate) fn showing_cards(&self) -> bool {
+        self.view == TracksView::Playlist
+            && self.card_count() > 0
+            && (self.cards || self.library.total() == 0)
+    }
+
+    fn open_card(&mut self, i: usize) {
+        let Some((_, item)) = self.card(i) else {
+            return;
+        };
+        match &item.track {
+            Some(track) => {
+                let track = track.clone();
+                self.session.start_radio(track);
+            }
+            None => {
+                let id = item.id.clone();
+                self.session.open_page(&id);
+            }
+        }
     }
 
     // --- input -----------------------------------------------------------------
@@ -169,6 +275,13 @@ impl App {
         match &mut self.mode {
             Mode::Help => {
                 self.mode = Mode::Normal;
+                return;
+            }
+            Mode::Lyrics => {
+                if matches!(key.code, KeyCode::Esc | KeyCode::Char('t' | 'q')) {
+                    self.mode = Mode::Normal;
+                    self.session.want_lyrics(false);
+                }
                 return;
             }
             Mode::Search => {
@@ -200,7 +313,7 @@ impl App {
                     KeyCode::Enter => {
                         let query = std::mem::take(query);
                         self.mode = Mode::Normal;
-                        self.session.search(&query);
+                        self.session.search(&query, SearchKind::Songs);
                     }
                     KeyCode::Backspace => {
                         query.pop();
@@ -210,15 +323,40 @@ impl App {
                 }
                 return;
             }
-            Mode::AddTo { state, .. } => {
-                let len = self.library.add_choices().count();
+            Mode::Prompt { text, .. } => {
+                match key.code {
+                    KeyCode::Esc => self.mode = Mode::Normal,
+                    KeyCode::Enter => self.confirm_prompt(),
+                    KeyCode::Backspace => {
+                        text.pop();
+                    }
+                    KeyCode::Char(c) => text.push(c),
+                    _ => {}
+                }
+                return;
+            }
+            Mode::Menu { entries, state } => {
+                let len = entries.len();
                 match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => self.mode = Mode::Normal,
                     KeyCode::Up | KeyCode::Char('k') => state.select_previous(),
                     KeyCode::Down | KeyCode::Char('j') => {
-                        let next = state
-                            .selected()
-                            .map_or(0, |i| (i + 1).min(len.saturating_sub(1)));
+                        let next = state.selected().map_or(0, |i| (i + 1).min(len - 1));
+                        state.select(Some(next));
+                    }
+                    KeyCode::Enter => self.confirm_menu(),
+                    _ => {}
+                }
+                return;
+            }
+            Mode::AddTo { state, .. } => {
+                // The choices, then "New playlist…".
+                let len = self.library.add_choices().count() + 1;
+                match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => self.mode = Mode::Normal,
+                    KeyCode::Up | KeyCode::Char('k') => state.select_previous(),
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        let next = state.selected().map_or(0, |i| (i + 1).min(len - 1));
                         state.select(Some(next));
                     }
                     KeyCode::Enter => self.confirm_add_to(),
@@ -251,6 +389,13 @@ impl App {
                 }
             }
             Action::Select => self.select(),
+            Action::Back => {
+                if self.view == TracksView::Queue {
+                    self.view = TracksView::Playlist;
+                } else if self.library.back() {
+                    self.list_replaced();
+                }
+            }
             Action::TogglePause => s.toggle_pause(),
             Action::Next => s.skip(1),
             Action::Prev => s.skip(-1),
@@ -264,13 +409,36 @@ impl App {
                 self.mode = Mode::Search;
             }
             Action::FindOnline => self.mode = Mode::Find(String::new()),
+            Action::CategoryPrev | Action::CategoryNext => {
+                let (Some(query), Some(kind)) = (
+                    self.library.search_query().map(str::to_owned),
+                    self.library.search_kind(),
+                ) else {
+                    return;
+                };
+                let all = SearchKind::ALL;
+                let i = all.iter().position(|k| *k == kind).unwrap_or(0);
+                let next = if action == Action::CategoryNext {
+                    all[(i + 1) % all.len()]
+                } else {
+                    all[(i + all.len() - 1) % all.len()]
+                };
+                self.session.search(&query, next);
+            }
+            Action::ToggleCards => {
+                if self.card_count() > 0 && self.library.total() > 0 {
+                    self.cards = !self.cards;
+                }
+            }
             Action::Shuffle => s.toggle_shuffle(),
             Action::Repeat => s.cycle_repeat(),
+            Action::Autoplay => s.toggle_autoplay(),
             Action::ToggleQueue => {
                 self.view = match self.view {
                     TracksView::Playlist => TracksView::Queue,
                     TracksView::Queue => TracksView::Playlist,
                 };
+                self.queue_selected = 0;
                 self.focus = Focus::Tracks;
             }
             Action::PlayNext => {
@@ -278,13 +446,145 @@ impl App {
                     self.session.play_next(track);
                 }
             }
+            Action::Radio => {
+                if let Some(track) = self.action_target() {
+                    self.session.start_radio(track);
+                }
+            }
             Action::Like => {
                 if let Some(track) = self.action_target() {
                     self.session.toggle_like(track);
                 }
             }
+            Action::Dislike => {
+                if let Some(track) = self.action_target() {
+                    self.session.dislike(track);
+                }
+            }
             Action::AddToPlaylist => self.open_add_to(),
+            Action::Remove => self.remove(),
+            Action::MoveUp | Action::MoveDown if self.view == TracksView::Queue => {
+                let from = self.queue_selected;
+                let to = if action == Action::MoveUp {
+                    from.saturating_sub(1)
+                } else {
+                    from + 1
+                };
+                if to != from && to < self.upcoming_len() {
+                    self.session.move_in_queue(from, to);
+                    self.queue_selected = to;
+                }
+            }
+            Action::MoveUp | Action::MoveDown => {}
+            Action::ClearQueue => {
+                self.session.clear_queue();
+                self.queue_selected = 0;
+            }
+            Action::Download => {
+                if let Some(track) = self.action_target() {
+                    self.session.download(vec![track]);
+                }
+            }
+            Action::SaveOrFollow => {
+                let item = if self.showing_cards() {
+                    self.card(self.card_selected)
+                        .map(|(_, i)| (i.clone(), None))
+                } else {
+                    self.library.page_item()
+                };
+                match item {
+                    Some((item, channel)) if item.kind != ItemKind::Song => {
+                        self.session.toggle_saved(item, channel)
+                    }
+                    _ => self.session.set_error("Open an album or artist to save it"),
+                }
+            }
+            Action::PlaylistMenu => {
+                let mut entries = vec![MenuEntry::NewPlaylist];
+                if self
+                    .library
+                    .shown_playlist()
+                    .is_some_and(|p| p.id != LIKED_PLAYLIST_ID)
+                {
+                    entries.extend([MenuEntry::Rename, MenuEntry::Delete]);
+                }
+                if self.library.total() > 0 {
+                    entries.push(MenuEntry::DownloadAll);
+                }
+                let mut state = ListState::default();
+                state.select(Some(0));
+                self.mode = Mode::Menu { entries, state };
+            }
+            Action::Lyrics => {
+                self.session.want_lyrics(true);
+                self.mode = Mode::Lyrics;
+            }
+            Action::Sleep => self.cycle_sleep(),
+            Action::Home => {
+                self.session.load_home(false);
+                let home = self.session.home.clone();
+                self.navigate(|lib| lib.show_home(home.as_deref()));
+            }
+            Action::History => self.navigate(LibraryView::show_history),
+            Action::Downloads => self.navigate(LibraryView::show_downloads),
+            Action::Albums => self.navigate(|lib| lib.show_saved(ItemKind::Album)),
+            Action::Artists => self.navigate(|lib| lib.show_saved(ItemKind::Artist)),
             Action::SignIn => self.session.sign_in(),
+        }
+    }
+
+    /// Off → 15 → 30 → 60 min → end of track → off.
+    fn cycle_sleep(&mut self) {
+        let step = match self.session.sleep {
+            None => Some(SLEEP_STEPS[0]),
+            Some(Sleep::EndOfTrack) => None,
+            Some(Sleep::At(at)) => {
+                let left = at.saturating_duration_since(Instant::now()).as_secs() / 60;
+                // The first step longer than what's left (else end of track).
+                Some(
+                    SLEEP_STEPS
+                        .iter()
+                        .copied()
+                        .find(|s| s.is_some_and(|m| u64::from(m) > left + 1))
+                        .unwrap_or(None),
+                )
+            }
+        };
+        match step {
+            Some(step) => self.session.set_sleep(step),
+            None => self.session.cancel_sleep(),
+        }
+    }
+
+    fn navigate(&mut self, show: impl FnOnce(&mut LibraryView) -> Result<()>) {
+        if let Err(err) = show(&mut self.library) {
+            self.session.set_error(format!("library: {err:#}"));
+        }
+        self.view = TracksView::Playlist;
+        self.focus = Focus::Tracks;
+        self.list_replaced();
+    }
+
+    fn upcoming_len(&self) -> usize {
+        self.session.queue.upcoming().count()
+    }
+
+    /// `x`: out of the queue, the shown playlist, or the downloads.
+    fn remove(&mut self) {
+        if self.view == TracksView::Queue {
+            self.session.remove_from_queue(self.queue_selected);
+            self.queue_selected = self
+                .queue_selected
+                .min(self.upcoming_len().saturating_sub(1));
+            return;
+        }
+        let Some(track) = self.library.selected_track().cloned() else {
+            return;
+        };
+        if let Some(playlist) = self.library.shown_playlist().cloned() {
+            self.session.remove_from_playlist(playlist, track);
+        } else if *self.library.source() == Source::Downloads {
+            self.session.remove_download(track.video_id);
         }
     }
 
@@ -335,19 +635,39 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Left) if hit(tracks) => {
                 self.focus = Focus::Tracks;
-                // Border + header row, then tracks.
+                // Border + header row, then rows.
                 let row = (y - tracks.y) as usize;
-                if row >= 2 && self.view == TracksView::Playlist {
-                    let index = self.track_offset + row - 2;
-                    if index < self.library.len() {
-                        self.library.select_row(Some(index));
-                        let double = self
-                            .last_click
-                            .is_some_and(|(t, i)| i == index && t.elapsed() < DOUBLE_CLICK);
-                        self.last_click = Some((Instant::now(), index));
-                        if double {
-                            self.play_selected();
-                        }
+                if row < 2 || self.view != TracksView::Playlist {
+                    return;
+                }
+                let cards = self.showing_cards();
+                let offset = if cards {
+                    self.card_offset
+                } else {
+                    self.track_offset
+                };
+                let index = row - 2 + offset;
+                let len = if cards {
+                    self.card_count()
+                } else {
+                    self.library.len()
+                };
+                if index >= len {
+                    return;
+                }
+                let double = self
+                    .last_click
+                    .is_some_and(|(t, i)| i == index && t.elapsed() < DOUBLE_CLICK);
+                self.last_click = Some((Instant::now(), index));
+                if cards {
+                    self.card_selected = index;
+                    if double {
+                        self.open_card(index);
+                    }
+                } else {
+                    self.library.select_row(Some(index));
+                    if double {
+                        self.play_selected();
                     }
                 }
             }
@@ -361,22 +681,35 @@ impl App {
         if let Err(err) = self.library.select_playlist(Some(index)) {
             self.session.set_error(format!("library: {err:#}"));
         }
+        self.view = TracksView::Playlist;
         self.list_replaced();
     }
 
     fn move_selection(&mut self, delta: i64) {
+        let clamp = |from: usize, len: usize| {
+            (from as i64)
+                .saturating_add(delta)
+                .clamp(0, len.saturating_sub(1) as i64) as usize
+        };
         match self.focus {
             Focus::Playlists if !self.library.playlists().is_empty() => {
-                let last = self.library.playlists().len() as i64 - 1;
-                let from = self.library.selected_playlist().map_or(0, |i| i as i64);
-                let target = from.saturating_add(delta).clamp(0, last) as usize;
+                let from = self
+                    .library
+                    .selected_playlist()
+                    .or(self.playlist_state.selected())
+                    .unwrap_or(0);
+                let target = clamp(from, self.library.playlists().len());
                 if Some(target) != self.library.selected_playlist() {
                     self.show_playlist(target);
                 }
             }
-            Focus::Tracks if self.view == TracksView::Playlist => {
-                self.library.move_selection(delta);
+            Focus::Tracks if self.view == TracksView::Queue => {
+                self.queue_selected = clamp(self.queue_selected, self.upcoming_len());
             }
+            Focus::Tracks if self.showing_cards() => {
+                self.card_selected = clamp(self.card_selected, self.card_count());
+            }
+            Focus::Tracks => self.library.move_selection(delta),
             _ => {}
         }
     }
@@ -384,13 +717,20 @@ impl App {
     fn select(&mut self) {
         match self.focus {
             Focus::Playlists => {
-                self.view = TracksView::Playlist;
-                if !self.library.is_empty() {
-                    self.focus = Focus::Tracks;
+                if self.library.selected_playlist().is_none()
+                    && let Some(i) = self.playlist_state.selected()
+                {
+                    self.show_playlist(i);
                 }
+                self.view = TracksView::Playlist;
+                self.focus = Focus::Tracks;
             }
-            Focus::Tracks if self.view == TracksView::Playlist => self.play_selected(),
-            Focus::Tracks => {}
+            Focus::Tracks if self.view == TracksView::Queue => {
+                self.session.skip_ahead(self.queue_selected);
+                self.queue_selected = 0;
+            }
+            Focus::Tracks if self.showing_cards() => self.open_card(self.card_selected),
+            Focus::Tracks => self.play_selected(),
         }
     }
 
@@ -401,10 +741,21 @@ impl App {
     }
 
     /// What like / play next / add-to act on: in the track list, the
-    /// library view's target; elsewhere the playing track.
+    /// library view's target; in the queue, the selected upcoming track;
+    /// elsewhere the playing track.
     fn action_target(&self) -> Option<Track> {
         let playing = self.session.queue.current();
         match (self.focus, self.view) {
+            (Focus::Tracks, TracksView::Queue) => self
+                .session
+                .queue
+                .upcoming()
+                .nth(self.queue_selected)
+                .cloned(),
+            (Focus::Tracks, TracksView::Playlist) if self.showing_cards() => self
+                .card(self.card_selected)
+                .and_then(|(_, i)| i.track.clone())
+                .or_else(|| playing.cloned()),
             (Focus::Tracks, TracksView::Playlist) => self.library.target(playing),
             _ => playing.cloned(),
         }
@@ -417,10 +768,6 @@ impl App {
         let Some(track) = self.action_target() else {
             return;
         };
-        if self.library.add_choices().next().is_none() {
-            self.session.set_error("You have no playlists to add to");
-            return;
-        }
         let mut state = ListState::default();
         state.select(Some(0));
         self.mode = Mode::AddTo { track, state };
@@ -430,8 +777,56 @@ impl App {
         let Mode::AddTo { track, state } = std::mem::replace(&mut self.mode, Mode::Normal) else {
             return;
         };
-        if let Some(playlist) = state.selected().and_then(|i| self.library.add_choice(i)) {
-            self.session.add_to_playlist(playlist.clone(), track);
+        let i = state.selected().unwrap_or(0);
+        match self.library.add_choice(i) {
+            Some(playlist) => self.session.add_to_playlist(playlist.clone(), track),
+            None => {
+                self.mode = Mode::Prompt {
+                    purpose: Prompt::NewPlaylist(Some(track)),
+                    text: String::new(),
+                }
+            }
+        }
+    }
+
+    fn confirm_menu(&mut self) {
+        let Mode::Menu { entries, state } = std::mem::replace(&mut self.mode, Mode::Normal) else {
+            return;
+        };
+        let Some(entry) = state.selected().and_then(|i| entries.get(i)).copied() else {
+            return;
+        };
+        let shown = self.library.shown_playlist().cloned();
+        match (entry, shown) {
+            (MenuEntry::NewPlaylist, _) => {
+                self.mode = Mode::Prompt {
+                    purpose: Prompt::NewPlaylist(None),
+                    text: String::new(),
+                }
+            }
+            (MenuEntry::Rename, Some(playlist)) => {
+                self.mode = Mode::Prompt {
+                    text: playlist.title.clone(),
+                    purpose: Prompt::Rename(playlist),
+                }
+            }
+            (MenuEntry::Delete, Some(playlist)) => self.session.delete_playlist(playlist),
+            (MenuEntry::DownloadAll, _) => {
+                if let Some(tracks) = self.library.all_tracks() {
+                    self.session.download(tracks.to_vec());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn confirm_prompt(&mut self) {
+        let Mode::Prompt { purpose, text } = std::mem::replace(&mut self.mode, Mode::Normal) else {
+            return;
+        };
+        match purpose {
+            Prompt::NewPlaylist(track) => self.session.create_playlist(&text, track),
+            Prompt::Rename(playlist) => self.session.rename_playlist(playlist, &text),
         }
     }
 }

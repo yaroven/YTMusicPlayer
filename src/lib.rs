@@ -13,6 +13,7 @@ pub mod fmt;
 pub mod gui;
 pub mod instance;
 pub mod library_view;
+pub mod lyrics;
 pub mod media;
 pub mod session;
 pub mod storage;

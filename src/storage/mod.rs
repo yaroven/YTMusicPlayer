@@ -4,16 +4,37 @@
 
 use std::{
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::api::models::{LIKED_PLAYLIST_ID, Playlist, Track};
+use crate::{
+    api::models::{LIKED_PLAYLIST_ID, Playlist, Track},
+    catalog::{Item, ItemKind},
+};
 
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
+/// Plays kept in the history (older ones are dropped).
+const HISTORY_CAP: i64 = 500;
+
+/// A synced playlist with its tracks and, per track, the API's playlist
+/// item id (needed to remove it again; empty when unknown).
+pub struct SyncedPlaylist {
+    pub playlist: Playlist,
+    pub tracks: Arc<[Track]>,
+    pub item_ids: Vec<String>,
+}
+
+/// A downloaded track and where its audio is.
+#[derive(Debug, Clone)]
+pub struct Download {
+    pub track: Track,
+    pub path: PathBuf,
+    pub bytes: u64,
+}
 
 pub struct Library {
     conn: Mutex<Connection>,
@@ -99,6 +120,17 @@ impl Library {
 
     /// Adds a track at the front (`front`) or end of a playlist.
     pub fn add_track(&self, playlist_id: &str, track: &Track, front: bool) -> Result<()> {
+        self.add_item(playlist_id, track, front, None)
+    }
+
+    /// [`add_track`](Self::add_track), remembering the API's playlist item id.
+    pub fn add_item(
+        &self,
+        playlist_id: &str,
+        track: &Track,
+        front: bool,
+        item_id: Option<&str>,
+    ) -> Result<()> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         upsert_track(&tx, track)?;
@@ -110,8 +142,9 @@ impl Library {
         };
         let pos: i64 = tx.query_row(edge, [playlist_id], |r| r.get(0))?;
         tx.execute(
-            "INSERT INTO playlist_tracks (playlist_id, position, video_id) VALUES (?1, ?2, ?3)",
-            params![playlist_id, pos, &*track.video_id],
+            "INSERT INTO playlist_tracks (playlist_id, position, video_id, item_id)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![playlist_id, pos, &*track.video_id, item_id],
         )?;
         tx.execute(
             "UPDATE playlists SET item_count = item_count + 1 WHERE id = ?1",
@@ -132,6 +165,220 @@ impl Library {
             params![playlist_id, removed as i64],
         )?;
         Ok(())
+    }
+
+    /// Playlist item ids in track order ("" where unknown).
+    pub fn item_ids(&self, playlist_id: &str) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT COALESCE(item_id, '') FROM playlist_tracks
+             WHERE playlist_id = ?1 ORDER BY position",
+        )?;
+        let rows = stmt.query_map([playlist_id], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The API's playlist item id of `video_id` in `playlist_id`.
+    pub fn item_id(&self, playlist_id: &str, video_id: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT item_id FROM playlist_tracks
+                 WHERE playlist_id = ?1 AND video_id = ?2 AND item_id IS NOT NULL",
+                [playlist_id, video_id],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// A new (empty) playlist after the others.
+    pub fn add_playlist(&self, playlist: &Playlist) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO playlists (id, title, item_count, position, etag)
+             VALUES (?1, ?2, 0, (SELECT COALESCE(MAX(position), 0) + 1 FROM playlists), NULL)",
+            params![playlist.id, playlist.title],
+        )?;
+        Ok(())
+    }
+
+    pub fn rename_playlist(&self, id: &str, title: &str) -> Result<()> {
+        self.conn()
+            .execute("UPDATE playlists SET title = ?2 WHERE id = ?1", [id, title])?;
+        Ok(())
+    }
+
+    pub fn delete_playlist(&self, id: &str) -> Result<()> {
+        self.conn()
+            .execute("DELETE FROM playlists WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    // --- history -------------------------------------------------------------------
+
+    /// Records a play (kept: the last [`HISTORY_CAP`]).
+    pub fn add_history(&self, track: &Track) -> Result<()> {
+        let conn = self.conn();
+        conn.execute(
+            "INSERT INTO history (video_id, title, artist, duration_secs, played_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                &*track.video_id,
+                &*track.title,
+                &*track.artist,
+                track.duration_secs,
+                chrono::Utc::now().timestamp()
+            ],
+        )?;
+        conn.execute(
+            "DELETE FROM history WHERE id <= (SELECT MAX(id) FROM history) - ?1",
+            [HISTORY_CAP],
+        )?;
+        Ok(())
+    }
+
+    /// Played tracks, most recent first, each once.
+    pub fn history(&self) -> Result<Arc<[Track]>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT video_id, title, artist, duration_secs FROM history
+             WHERE id IN (SELECT MAX(id) FROM history GROUP BY video_id)
+             ORDER BY id DESC",
+        )?;
+        let rows = stmt.query_map([], track_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    // --- saved albums and followed artists -----------------------------------------
+
+    /// Albums (`Album`) or artists (`Artist`) the user keeps, newest first.
+    pub fn saved(&self, kind: ItemKind) -> Result<Vec<Item>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, subtitle, thumbnail FROM saved WHERE kind = ?1
+             ORDER BY position DESC",
+        )?;
+        let rows = stmt.query_map([kind_name(kind)], |r| {
+            Ok(Item {
+                kind,
+                id: r.get::<_, String>(0)?.into(),
+                title: r.get::<_, String>(1)?.into(),
+                subtitle: r.get::<_, String>(2)?.into(),
+                thumbnail: r.get::<_, Option<String>>(3)?.map(Into::into),
+                track: None,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn is_saved(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .conn()
+            .query_row("SELECT 1 FROM saved WHERE id = ?1", [id], |_| Ok(()))
+            .optional()?
+            .is_some())
+    }
+
+    pub fn save(&self, item: &Item) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO saved (id, kind, title, subtitle, thumbnail, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, (SELECT COALESCE(MAX(position), 0) + 1 FROM saved))
+             ON CONFLICT(id) DO UPDATE SET title = excluded.title,
+               subtitle = excluded.subtitle, thumbnail = excluded.thumbnail",
+            params![
+                &*item.id,
+                kind_name(item.kind),
+                &*item.title,
+                &*item.subtitle,
+                item.thumbnail.as_deref()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn unsave(&self, id: &str) -> Result<()> {
+        self.conn()
+            .execute("DELETE FROM saved WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Replaces the followed artists (from YouTube subscriptions), keeping
+    /// ones followed only here.
+    pub fn replace_subscriptions(&self, artists: &[Item]) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM saved WHERE kind = 'artist' AND synced = 1", [])?;
+        for (i, a) in artists.iter().enumerate().rev() {
+            tx.execute(
+                "INSERT INTO saved (id, kind, title, subtitle, thumbnail, position, synced)
+                 VALUES (?1, 'artist', ?2, ?3, ?4, ?5, 1)
+                 ON CONFLICT(id) DO UPDATE SET synced = 1",
+                params![
+                    &*a.id,
+                    &*a.title,
+                    &*a.subtitle,
+                    a.thumbnail.as_deref(),
+                    -(i as i64)
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    // --- downloads -----------------------------------------------------------------
+
+    pub fn add_download(&self, download: &Download) -> Result<()> {
+        let t = &download.track;
+        self.conn().execute(
+            "INSERT INTO downloads (video_id, title, artist, duration_secs, path, bytes, downloaded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(video_id) DO UPDATE SET path = excluded.path, bytes = excluded.bytes",
+            params![
+                &*t.video_id,
+                &*t.title,
+                &*t.artist,
+                t.duration_secs,
+                download.path.to_string_lossy(),
+                download.bytes as i64,
+                chrono::Utc::now().timestamp()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_download(&self, video_id: &str) -> Result<()> {
+        self.conn()
+            .execute("DELETE FROM downloads WHERE video_id = ?1", [video_id])?;
+        Ok(())
+    }
+
+    /// Downloaded tracks, newest first.
+    pub fn downloads(&self) -> Result<Vec<Download>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT video_id, title, artist, duration_secs, path, bytes FROM downloads
+             ORDER BY downloaded_at DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(Download {
+                track: track_row(r)?,
+                path: PathBuf::from(r.get::<_, String>(4)?),
+                bytes: r.get::<_, i64>(5)? as u64,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn download_path(&self, video_id: &str) -> Result<Option<PathBuf>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT path FROM downloads WHERE video_id = ?1",
+                [video_id],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .map(PathBuf::from))
     }
 
     pub fn get_meta(&self, key: &str) -> Result<Option<String>> {
@@ -205,6 +452,19 @@ impl Library {
 
     /// Replaces the whole library atomically: a failed sync leaves the old one.
     pub fn replace_library(&self, playlists: &[(Playlist, Arc<[Track]>)]) -> Result<()> {
+        let synced: Vec<SyncedPlaylist> = playlists
+            .iter()
+            .map(|(playlist, tracks)| SyncedPlaylist {
+                playlist: playlist.clone(),
+                tracks: tracks.clone(),
+                item_ids: Vec::new(),
+            })
+            .collect();
+        self.replace_synced(&synced)
+    }
+
+    /// [`replace_library`](Self::replace_library) with playlist item ids.
+    pub fn replace_synced(&self, playlists: &[SyncedPlaylist]) -> Result<()> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         tx.execute_batch("DELETE FROM playlist_tracks; DELETE FROM playlists;")?;
@@ -214,9 +474,11 @@ impl Library {
                  VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
             let mut link = tx.prepare(
-                "INSERT OR IGNORE INTO playlist_tracks (playlist_id, position, video_id) VALUES (?1, ?2, ?3)",
+                "INSERT OR IGNORE INTO playlist_tracks (playlist_id, position, video_id, item_id)
+                 VALUES (?1, ?2, ?3, ?4)",
             )?;
-            for (pos, (playlist, tracks)) in playlists.iter().enumerate() {
+            for (pos, synced) in playlists.iter().enumerate() {
+                let (playlist, tracks) = (&synced.playlist, &synced.tracks);
                 add_playlist.execute(params![
                     playlist.id,
                     playlist.title,
@@ -226,7 +488,8 @@ impl Library {
                 ])?;
                 for (i, t) in tracks.iter().enumerate() {
                     upsert_track(&tx, t)?;
-                    link.execute(params![playlist.id, i as i64, &*t.video_id])?;
+                    let item_id = synced.item_ids.get(i).filter(|id| !id.is_empty());
+                    link.execute(params![playlist.id, i as i64, &*t.video_id, item_id])?;
                 }
             }
         }
@@ -242,6 +505,24 @@ impl Library {
         )?;
         tx.commit()?;
         Ok(())
+    }
+}
+
+fn track_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
+    Ok(Track {
+        video_id: r.get::<_, String>(0)?.into(),
+        title: r.get::<_, String>(1)?.into(),
+        artist: r.get::<_, String>(2)?.into(),
+        duration_secs: r.get(3)?,
+    })
+}
+
+fn kind_name(kind: ItemKind) -> &'static str {
+    match kind {
+        ItemKind::Song => "song",
+        ItemKind::Album => "album",
+        ItemKind::Artist => "artist",
+        ItemKind::Playlist => "playlist",
     }
 }
 
@@ -289,6 +570,25 @@ fn migrate(conn: &Connection) -> Result<()> {
              CREATE TABLE stream_cache (
                video_id TEXT PRIMARY KEY, json TEXT NOT NULL,
                expires_at INTEGER NOT NULL);
+             COMMIT;",
+        )?;
+    }
+    if version < 3 {
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE playlist_tracks ADD COLUMN item_id TEXT;
+             CREATE TABLE history (
+               id INTEGER PRIMARY KEY AUTOINCREMENT, video_id TEXT NOT NULL,
+               title TEXT NOT NULL, artist TEXT NOT NULL, duration_secs INTEGER,
+               played_at INTEGER NOT NULL);
+             CREATE TABLE saved (
+               id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL,
+               subtitle TEXT NOT NULL, thumbnail TEXT, position INTEGER NOT NULL,
+               synced INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE downloads (
+               video_id TEXT PRIMARY KEY, title TEXT NOT NULL, artist TEXT NOT NULL,
+               duration_secs INTEGER, path TEXT NOT NULL, bytes INTEGER NOT NULL,
+               downloaded_at INTEGER NOT NULL);
              COMMIT;",
         )?;
     }
@@ -357,6 +657,112 @@ mod tests {
 
         lib.replace_library(&[(mine, Vec::new().into())]).unwrap();
         assert!(lib.tracks("PL1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn history_is_recent_first_and_unique() {
+        let lib = Library::open_in_memory().unwrap();
+        for id in ["aaaaaaaaaaa", "bbbbbbbbbbb", "aaaaaaaaaaa"] {
+            lib.add_history(&track(id, None)).unwrap();
+        }
+        let ids: Vec<_> = lib
+            .history()
+            .unwrap()
+            .iter()
+            .map(|t| t.video_id.to_string())
+            .collect();
+        assert_eq!(ids, ["aaaaaaaaaaa", "bbbbbbbbbbb"]);
+    }
+
+    #[test]
+    fn saved_items_and_synced_artists() {
+        let lib = Library::open_in_memory().unwrap();
+        let item = |id: &str, kind| Item {
+            kind,
+            id: id.into(),
+            title: id.into(),
+            subtitle: "".into(),
+            thumbnail: None,
+            track: None,
+        };
+        lib.save(&item("MPREb_a", ItemKind::Album)).unwrap();
+        lib.save(&item("UClocal", ItemKind::Artist)).unwrap();
+        lib.replace_subscriptions(&[
+            item("UCsub1", ItemKind::Artist),
+            item("UCsub2", ItemKind::Artist),
+        ])
+        .unwrap();
+        lib.replace_subscriptions(&[item("UCsub2", ItemKind::Artist)])
+            .unwrap();
+        let artists: Vec<_> = lib
+            .saved(ItemKind::Artist)
+            .unwrap()
+            .iter()
+            .map(|a| a.id.to_string())
+            .collect();
+        assert!(
+            artists.contains(&"UClocal".to_owned()),
+            "followed here: kept"
+        );
+        assert!(artists.contains(&"UCsub2".to_owned()));
+        assert!(
+            !artists.contains(&"UCsub1".to_owned()),
+            "unsubscribed: gone"
+        );
+        assert_eq!(lib.saved(ItemKind::Album).unwrap().len(), 1);
+        assert!(lib.is_saved("MPREb_a").unwrap());
+        lib.unsave("MPREb_a").unwrap();
+        assert!(!lib.is_saved("MPREb_a").unwrap());
+    }
+
+    #[test]
+    fn playlist_items_and_downloads() {
+        let lib = Library::open_in_memory().unwrap();
+        let mine = Playlist {
+            id: "PL1".into(),
+            title: "Mine".into(),
+            item_count: 0,
+            etag: None,
+        };
+        lib.replace_synced(&[SyncedPlaylist {
+            playlist: mine,
+            tracks: vec![track("aaaaaaaaaaa", None)].into(),
+            item_ids: vec!["item-a".into()],
+        }])
+        .unwrap();
+        assert_eq!(
+            lib.item_id("PL1", "aaaaaaaaaaa").unwrap().as_deref(),
+            Some("item-a")
+        );
+        lib.add_item("PL1", &track("bbbbbbbbbbb", None), false, Some("item-b"))
+            .unwrap();
+        assert_eq!(
+            lib.item_id("PL1", "bbbbbbbbbbb").unwrap().as_deref(),
+            Some("item-b")
+        );
+
+        lib.add_playlist(&Playlist {
+            id: "PL2".into(),
+            title: "New".into(),
+            item_count: 0,
+            etag: None,
+        })
+        .unwrap();
+        lib.rename_playlist("PL2", "Renamed").unwrap();
+        assert_eq!(lib.playlists().unwrap().last().unwrap().title, "Renamed");
+        lib.delete_playlist("PL2").unwrap();
+        assert_eq!(lib.playlists().unwrap().len(), 1);
+
+        lib.add_download(&Download {
+            track: track("ccccccccccc", Some(10)),
+            path: "/tmp/c.m4a".into(),
+            bytes: 1000,
+        })
+        .unwrap();
+        assert_eq!(lib.downloads().unwrap().len(), 1);
+        assert!(lib.download_path("ccccccccccc").unwrap().is_some());
+        lib.remove_download("ccccccccccc").unwrap();
+        assert!(lib.download_path("ccccccccccc").unwrap().is_none());
     }
 
     #[test]

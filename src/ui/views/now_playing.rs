@@ -11,6 +11,7 @@ use ratatui::{
 use crate::{
     app::{App, Mode},
     audio::{player::PlayState, queue::Repeat},
+    session::Sleep,
     ui::{ACCENT, fmt_time},
 };
 
@@ -44,7 +45,20 @@ pub fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         Repeat::All => on(true, "repeat "),
         Repeat::One => on(true, "repeat1 "),
     };
+    let sleep = match app.session.sleep {
+        Some(Sleep::EndOfTrack) => " sleep: end of track ".to_owned(),
+        Some(Sleep::At(at)) => format!(
+            " sleep {}m ",
+            at.saturating_duration_since(std::time::Instant::now())
+                .as_secs()
+                / 60
+                + 1
+        ),
+        None => String::new(),
+    };
     let modes = Line::from(vec![
+        Span::from(sleep).fg(ACCENT),
+        on(app.session.view().autoplay, " autoplay "),
         on(app.session.queue.shuffle, " shuffle "),
         repeat,
         format!("vol {:>3}% ", (status.volume * 100.0).round() as u32).into(),

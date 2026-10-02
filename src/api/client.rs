@@ -1,6 +1,6 @@
 //! Typed YouTube Data API v3 client. Quota (10,000 units/day): each `*.list`
-//! page costs 1 unit, `videos.rate` and `playlistItems.insert` 50 each,
-//! `search.list` 100;
+//! page costs 1 unit, writes (rate, playlist and subscription changes) 50
+//! each, `search.list` 100;
 //! [`YouTubeClient::units_used`] counts them for this process.
 
 use std::sync::{
@@ -15,6 +15,7 @@ use super::{
     auth::Auth,
     models::{Playlist, Track, clean_artist, parse_iso_duration},
 };
+use crate::catalog::{Item, ItemKind};
 
 const BASE: &str = "https://www.googleapis.com/youtube/v3";
 /// YouTube's "Music" video category.
@@ -55,6 +56,8 @@ struct PlaylistContent {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PlaylistItemDto {
+    #[serde(default)]
+    id: String,
     snippet: ItemSnippet,
     content_details: ItemContent,
 }
@@ -173,6 +176,12 @@ impl YouTubeClient {
     }
 
     pub async fn playlist_tracks(&self, playlist_id: &str) -> Result<Vec<Track>> {
+        Ok(self.playlist_entries(playlist_id).await?.0)
+    }
+
+    /// A playlist's tracks and, for each, its playlist item id (what
+    /// `playlistItems.delete` needs).
+    pub async fn playlist_entries(&self, playlist_id: &str) -> Result<(Vec<Track>, Vec<String>)> {
         let dtos: Vec<PlaylistItemDto> = self
             .list_all(
                 "playlistItems",
@@ -187,14 +196,15 @@ impl YouTubeClient {
             // Deleted/private entries have no owner channel and can't be played.
             .filter_map(|i| {
                 let artist = i.snippet.video_owner_channel_title?;
-                Some(Track {
+                let track = Track {
                     video_id: i.content_details.video_id.into(),
                     title: i.snippet.title.into(),
                     artist: clean_artist(&artist),
                     duration_secs: None,
-                })
+                };
+                Some((track, i.id))
             })
-            .collect())
+            .unzip())
     }
 
     /// The user's liked songs.
@@ -348,7 +358,17 @@ pub enum LikedSource {
 impl YouTubeClient {
     /// Likes (`true`) or removes the rating from (`false`) a video. 50 units.
     pub async fn rate(&self, video_id: &str, like: bool) -> Result<()> {
-        let rating = if like { "like" } else { "none" };
+        self.set_rating(video_id, if like { Rating::Like } else { Rating::None })
+            .await
+    }
+
+    /// Sets a video's rating. 50 units.
+    pub async fn set_rating(&self, video_id: &str, rating: Rating) -> Result<()> {
+        let rating = match rating {
+            Rating::Like => "like",
+            Rating::Dislike => "dislike",
+            Rating::None => "none",
+        };
         let response = self
             .http
             .post(format!("{BASE}/videos/rate"))
@@ -362,8 +382,9 @@ impl YouTubeClient {
         Ok(())
     }
 
-    /// Appends a video to one of the user's playlists. 50 units.
-    pub async fn add_to_playlist(&self, playlist_id: &str, video_id: &str) -> Result<()> {
+    /// Appends a video to one of the user's playlists; returns the new
+    /// playlist item id. 50 units.
+    pub async fn add_to_playlist(&self, playlist_id: &str, video_id: &str) -> Result<String> {
         let body = serde_json::json!({
             "snippet": {
                 "playlistId": playlist_id,
@@ -379,9 +400,196 @@ impl YouTubeClient {
             .send()
             .await?;
         self.units.fetch_add(50, Ordering::Relaxed);
-        check(response, "playlistItems.insert").await?;
+        let created: Created = check(response, "playlistItems.insert")
+            .await?
+            .json()
+            .await?;
+        Ok(created.id)
+    }
+
+    /// Removes a playlist item (id from [`playlist_entries`] or
+    /// [`add_to_playlist`]). 50 units.
+    ///
+    /// [`playlist_entries`]: Self::playlist_entries
+    /// [`add_to_playlist`]: Self::add_to_playlist
+    pub async fn remove_from_playlist(&self, item_id: &str) -> Result<()> {
+        let response = self
+            .http
+            .delete(format!("{BASE}/playlistItems"))
+            .bearer_auth(self.auth.access_token().await?)
+            .query(&[("id", item_id)])
+            .send()
+            .await?;
+        self.units.fetch_add(50, Ordering::Relaxed);
+        check(response, "playlistItems.delete").await?;
         Ok(())
     }
+
+    /// Creates a private playlist; returns its id. 50 units.
+    pub async fn create_playlist(&self, title: &str) -> Result<String> {
+        let body = serde_json::json!({
+            "snippet": { "title": title },
+            "status": { "privacyStatus": "private" },
+        });
+        let response = self
+            .http
+            .post(format!("{BASE}/playlists"))
+            .bearer_auth(self.auth.access_token().await?)
+            .query(&[("part", "snippet,status")])
+            .json(&body)
+            .send()
+            .await?;
+        self.units.fetch_add(50, Ordering::Relaxed);
+        let created: Created = check(response, "playlists.insert").await?.json().await?;
+        Ok(created.id)
+    }
+
+    /// Renames a playlist. 50 units.
+    pub async fn rename_playlist(&self, playlist_id: &str, title: &str) -> Result<()> {
+        let body = serde_json::json!({ "id": playlist_id, "snippet": { "title": title } });
+        let response = self
+            .http
+            .put(format!("{BASE}/playlists"))
+            .bearer_auth(self.auth.access_token().await?)
+            .query(&[("part", "snippet")])
+            .json(&body)
+            .send()
+            .await?;
+        self.units.fetch_add(50, Ordering::Relaxed);
+        check(response, "playlists.update").await?;
+        Ok(())
+    }
+
+    /// Deletes a playlist. 50 units.
+    pub async fn delete_playlist(&self, playlist_id: &str) -> Result<()> {
+        let response = self
+            .http
+            .delete(format!("{BASE}/playlists"))
+            .bearer_auth(self.auth.access_token().await?)
+            .query(&[("id", playlist_id)])
+            .send()
+            .await?;
+        self.units.fetch_add(50, Ordering::Relaxed);
+        check(response, "playlists.delete").await?;
+        Ok(())
+    }
+
+    /// Channels the user subscribed to, as artists. 1 unit per 50.
+    pub async fn subscriptions(&self) -> Result<Vec<Item>> {
+        let dtos: Vec<SubscriptionDto> = self
+            .list_all("subscriptions", &[("part", "snippet"), ("mine", "true")])
+            .await?;
+        Ok(dtos
+            .into_iter()
+            .map(|s| Item {
+                kind: ItemKind::Artist,
+                id: s.snippet.resource_id.channel_id.into(),
+                title: s.snippet.title.into(),
+                subtitle: "Artist".into(),
+                thumbnail: s
+                    .snippet
+                    .thumbnails
+                    .and_then(|t| t.medium.or(t.default))
+                    .map(|t| t.url.into()),
+                track: None,
+            })
+            .collect())
+    }
+
+    /// Subscribes to a channel. 50 units.
+    pub async fn subscribe(&self, channel_id: &str) -> Result<()> {
+        let body = serde_json::json!({
+            "snippet": { "resourceId": { "kind": "youtube#channel", "channelId": channel_id } }
+        });
+        let response = self
+            .http
+            .post(format!("{BASE}/subscriptions"))
+            .bearer_auth(self.auth.access_token().await?)
+            .query(&[("part", "snippet")])
+            .json(&body)
+            .send()
+            .await?;
+        self.units.fetch_add(50, Ordering::Relaxed);
+        check(response, "subscriptions.insert").await?;
+        Ok(())
+    }
+
+    /// Unsubscribes from a channel (finds the subscription first). 51 units.
+    pub async fn unsubscribe(&self, channel_id: &str) -> Result<()> {
+        let page: Page<IdOnly> = check(
+            self.http
+                .get(format!("{BASE}/subscriptions"))
+                .bearer_auth(self.auth.access_token().await?)
+                .query(&[
+                    ("part", "id"),
+                    ("mine", "true"),
+                    ("forChannelId", channel_id),
+                ])
+                .send()
+                .await?,
+            "subscriptions.list",
+        )
+        .await?
+        .json()
+        .await?;
+        self.units.fetch_add(1, Ordering::Relaxed);
+        for sub in page.items {
+            let response = self
+                .http
+                .delete(format!("{BASE}/subscriptions"))
+                .bearer_auth(self.auth.access_token().await?)
+                .query(&[("id", sub.id.as_str())])
+                .send()
+                .await?;
+            self.units.fetch_add(50, Ordering::Relaxed);
+            check(response, "subscriptions.delete").await?;
+        }
+        Ok(())
+    }
+}
+
+/// A video rating.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rating {
+    Like,
+    Dislike,
+    None,
+}
+
+#[derive(Deserialize)]
+struct Created {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct IdOnly {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct SubscriptionDto {
+    snippet: SubscriptionSnippet,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubscriptionSnippet {
+    title: String,
+    resource_id: ResourceId,
+    thumbnails: Option<Thumbnails>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResourceId {
+    channel_id: String,
+}
+#[derive(Deserialize)]
+struct Thumbnails {
+    default: Option<Thumb>,
+    medium: Option<Thumb>,
+}
+#[derive(Deserialize)]
+struct Thumb {
+    url: String,
 }
 
 /// Turns API errors into readable messages, with a hint for missing scope.

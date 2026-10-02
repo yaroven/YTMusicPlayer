@@ -12,7 +12,6 @@ use ytm_player::{
     api::models::{Track, video_id_from_input},
     app,
     audio::{
-        Opened,
         extractor::YtDlp,
         player::{PlayState, Playback, PlayerEvent, PlayerHandle},
     },
@@ -358,25 +357,27 @@ async fn play(paths: &AppPaths, settings: &Settings, input: &str) -> Result<()> 
         artist: "".into(),
         duration_secs: None,
     };
-    let Opened {
-        body,
-        duration,
-        stream,
-    } = source.open(&track).await?;
+    let opened = source.open(&track).await?;
+    let (title, codec, bitrate) = match &opened.stream {
+        Some(stream) => (
+            stream.title.clone().unwrap_or_else(|| video_id.clone()),
+            stream.codec.clone().unwrap_or_else(|| "?".into()),
+            stream
+                .bitrate_kbps
+                .map(|b| format!("{b:.0} kbps"))
+                .unwrap_or_default(),
+        ),
+        None => (video_id.clone(), "downloaded file".into(), String::new()),
+    };
     println!(
-        "{} [{} {}, ready in {:.1?}]",
-        stream.title.as_deref().unwrap_or(&video_id),
-        stream.codec.as_deref().unwrap_or("?"),
-        stream
-            .bitrate_kbps
-            .map(|b| format!("{b:.0} kbps"))
-            .unwrap_or_default(),
+        "{title} [{codec} {bitrate}, gain {:.2}, ready in {:.1?}]",
+        opened.gain,
         started.elapsed()
     );
 
     let (events_tx, mut events) = tokio::sync::mpsc::unbounded_channel();
     let player = PlayerHandle::spawn(settings.volume, settings.audio_device(), events_tx)?;
-    player.load(body, duration, 1);
+    player.load(opened.into_load(1));
 
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     let mut ctrl_c = std::pin::pin!(tokio::signal::ctrl_c());

@@ -35,6 +35,7 @@ const RELEASE_BASE: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/dow
 /// First run of a PyInstaller one-file build unpacks itself, so be generous.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(60);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Prefer progressive AAC in MP4 (itag 140): symphonia (via rodio) decodes it,
@@ -426,6 +427,29 @@ impl YtDlp {
 
         let stdout = self.run(&args, RESOLVE_TIMEOUT).await?;
         parse_stream(video_id, &stdout)
+    }
+
+    /// Downloads the AAC audio (itag 140, else the best m4a) to `dest`.
+    pub async fn download_audio(&self, video_id: &str, dest: &Path) -> Result<()> {
+        validate_video_id(video_id)?;
+        let url = format!("https://www.youtube.com/watch?v={video_id}");
+        let dest = dest.to_string_lossy();
+        let mut args: Vec<&str> = vec![
+            "--ignore-config",
+            "--no-playlist",
+            "--no-warnings",
+            "--no-progress",
+            "--no-js-runtimes",
+            "--format",
+            &self.format,
+            "--no-part",
+            "--output",
+            &dest,
+        ];
+        args.extend(self.extra_args.iter().map(String::as_str));
+        args.push("--");
+        args.push(&url);
+        self.run(&args, DOWNLOAD_TIMEOUT).await.map(|_| ())
     }
 
     /// YouTube search without the Data API (no quota): `ytsearchN:` with a

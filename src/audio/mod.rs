@@ -11,4 +11,4 @@ pub mod source;
 pub mod stream;
 
 pub use resolver::JsPolicy;
-pub use source::{Extractor, Opened, TrackSource};
+pub use source::{Extractor, Opened, SourceOptions, TrackSource};

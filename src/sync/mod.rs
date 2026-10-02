@@ -12,7 +12,7 @@ use crate::{
         client::{LikedSource, YouTubeClient},
         models::{LIKED_PLAYLIST_ID, Playlist},
     },
-    storage::Library,
+    storage::{Library, SyncedPlaylist},
 };
 
 #[derive(Debug, Clone)]
@@ -68,15 +68,16 @@ pub async fn sync_library(
 
     let liked = client.liked_tracks(liked_music_only).await?;
     let (liked_count, liked_source) = (liked.tracks.len(), liked.source);
-    let mut all = vec![(
-        Playlist {
+    let mut all = vec![SyncedPlaylist {
+        playlist: Playlist {
             id: LIKED_PLAYLIST_ID.into(),
             title: "Liked music".into(),
             item_count: liked_count as u32,
             etag: None,
         },
-        liked.tracks.into(),
-    )];
+        tracks: liked.tracks.into(),
+        item_ids: Vec::new(),
+    }];
     let mut unchanged = 0;
     // "LM" may also be listed among the user's playlists; it's shown as Liked.
     for playlist in client
@@ -87,23 +88,36 @@ pub async fn sync_library(
     {
         let same =
             playlist.etag.is_some() && playlist.etag.as_ref() == known_etags.get(&playlist.id);
-        let tracks = if same {
+        let (tracks, item_ids) = if same {
             unchanged += 1;
-            library.tracks(&playlist.id)?
+            (
+                library.tracks(&playlist.id)?,
+                library.item_ids(&playlist.id)?,
+            )
         } else {
-            client.playlist_tracks(&playlist.id).await?.into()
+            let (tracks, ids) = client.playlist_entries(&playlist.id).await?;
+            (tracks.into(), ids)
         };
-        all.push((playlist, tracks));
+        all.push(SyncedPlaylist {
+            playlist,
+            tracks,
+            item_ids,
+        });
+    }
+    // Followed artists = channel subscriptions; a failure keeps the old list.
+    match client.subscriptions().await {
+        Ok(artists) => library.replace_subscriptions(&artists)?,
+        Err(err) => tracing::warn!(%err, "syncing subscriptions"),
     }
 
     let report = SyncReport {
         playlists: all.len(),
-        tracks: all.iter().map(|(_, t)| t.len()).sum(),
+        tracks: all.iter().map(|p| p.tracks.len()).sum(),
         unchanged,
         quota_units: client.units_used() - start_units,
         liked: liked_count,
         liked_source,
     };
-    tokio::task::spawn_blocking(move || library.replace_library(&all)).await??;
+    tokio::task::spawn_blocking(move || library.replace_synced(&all)).await??;
     Ok(report)
 }

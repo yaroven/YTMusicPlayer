@@ -1,6 +1,12 @@
 //! Playback engine on a dedicated OS thread (rodio's device sink is not
 //! `Send`). Commands go in over a channel; state comes out via a `watch`
-//! (polled by the UI) and discrete events via an mpsc (track ended, error).
+//! (polled by the UI) and discrete events via an mpsc (track ended or
+//! taken over by the preloaded one, error).
+//!
+//! Each track plays on its own rodio player. A preloaded next track is
+//! appended to the current player's queue (gapless), or — with a crossfade —
+//! started on a second player during the last seconds while the first fades
+//! out. Loudness normalization is a per-track gain on the decoded samples.
 //!
 //! The audio device is opened on the first track and closed again after
 //! [`IDLE_CLOSE`] without playback, so an idle player holds no audio buffers.
@@ -15,9 +21,11 @@ use anyhow::Result;
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 use tokio::sync::{mpsc::UnboundedSender, watch};
 
-use super::stream::HttpStream;
+use super::stream::Media;
 
 const IDLE_CLOSE: Duration = Duration::from_secs(30);
+/// How long before the end a gapless next track joins the queue.
+const GAPLESS_LEAD: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayState {
@@ -38,16 +46,35 @@ pub struct PlayerStatus {
 /// from a track the user already skipped are ignored.
 #[derive(Debug, Clone)]
 pub enum PlayerEvent {
-    Ended { generation: u64 },
-    Error { generation: u64, message: String },
+    /// The track ended and nothing was queued after it.
+    Ended {
+        generation: u64,
+    },
+    /// A preloaded track took over (gapless or after a crossfade).
+    Started {
+        generation: u64,
+    },
+    Error {
+        generation: u64,
+        message: String,
+    },
+}
+
+/// A track to play.
+pub struct Load {
+    pub media: Media,
+    /// When the media doesn't say.
+    pub duration: Option<Duration>,
+    /// Loudness normalization factor (1.0 = as is).
+    pub gain: f32,
+    pub generation: u64,
 }
 
 enum Command {
-    Load {
-        stream: HttpStream,
-        duration: Option<Duration>,
-        generation: u64,
-    },
+    Load(Load),
+    Preload(Load),
+    CancelPreload,
+    SetCrossfade(Duration),
     TogglePause,
     SetPaused(bool),
     Stop,
@@ -57,11 +84,17 @@ enum Command {
 }
 
 /// What a Session needs from audio output: rodio's [`PlayerHandle`] in the
-/// app, a scripted fake in tests. Events come back on the channel given to
+/// app, a recording fake in tests. Events come back on the channel given to
 /// the adapter.
 pub trait Playback: Send {
-    /// Replaces whatever is playing; `generation` tags its events.
-    fn load(&self, stream: HttpStream, duration: Option<Duration>, generation: u64);
+    /// Replaces whatever is playing.
+    fn load(&self, track: Load);
+    /// Plays `track` right after the current one: gapless, or overlapping by
+    /// the crossfade. Replaces an earlier preload.
+    fn preload(&self, track: Load);
+    fn cancel_preload(&self);
+    /// Overlap between tracks (zero: gapless).
+    fn set_crossfade(&self, overlap: Duration);
     fn toggle_pause(&self);
     fn set_paused(&self, paused: bool);
     fn stop(&self);
@@ -115,12 +148,20 @@ impl PlayerHandle {
 
 /// Decoding starts on the audio thread; calls never block.
 impl Playback for PlayerHandle {
-    fn load(&self, stream: HttpStream, duration: Option<Duration>, generation: u64) {
-        self.send(Command::Load {
-            stream,
-            duration,
-            generation,
-        });
+    fn load(&self, track: Load) {
+        self.send(Command::Load(track));
+    }
+
+    fn preload(&self, track: Load) {
+        self.send(Command::Preload(track));
+    }
+
+    fn cancel_preload(&self) {
+        self.send(Command::CancelPreload);
+    }
+
+    fn set_crossfade(&self, overlap: Duration) {
+        self.send(Command::SetCrossfade(overlap));
     }
 
     fn toggle_pause(&self) {
@@ -152,16 +193,40 @@ impl Playback for PlayerHandle {
     }
 }
 
-struct Output {
-    // Field order matters: the player must drop before its device.
+type Decoded = rodio::source::Amplify<Decoder<Media>>;
+
+/// A track on its own rodio player (one per track while they overlap).
+struct Slot {
     player: Player,
-    _sink: MixerDeviceSink,
+    generation: u64,
+    duration: Option<Duration>,
 }
 
+/// A preloaded track waiting for the current one to end.
+struct Next {
+    decoded: Option<Decoded>,
+    generation: u64,
+    duration: Option<Duration>,
+    /// Appended to the current player's queue (gapless): waiting for the
+    /// queue to move on.
+    queued: bool,
+    /// Cancelled after it was queued: stop when it would start.
+    cancelled: bool,
+}
+
+/// A track fading out under the new one.
+struct Fading {
+    player: Player,
+    started: Instant,
+}
+
+/// Field order matters: players drop before the device they play on.
 struct Engine {
-    output: Option<Output>,
-    /// (generation, duration) of the loaded track.
-    current: Option<(u64, Option<Duration>)>,
+    current: Option<Slot>,
+    next: Option<Next>,
+    fading: Option<Fading>,
+    sink: Option<MixerDeviceSink>,
+    crossfade: Duration,
     volume: f32,
     idle_since: Instant,
     status_tx: watch::Sender<PlayerStatus>,
@@ -178,8 +243,11 @@ impl Engine {
     ) -> Self {
         Self {
             device,
-            output: None,
+            sink: None,
             current: None,
+            next: None,
+            fading: None,
+            crossfade: Duration::ZERO,
             volume,
             idle_since: Instant::now(),
             status_tx,
@@ -189,11 +257,11 @@ impl Engine {
 
     fn run(mut self, rx: mpsc::Receiver<Command>) {
         loop {
-            // Poll faster while playing (position updates), slowly when idle.
-            let timeout = if self.current.is_some() {
-                Duration::from_millis(100)
-            } else {
-                Duration::from_secs(1)
+            // Poll faster while playing (position, fades), slowly when idle.
+            let timeout = match (&self.fading, &self.current) {
+                (Some(_), _) => Duration::from_millis(40),
+                (None, Some(_)) => Duration::from_millis(100),
+                (None, None) => Duration::from_secs(1),
             };
             match rx.recv_timeout(timeout) {
                 Ok(cmd) => self.handle(cmd),
@@ -204,20 +272,17 @@ impl Engine {
         }
     }
 
-    fn open_output(&mut self) -> Result<&Player, String> {
-        if self.output.is_none() {
+    fn new_player(&mut self) -> Result<Player, String> {
+        if self.sink.is_none() {
             let mut sink = open_sink(self.device.as_deref())?;
             // Default prints to stderr on drop, which would corrupt the TUI.
             sink.log_on_drop(false);
-            let player = Player::connect_new(sink.mixer());
-            player.set_volume(self.volume);
-            self.output = Some(Output {
-                player,
-                _sink: sink,
-            });
+            self.sink = Some(sink);
             tracing::debug!("audio output opened");
         }
-        Ok(&self.output.as_ref().expect("just opened").player)
+        let player = Player::connect_new(self.sink.as_ref().expect("just opened").mixer());
+        player.set_volume(self.volume);
+        Ok(player)
     }
 
     fn error(&self, generation: u64, message: String) {
@@ -227,65 +292,83 @@ impl Engine {
         });
     }
 
+    /// Reads the container header: may block briefly on the network.
+    fn decode(load: Load) -> Result<(Decoded, Option<Duration>), String> {
+        let len = load.media.len();
+        let decoder = Decoder::builder()
+            .with_data(load.media)
+            .with_byte_len(len)
+            .with_seekable(true)
+            .with_hint("m4a")
+            .with_mime_type("audio/mp4")
+            .build()
+            .map_err(|err| format!("cannot decode audio: {err}"))?;
+        let duration = decoder.total_duration().or(load.duration);
+        Ok((decoder.amplify(load.gain), duration))
+    }
+
     fn handle(&mut self, cmd: Command) {
         match cmd {
-            Command::Load {
-                stream,
-                duration,
-                generation,
-            } => {
-                self.current = None;
-                let player = match self.open_output() {
+            Command::Load(load) => {
+                let generation = load.generation;
+                self.stop_all();
+                let player = match self.new_player() {
                     Ok(player) => player,
                     Err(message) => return self.error(generation, message),
                 };
-                player.clear();
-                let len = stream.len();
-                // Reads the container header: may block briefly on the network.
-                let built = Decoder::builder()
-                    .with_data(stream)
-                    .with_byte_len(len)
-                    .with_seekable(true)
-                    .with_hint("m4a")
-                    .with_mime_type("audio/mp4")
-                    .build();
-                match built {
-                    Ok(decoder) => {
-                        let duration = decoder.total_duration().or(duration);
-                        player.append(decoder);
+                match Self::decode(load) {
+                    Ok((decoded, duration)) => {
+                        player.append(decoded);
                         player.play();
-                        self.current = Some((generation, duration));
+                        self.current = Some(Slot {
+                            player,
+                            generation,
+                            duration,
+                        });
                     }
-                    Err(err) => self.error(generation, format!("cannot decode audio: {err}")),
+                    Err(message) => self.error(generation, message),
                 }
             }
+            Command::Preload(load) => {
+                self.cancel_next();
+                let generation = load.generation;
+                match Self::decode(load) {
+                    Ok((decoded, duration)) => {
+                        self.next = Some(Next {
+                            decoded: Some(decoded),
+                            generation,
+                            duration,
+                            queued: false,
+                            cancelled: false,
+                        });
+                    }
+                    Err(message) => self.error(generation, message),
+                }
+            }
+            Command::CancelPreload => self.cancel_next(),
+            Command::SetCrossfade(overlap) => self.crossfade = overlap,
             Command::TogglePause => {
-                if let (Some(out), Some(_)) = (&self.output, self.current) {
-                    if out.player.is_paused() {
-                        out.player.play()
+                if let Some(slot) = &self.current {
+                    if slot.player.is_paused() {
+                        slot.player.play()
                     } else {
-                        out.player.pause()
+                        slot.player.pause()
                     }
                 }
             }
             Command::SetPaused(paused) => {
-                if let (Some(out), Some(_)) = (&self.output, self.current) {
+                if let Some(slot) = &self.current {
                     if paused {
-                        out.player.pause()
+                        slot.player.pause()
                     } else {
-                        out.player.play()
+                        slot.player.play()
                     }
                 }
             }
-            Command::Stop => {
-                if let Some(out) = &self.output {
-                    out.player.clear();
-                }
-                self.current = None;
-            }
+            Command::Stop => self.stop_all(),
             Command::SeekBy(secs) => {
-                if let Some(out) = &self.output {
-                    let pos = out.player.get_pos();
+                if let Some(slot) = &self.current {
+                    let pos = slot.player.get_pos();
                     let delta = Duration::from_secs(secs.unsigned_abs());
                     let target = if secs < 0 {
                         pos.saturating_sub(delta)
@@ -298,52 +381,61 @@ impl Engine {
             Command::SeekTo(target) => self.seek(target),
             Command::SetVolume(v) => {
                 self.volume = v;
-                if let Some(out) = &self.output {
-                    out.player.set_volume(v);
+                if let Some(slot) = &self.current {
+                    slot.player.set_volume(v);
                 }
             }
         }
     }
 
+    fn stop_all(&mut self) {
+        self.current = None;
+        self.next = None;
+        self.fading = None;
+    }
+
+    /// Drops a preload. One already in the gapless queue (last ~2 s) can't
+    /// be taken out of rodio's queue: it's stopped when it would start.
+    fn cancel_next(&mut self) {
+        match &mut self.next {
+            Some(next) if next.queued => next.cancelled = true,
+            _ => self.next = None,
+        }
+    }
+
     fn seek(&self, mut target: Duration) {
-        let (Some(out), Some((generation, duration))) = (&self.output, self.current) else {
+        let Some(slot) = &self.current else {
             return;
         };
-        if let Some(d) = duration {
+        if let Some(d) = slot.duration {
             target = target.min(d.saturating_sub(Duration::from_secs(1)));
         }
-        if let Err(err) = out.player.try_seek(target) {
-            self.error(generation, format!("seek failed: {err}"));
+        if let Err(err) = slot.player.try_seek(target) {
+            self.error(slot.generation, format!("seek failed: {err}"));
         }
     }
 
     fn tick(&mut self) {
-        if let (Some((generation, _)), Some(out)) = (self.current, &self.output)
-            && out.player.empty()
-        {
-            self.current = None;
-            let _ = self.events.send(PlayerEvent::Ended { generation });
-        }
+        self.advance();
+        self.fade();
 
-        let playing = self.current.is_some();
+        let playing = self.current.is_some() || self.fading.is_some();
         if playing {
             self.idle_since = Instant::now();
-        } else if self.output.is_some() && self.idle_since.elapsed() >= IDLE_CLOSE {
-            self.output = None;
+        } else if self.sink.is_some() && self.idle_since.elapsed() >= IDLE_CLOSE {
+            self.sink = None;
             tracing::debug!("audio output closed after idle");
         }
 
-        let (state, position) = match (&self.output, self.current) {
-            (Some(out), Some(_)) if out.player.is_paused() => {
-                (PlayState::Paused, out.player.get_pos())
-            }
-            (Some(out), Some(_)) => (PlayState::Playing, out.player.get_pos()),
-            _ => (PlayState::Idle, Duration::ZERO),
+        let (state, position) = match &self.current {
+            Some(slot) if slot.player.is_paused() => (PlayState::Paused, slot.player.get_pos()),
+            Some(slot) => (PlayState::Playing, slot.player.get_pos()),
+            None => (PlayState::Idle, Duration::ZERO),
         };
         let status = PlayerStatus {
             state,
             position,
-            duration: self.current.and_then(|(_, d)| d),
+            duration: self.current.as_ref().and_then(|s| s.duration),
             volume: self.volume,
         };
         self.status_tx.send_if_modified(|old| {
@@ -351,6 +443,104 @@ impl Engine {
             *old = status;
             changed
         });
+    }
+
+    /// Moves to the preloaded track when the current one ends (gapless) or
+    /// enters its last `crossfade` (overlap), else reports the end.
+    fn advance(&mut self) {
+        let Some(slot) = &self.current else {
+            return;
+        };
+        let remaining = slot
+            .duration
+            .map(|d| d.saturating_sub(slot.player.get_pos()));
+        // Gapless: append the next track to the queue shortly before the end
+        // (late, so a changed queue can still cancel it cleanly).
+        if self.crossfade.is_zero()
+            && remaining.is_some_and(|r| r <= GAPLESS_LEAD)
+            && let Some(next) = &mut self.next
+            && let Some(decoded) = next.decoded.take()
+        {
+            slot.player.append(decoded);
+            next.queued = true;
+        }
+        // Gapless: the queue moved on to the appended track.
+        if let Some(next) = &self.next
+            && next.queued
+            && slot.player.len() <= 1
+            && !slot.player.empty()
+        {
+            let next = self.next.take().expect("checked");
+            if next.cancelled {
+                let generation = slot.generation;
+                self.current = None;
+                let _ = self.events.send(PlayerEvent::Ended { generation });
+                return;
+            }
+            let slot = self.current.as_mut().expect("checked");
+            slot.generation = next.generation;
+            slot.duration = next.duration;
+            let _ = self.events.send(PlayerEvent::Started {
+                generation: next.generation,
+            });
+            return;
+        }
+        // Crossfade: start the next track on its own player, fade the old.
+        let overlap_now = !self.crossfade.is_zero()
+            && !slot.player.is_paused()
+            && remaining.is_some_and(|r| r <= self.crossfade)
+            && self.next.as_ref().is_some_and(|n| n.decoded.is_some());
+        if overlap_now {
+            let next = self.next.take().expect("checked");
+            let player = match self.new_player() {
+                Ok(player) => player,
+                Err(message) => return self.error(next.generation, message),
+            };
+            player.set_volume(0.0);
+            player.append(next.decoded.expect("checked"));
+            player.play();
+            let old = self.current.replace(Slot {
+                player,
+                generation: next.generation,
+                duration: next.duration,
+            });
+            self.fading = old.map(|s| Fading {
+                player: s.player,
+                started: Instant::now(),
+            });
+            let _ = self.events.send(PlayerEvent::Started {
+                generation: next.generation,
+            });
+            return;
+        }
+        if slot.player.empty() {
+            let generation = slot.generation;
+            self.current = None;
+            self.next = None;
+            let _ = self.events.send(PlayerEvent::Ended { generation });
+        }
+    }
+
+    /// Volume ramps of a crossfade (equal-power-ish: linear in amplitude).
+    fn fade(&mut self) {
+        let Some(fading) = &self.fading else {
+            return;
+        };
+        let t = if self.crossfade.is_zero() {
+            1.0
+        } else {
+            (fading.started.elapsed().as_secs_f32() / self.crossfade.as_secs_f32()).min(1.0)
+        };
+        fading.player.set_volume(self.volume * (1.0 - t));
+        if let Some(slot) = &self.current {
+            slot.player.set_volume(self.volume * t);
+        }
+        if t >= 1.0 || fading.player.empty() {
+            self.fading = None;
+            if let Some(slot) = &self.current {
+                slot.player.set_volume(self.volume);
+            }
+        }
     }
 }
 

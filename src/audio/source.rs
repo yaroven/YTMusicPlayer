@@ -5,12 +5,17 @@
 //! → JS runtime → `yt-dlp -U`), the format check, a 403/410 when opening
 //! (re-resolve once) or mid-track (fresh URL, same offset), prefetch of the
 //! next track and the daily yt-dlp update. The duration falls back to the
-//! library's when the media doesn't report one.
+//! library's when the media doesn't report one. Downloaded tracks play from
+//! their file; loudness normalization uses YouTube's own measurement.
 //!
 //! yt-dlp sits behind the [`Extractor`] seam: [`YtDlp`] in the app, scripted
 //! fakes in tests.
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{Result, bail};
 use futures_util::future::BoxFuture;
@@ -18,10 +23,25 @@ use futures_util::future::BoxFuture;
 use super::{
     extractor::{self, AudioStream, YtDlp},
     js_runtime::JsRuntime,
+    player::Load,
     resolver::{JsPolicy, StreamResolver},
-    stream::{HttpStream, Refresh},
+    stream::{HttpStream, Media, Refresh},
 };
-use crate::{api::models::Track, storage::Library};
+use crate::{
+    api::models::Track,
+    catalog::Catalog,
+    storage::{Download, Library},
+};
+
+/// Volume factor for a track `db` louder than YouTube's target (YouTube only
+/// turns tracks down, never up).
+pub fn gain_for(db: f32) -> f32 {
+    if db > 0.0 {
+        10f32.powf(-db / 20.0)
+    } else {
+        1.0
+    }
+}
 
 /// What resolves video ids into media URLs (and keeps itself current).
 pub trait Extractor: Send + Sync + 'static {
@@ -48,6 +68,13 @@ pub trait Extractor: Send + Sync + 'static {
         http: &'a reqwest::Client,
         max_age: Duration,
     ) -> BoxFuture<'a, extractor::Result<bool>>;
+
+    /// Saves the track's audio (m4a) to `dest`.
+    fn download<'a>(
+        &'a self,
+        video_id: &'a str,
+        dest: &'a Path,
+    ) -> BoxFuture<'a, extractor::Result<()>>;
 }
 
 impl Extractor for YtDlp {
@@ -83,40 +110,114 @@ impl Extractor for YtDlp {
     ) -> BoxFuture<'a, extractor::Result<bool>> {
         Box::pin(YtDlp::update_if_stale(self, http, max_age))
     }
+
+    fn download<'a>(
+        &'a self,
+        video_id: &'a str,
+        dest: &'a Path,
+    ) -> BoxFuture<'a, extractor::Result<()>> {
+        Box::pin(YtDlp::download_audio(self, video_id, dest))
+    }
 }
 
 /// An opened track, ready for the player.
 pub struct Opened {
-    pub body: HttpStream,
+    pub media: Media,
     /// From the media, else from the library listing.
     pub duration: Option<Duration>,
-    pub stream: AudioStream,
+    /// Loudness normalization factor (1.0: as is).
+    pub gain: f32,
+    /// The resolved stream (`None` for a downloaded file).
+    pub stream: Option<AudioStream>,
+}
+
+impl Opened {
+    /// What the player needs, tagged with `generation`.
+    pub fn into_load(self, generation: u64) -> Load {
+        Load {
+            media: self.media,
+            duration: self.duration,
+            gain: self.gain,
+            generation,
+        }
+    }
+}
+
+/// Optional parts of a [`TrackSource`].
+#[derive(Clone, Default)]
+pub struct SourceOptions {
+    /// Persists resolved URLs and knows downloaded tracks.
+    pub store: Option<Arc<Library>>,
+    /// For loudness normalization (`None`: off).
+    pub catalog: Option<Catalog>,
+    /// Where downloads go.
+    pub downloads: Option<PathBuf>,
 }
 
 #[derive(Clone)]
 pub struct TrackSource {
     resolver: StreamResolver,
+    extractor: Arc<dyn Extractor>,
     http: reqwest::Client,
+    options: SourceOptions,
 }
 
+/// How long normalization may delay the start of a track.
+const LOUDNESS_TIMEOUT: Duration = Duration::from_secs(3);
+
 impl TrackSource {
-    /// `store` persists resolved URLs across restarts.
     pub fn new(
         extractor: Arc<dyn Extractor>,
         http: reqwest::Client,
         bin_dir: PathBuf,
         policy: JsPolicy,
-        store: Option<Arc<Library>>,
+        options: SourceOptions,
     ) -> Self {
         Self {
-            resolver: StreamResolver::new(extractor, http.clone(), bin_dir, policy, store),
+            resolver: StreamResolver::new(
+                extractor.clone(),
+                http.clone(),
+                bin_dir,
+                policy,
+                options.store.clone(),
+            ),
+            extractor,
             http,
+            options,
         }
     }
 
-    /// Resolves and starts downloading `track`. Errors are final for this
-    /// attempt (the URL ladder and one re-resolve already ran).
+    /// Opens `track`: the downloaded file if there is one, else resolves
+    /// and starts streaming it. Errors are final for this attempt (the URL
+    /// ladder and one re-resolve already ran).
     pub async fn open(&self, track: &Track) -> Result<Opened> {
+        let listed = track.duration_secs.map(|s| Duration::from_secs(s.into()));
+        let local = self
+            .options
+            .store
+            .as_ref()
+            .and_then(|s| s.download_path(&track.video_id).ok().flatten())
+            .filter(|p| p.is_file());
+        if let Some(path) = local {
+            let gain = self.gain(&track.video_id).await;
+            return Ok(Opened {
+                media: Media::file(&path)?,
+                duration: listed,
+                gain,
+                stream: None,
+            });
+        }
+        let (opened, gain) = tokio::join!(self.stream(track), self.gain(&track.video_id));
+        let (body, stream) = opened?;
+        Ok(Opened {
+            media: Media::Http(body),
+            duration: stream.duration.or(listed),
+            gain,
+            stream: Some(stream),
+        })
+    }
+
+    async fn stream(&self, track: &Track) -> Result<(HttpStream, AudioStream)> {
         let video_id = &*track.video_id;
         let stream = self.resolver.resolve(video_id).await?;
         if !stream.is_decodable() {
@@ -126,28 +227,63 @@ impl TrackSource {
                 stream.codec.as_deref().unwrap_or("?")
             );
         }
-        let (body, stream) =
-            match HttpStream::open(&self.http, &stream, Some(self.refresher(video_id))).await {
-                Ok(body) => (body, stream),
-                Err(err) if err.is_forbidden() => {
-                    tracing::info!(video_id, %err, "media URL rejected, re-resolving");
-                    self.resolver.report_playback_failure(video_id);
-                    let stream = self.resolver.resolve(video_id).await?;
-                    let body =
-                        HttpStream::open(&self.http, &stream, Some(self.refresher(video_id)))
-                            .await?;
-                    (body, stream)
-                }
-                Err(err) => return Err(err.into()),
-            };
-        let duration = stream
-            .duration
-            .or_else(|| track.duration_secs.map(|s| Duration::from_secs(s.into())));
-        Ok(Opened {
-            body,
-            duration,
-            stream,
-        })
+        match HttpStream::open(&self.http, &stream, Some(self.refresher(video_id))).await {
+            Ok(body) => Ok((body, stream)),
+            Err(err) if err.is_forbidden() => {
+                tracing::info!(video_id, %err, "media URL rejected, re-resolving");
+                self.resolver.report_playback_failure(video_id);
+                let stream = self.resolver.resolve(video_id).await?;
+                let body =
+                    HttpStream::open(&self.http, &stream, Some(self.refresher(video_id))).await?;
+                Ok((body, stream))
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    /// Normalization factor: YouTube's own, which only turns loud tracks
+    /// down. 1.0 when off, offline or slow.
+    async fn gain(&self, video_id: &str) -> f32 {
+        let Some(catalog) = &self.options.catalog else {
+            return 1.0;
+        };
+        match tokio::time::timeout(LOUDNESS_TIMEOUT, catalog.loudness_db(video_id)).await {
+            Ok(Ok(Some(db))) => gain_for(db),
+            Ok(Err(err)) => {
+                tracing::debug!(%err, video_id, "loudness");
+                1.0
+            }
+            _ => 1.0,
+        }
+    }
+
+    /// Saves `track`'s audio for offline play.
+    pub async fn download(&self, track: &Track) -> Result<Download> {
+        let (Some(dir), Some(store)) = (&self.options.downloads, &self.options.store) else {
+            bail!("downloads aren't available here");
+        };
+        tokio::fs::create_dir_all(dir).await?;
+        let path = dir.join(format!("{}.m4a", track.video_id));
+        self.extractor.download(&track.video_id, &path).await?;
+        let bytes = tokio::fs::metadata(&path).await?.len();
+        let download = Download {
+            track: track.clone(),
+            path,
+            bytes,
+        };
+        store.add_download(&download)?;
+        Ok(download)
+    }
+
+    /// Deletes a downloaded track's file and record.
+    pub async fn remove_download(&self, video_id: &str) -> Result<()> {
+        let Some(store) = &self.options.store else {
+            return Ok(());
+        };
+        if let Some(path) = store.download_path(video_id)? {
+            let _ = tokio::fs::remove_file(&path).await;
+        }
+        store.remove_download(video_id)
     }
 
     /// The media URL alone (`ytm resolve`, for debugging).
@@ -305,6 +441,13 @@ mod tests {
         ) -> BoxFuture<'a, extractor::Result<bool>> {
             Box::pin(async { Ok(false) })
         }
+        fn download<'a>(
+            &'a self,
+            _video_id: &'a str,
+            _dest: &'a Path,
+        ) -> BoxFuture<'a, extractor::Result<()>> {
+            Box::pin(async { Err(ExtractorError::NotManaged) })
+        }
     }
 
     fn source(urls: Vec<String>) -> (TrackSource, Arc<Scripted>) {
@@ -317,7 +460,7 @@ mod tests {
             reqwest::Client::new(),
             std::env::temp_dir(),
             JsPolicy::Never,
-            None,
+            SourceOptions::default(),
         );
         (source, scripted)
     }
@@ -333,7 +476,7 @@ mod tests {
 
     async fn read_all(opened: Opened) -> std::io::Result<Vec<u8>> {
         tokio::task::spawn_blocking(move || {
-            let mut body = opened.body;
+            let mut body = opened.media;
             let mut out = Vec::new();
             body.read_to_end(&mut out).map(|_| out)
         })

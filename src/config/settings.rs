@@ -41,6 +41,33 @@ audio_device = ""
 
 # Startup volume, 0.0 - 1.0.
 volume = 0.8
+
+# When the queue runs out, keep playing the last song's radio.
+autoplay = true
+
+# Turn loud tracks down to YouTube's target loudness, like YouTube Music.
+normalize_volume = true
+
+# Seconds the end of a track overlaps the next (0 = gapless).
+crossfade = 0
+
+# A desktop notification when the track changes (window).
+notifications = true
+
+# Icon in the menu bar / system tray (window).
+tray = true
+
+# Downloaded tracks: stop downloading beyond this many MB (0 = no limit).
+download_limit_mb = 0
+
+# Last.fm scrobbling: your own API account from https://www.last.fm/api/account/create,
+# then `ytm lastfm-login`.
+lastfm_api_key = ""
+lastfm_api_secret = ""
+
+# Discord "Listening to" status: an application id from
+# https://discord.com/developers/applications (empty = off).
+discord_client_id = ""
 "#;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +84,16 @@ pub struct Settings {
     pub ytdlp_extra_args: Vec<String>,
     pub liked_music_only: bool,
     pub volume: f32,
+    pub autoplay: bool,
+    pub normalize_volume: bool,
+    /// Seconds.
+    pub crossfade: f32,
+    pub notifications: bool,
+    pub tray: bool,
+    pub download_limit_mb: u64,
+    pub lastfm_api_key: String,
+    pub lastfm_api_secret: String,
+    pub discord_client_id: String,
 }
 
 impl Default for Settings {
@@ -73,6 +110,15 @@ impl Default for Settings {
             ytdlp_extra_args: Vec::new(),
             liked_music_only: true,
             volume: 0.8,
+            autoplay: true,
+            normalize_volume: true,
+            crossfade: 0.0,
+            notifications: true,
+            tray: true,
+            download_limit_mb: 0,
+            lastfm_api_key: String::new(),
+            lastfm_api_secret: String::new(),
+            discord_client_id: String::new(),
         }
     }
 }
@@ -115,6 +161,7 @@ impl Settings {
         settings.client_secret = settings.client_secret.trim().to_owned();
         settings.device_client_secret = settings.device_client_secret.trim().to_owned();
         settings.volume = settings.volume.clamp(0.0, 1.0);
+        settings.crossfade = settings.crossfade.clamp(0.0, 12.0);
         Ok(settings)
     }
 
