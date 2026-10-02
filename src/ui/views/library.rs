@@ -43,7 +43,7 @@ pub fn draw_playlists(frame: &mut Frame, area: Rect, app: &mut App) {
     if app.playlists.is_empty() {
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        let hint = match (app.session.syncing, app.session.logged_in) {
+        let hint = match (app.session.syncing, app.session.signed_in()) {
             (true, _) => "syncing…",
             (false, true) => "empty — press r to sync",
             (false, false) => "not logged in — run `ytm login`",

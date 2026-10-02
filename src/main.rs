@@ -8,12 +8,8 @@ use std::{
 use anyhow::{Context, Result, bail};
 use tracing_subscriber::EnvFilter;
 use ytm_player::{
-    account,
-    api::{
-        auth::OAuthClient,
-        models::{Track, video_id_from_input},
-        token_store,
-    },
+    account::{Account, Flow, Prompt},
+    api::models::{Track, video_id_from_input},
     app,
     audio::{
         Opened,
@@ -158,15 +154,17 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
 async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Result<()> {
     match args {
         [] => run_tui(paths, settings).await,
-        ["login"] => login(paths, settings, false).await,
-        ["login", "--device"] => login(paths, settings, true).await,
+        ["login"] => login(paths, settings, Flow::Browser).await,
+        ["login", "--device"] => login(paths, settings, Flow::Device).await,
         ["logout"] => {
-            token_store::clear().await?;
+            account(paths, settings).await?.sign_out().await?;
             println!("Signed out.");
             Ok(())
         }
-        ["import-client", file] => import_client(paths, file, false),
-        ["import-client", file, "--device"] => import_client(paths, file, true),
+        ["import-client", file] => import_client(paths, settings, file, Flow::Browser).await,
+        ["import-client", file, "--device"] => {
+            import_client(paths, settings, file, Flow::Device).await
+        }
         ["sync"] => sync(paths, settings).await,
         ["play", input] => play(paths, settings, input).await,
         ["resolve", id] => resolve(paths, settings, id, false).await,
@@ -229,16 +227,8 @@ fn uninstall(_options: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// The browser-login client, or an error explaining how to set one up.
-fn oauth_client(settings: &Settings, paths: &AppPaths) -> Result<OAuthClient> {
-    account::oauth_client(settings).with_context(|| {
-        format!(
-            "no Google OAuth client configured.\n\
-             Run `ytm import-client <downloaded.json>`, set it in the window \
-             (`ytm gui` → Sign in), or set client_id and client_secret in {} (see README).",
-            paths.config_file().display()
-        )
-    })
+async fn account(paths: &AppPaths, settings: &Settings) -> Result<Account> {
+    bootstrap::account(paths, settings, &bootstrap::http_client()?).await
 }
 
 async fn run_tui(paths: &AppPaths, settings: &Settings) -> Result<()> {
@@ -258,41 +248,42 @@ fn run_gui(_paths: &AppPaths, _settings: &Settings) -> Result<()> {
     bail!("this build has no GUI (rebuild with the `gui` feature)")
 }
 
-async fn login(paths: &AppPaths, settings: &Settings, device: bool) -> Result<()> {
-    let token = if device {
-        let cfg = account::device_client(settings).with_context(|| {
-            format!(
-                "--device needs a \"TVs and Limited Input devices\" OAuth client: set \
-                 device_client_id/device_client_secret in {} or run \
-                 `ytm import-client <json> --device`",
-                paths.config_file().display()
-            )
-        })?;
-        ytm_player::api::auth::login_device(&cfg).await?
-    } else {
-        ytm_player::api::auth::login(&oauth_client(settings, paths)?, |url| {
-            println!("Open this URL to sign in (trying to open your browser):\n\n{url}\n")
-        })
-        .await?
-    };
-    if token.refresh_token.is_none() {
-        eprintln!("warning: Google returned no refresh token; you may need to log in again soon");
-    }
-    token_store::save(&token).await?;
+async fn login(paths: &AppPaths, settings: &Settings, flow: Flow) -> Result<()> {
+    let mut account = account(paths, settings).await?;
+    account
+        .sign_in(flow, |prompt| match prompt {
+            Prompt::OpenUrl(url) => {
+                println!("Open this URL to sign in (trying to open your browser):\n\n{url}\n")
+            }
+            Prompt::EnterCode { url, code } => println!(
+                "On any phone or computer, open:\n\n    {url}\n\nand enter the code:  {code}\n\nWaiting for approval…"
+            ),
+        })?
+        .await?;
+    account.connect();
     println!("Signed in. Run `ytm sync` or just `ytm`.");
     Ok(())
 }
 
 /// Reads Google's "Download JSON" file (`{"installed": {...}}`) into config.
-fn import_client(paths: &AppPaths, file: &str, device: bool) -> Result<()> {
-    let (id, secret) = account::read_client_json(Path::new(file))?;
-    Settings::store_client(&paths.config_file(), &id, &secret, device)?;
-    let kind = if device { "device client" } else { "client" };
+async fn import_client(
+    paths: &AppPaths,
+    settings: &Settings,
+    file: &str,
+    flow: Flow,
+) -> Result<()> {
+    let id = account(paths, settings)
+        .await?
+        .import_client(flow, Path::new(file))?;
+    let (kind, login) = match flow {
+        Flow::Browser => ("client", "ytm login"),
+        Flow::Device => ("device client", "ytm login --device"),
+    };
     println!(
         "Imported {kind} {id} into {}",
         paths.config_file().display()
     );
-    println!("Next: ytm login{}", if device { " --device" } else { "" });
+    println!("Next: {login}");
     Ok(())
 }
 
@@ -311,10 +302,12 @@ async fn status(paths: &AppPaths, settings: &Settings) -> Result<()> {
         "config:     {} (OAuth client: {client}{device})",
         paths.config_file().display()
     );
-    let signed_in = match token_store::load().await {
-        Ok(Some(t)) if t.device => "yes (device)".to_owned(),
-        Ok(Some(_)) => "yes".to_owned(),
-        Ok(None) => "no".to_owned(),
+    let signed_in = match account(paths, settings).await {
+        Ok(a) => match a.signed_in_with() {
+            Some(Flow::Device) => "yes (device)".to_owned(),
+            Some(Flow::Browser) => "yes".to_owned(),
+            None => "no".to_owned(),
+        },
         Err(err) => format!("unknown ({err:#})"),
     };
     println!("signed in:  {signed_in}");
@@ -340,18 +333,14 @@ async fn status(paths: &AppPaths, settings: &Settings) -> Result<()> {
 }
 
 async fn sync(paths: &AppPaths, settings: &Settings) -> Result<()> {
-    let http = bootstrap::http_client()?;
-    let youtube = account::youtube_client(settings, &http)
+    let youtube = account(paths, settings)
         .await?
-        .context("not logged in — run `ytm login`")?;
+        .youtube()
+        .context("not signed in — run `ytm login`")?;
     let library = Arc::new(Library::open(&paths.database())?);
     println!("Syncing…");
     let report = sync_library(&youtube, library, settings.liked_music_only).await?;
-    println!(
-        "Synced {} playlists, {} tracks ({} unchanged, {} API quota units).",
-        report.playlists, report.tracks, report.unchanged, report.quota_units
-    );
-    println!("Liked: {}.", report.liked_note());
+    println!("{}", report.summary());
     Ok(())
 }
 

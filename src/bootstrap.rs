@@ -7,7 +7,8 @@ use std::{sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 
 use crate::{
-    account,
+    account::Account,
+    api::token_store::Tokens,
     audio::{JsPolicy, TrackSource, extractor::YtDlp},
     config::{paths::AppPaths, settings::Settings},
     session::Deps,
@@ -75,7 +76,7 @@ pub async fn deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
     let source = track_source(paths, settings, &http, ytdlp, false, Some(library.clone()));
     source.spawn_maintenance();
     Ok(Deps {
-        youtube: account::youtube_client(settings, &http).await?,
+        account: account(paths, settings, &http).await?,
         library,
         source,
         http,
@@ -83,8 +84,20 @@ pub async fn deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
         volume: settings.volume,
         media_controls: settings.media_controls,
         audio_device: settings.audio_device(),
-        config_file: paths.config_file(),
-        oauth_client: account::oauth_client(settings),
-        device_client: account::device_client(settings),
     })
+}
+
+/// The Google account, with the token in the OS keyring.
+pub async fn account(
+    paths: &AppPaths,
+    settings: &Settings,
+    http: &reqwest::Client,
+) -> Result<Account> {
+    Account::load(
+        settings,
+        paths.config_file(),
+        http.clone(),
+        Tokens::keyring(),
+    )
+    .await
 }

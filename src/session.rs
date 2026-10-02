@@ -4,7 +4,7 @@
 //! [`Session::next_event`] to learn what changed.
 
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -13,19 +13,16 @@ use anyhow::Result;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::{
-    account,
+    account::{Account, Flow, Prompt},
     api::{
-        auth::{self, OAuthClient},
         client::YouTubeClient,
         models::{LIKED_PLAYLIST_ID, Playlist, Track},
-        token_store,
     },
     audio::{
         Opened, TrackSource,
         player::{PlayState, PlayerEvent, PlayerHandle, PlayerStatus},
         queue::{Queue, Repeat},
     },
-    config::settings::Settings,
     media::{MediaAction, MediaControls},
     storage::Library,
     sync::{SyncReport, sync_library},
@@ -48,17 +45,12 @@ pub struct Deps {
     pub library: Arc<Library>,
     pub source: TrackSource,
     pub http: reqwest::Client,
-    /// `None` when not logged in.
-    pub youtube: Option<Arc<YouTubeClient>>,
     pub liked_music_only: bool,
     pub volume: f32,
     pub media_controls: bool,
     pub audio_device: Option<String>,
-    /// `config.toml`, where an OAuth client set in the app is saved.
-    pub config_file: PathBuf,
-    /// Browser-login OAuth client (`None` until one is configured).
-    pub oauth_client: Option<OAuthClient>,
-    pub device_client: Option<OAuthClient>,
+    /// OAuth client, sign-in and the YouTube API client.
+    pub account: Account,
 }
 
 pub struct Status {
@@ -127,7 +119,6 @@ pub struct Session {
     pub searching: bool,
     pub search: Option<SearchResults>,
     search_generation: u64,
-    pub logged_in: bool,
     /// Waiting for the user to finish signing in in the browser.
     pub signing_in: bool,
     login_generation: u64,
@@ -168,7 +159,6 @@ impl Session {
             None
         };
         Ok(Self {
-            logged_in: deps.youtube.is_some(),
             player_status: player.status(),
             deps,
             player,
@@ -200,7 +190,7 @@ impl Session {
 
     /// Kicks off the first sync, or explains why there's nothing to show.
     pub fn startup(&mut self, library_empty: bool) {
-        match (self.logged_in, library_empty) {
+        match (self.signed_in(), library_empty) {
             (true, true) => self.start_sync(),
             (false, true) => self.set_error(NOT_SIGNED_IN),
             (false, false) => self.set_info("Offline library (not signed in) — sign in to sync"),
@@ -288,14 +278,7 @@ impl Session {
                 match result {
                     Ok(r) => {
                         changes.library = true;
-                        self.set_info(format!(
-                            "Synced {} playlists, {} tracks ({} unchanged, {} API units) · {}",
-                            r.playlists,
-                            r.tracks,
-                            r.unchanged,
-                            r.quota_units,
-                            r.liked_note()
-                        ));
+                        self.set_info(r.summary());
                     }
                     Err(err) => self.set_error(format!("Sync failed: {err:#}")),
                 }
@@ -377,16 +360,9 @@ impl Session {
                 changes.account = true;
                 match result {
                     Ok(()) => {
-                        if let Some(client) = self.deps.oauth_client.clone() {
-                            self.deps.youtube = Some(account::api_client(
-                                client,
-                                self.deps.device_client.clone(),
-                                &self.deps.http,
-                            ));
-                            self.logged_in = true;
-                            self.set_info("Signed in");
-                            self.start_sync();
-                        }
+                        self.deps.account.connect();
+                        self.set_info("Signed in");
+                        self.start_sync();
                     }
                     Err(err) => self.set_error(format!("Sign-in failed: {err:#}")),
                 }
@@ -584,10 +560,10 @@ impl Session {
     // --- library changes -----------------------------------------------------------
 
     fn youtube(&mut self) -> Option<Arc<YouTubeClient>> {
-        if self.deps.youtube.is_none() {
+        if !self.signed_in() {
             self.set_error(NOT_SIGNED_IN);
         }
-        self.deps.youtube.clone()
+        self.deps.account.youtube()
     }
 
     pub fn start_sync(&mut self) {
@@ -621,7 +597,7 @@ impl Session {
         self.searching = true;
         self.set_info(format!("Searching “{query}”…"));
         let (youtube, source, tx, generation) = (
-            self.deps.youtube.clone(),
+            self.deps.account.youtube(),
             self.deps.source.clone(),
             self.tx.clone(),
             self.search_generation,
@@ -651,66 +627,56 @@ impl Session {
 
     // --- account ------------------------------------------------------------------
 
-    /// The configured OAuth client ID, if any.
-    pub fn client_id(&self) -> Option<&str> {
-        self.deps
-            .oauth_client
-            .as_ref()
-            .map(|c| c.client_id.as_str())
+    pub fn signed_in(&self) -> bool {
+        self.deps.account.signed_in()
     }
 
-    /// Saves an OAuth client (Desktop app type) into `config.toml`.
-    pub fn set_client(&mut self, id: &str, secret: &str) -> bool {
-        let saved = Settings::store_client(&self.deps.config_file, id, secret, false)
-            .and_then(|()| Settings::load(&self.deps.config_file));
-        match saved {
-            Ok(settings) => {
-                self.deps.oauth_client = account::oauth_client(&settings);
-                self.set_info(if self.logged_in {
-                    "OAuth client saved"
-                } else {
-                    "OAuth client saved — now sign in"
-                });
-                true
-            }
-            Err(err) => {
-                self.set_error(format!("{err:#}"));
-                false
-            }
-        }
+    /// The configured OAuth client ID (browser sign-in), if any.
+    pub fn client_id(&self) -> Option<&str> {
+        self.deps.account.client_id(Flow::Browser)
+    }
+
+    /// Saves an OAuth client ("Desktop app") into `config.toml`.
+    pub fn set_client(&mut self, id: &str, secret: &str) {
+        let result = self.deps.account.set_client(Flow::Browser, id, secret);
+        self.client_saved(result);
     }
 
     /// Reads Google's downloaded client JSON and saves it.
-    pub fn import_client(&mut self, path: &Path) -> bool {
-        match account::read_client_json(path) {
-            Ok((id, secret)) => self.set_client(&id, &secret),
-            Err(err) => {
-                self.set_error(format!("{err:#}"));
-                false
-            }
+    pub fn import_client(&mut self, path: &Path) {
+        let result = self.deps.account.import_client(Flow::Browser, path);
+        self.client_saved(result.map(|_| ()));
+    }
+
+    fn client_saved(&mut self, result: Result<()>) {
+        match result {
+            Ok(()) if self.signed_in() => self.set_info("OAuth client saved"),
+            Ok(()) => self.set_info("OAuth client saved — now sign in"),
+            Err(err) => self.set_error(format!("{err:#}")),
         }
     }
 
     /// Opens Google's consent page in the browser and waits (in the
     /// background) for the redirect; then syncs.
     pub fn sign_in(&mut self) {
-        let Some(client) = self.deps.oauth_client.clone() else {
-            self.set_error(
-                "No OAuth client yet: add it under “Sign in” in the window (`ytm gui`) or run `ytm import-client <json>`",
-            );
-            return;
+        let signing_in = self.deps.account.sign_in(Flow::Browser, |prompt| {
+            if let Prompt::OpenUrl(url) = prompt {
+                tracing::info!(%url, "sign-in page");
+            }
+        });
+        let signing_in = match signing_in {
+            Ok(future) => future,
+            Err(err) => {
+                self.set_error(format!("{err:#}"));
+                return;
+            }
         };
         self.login_generation += 1;
         self.signing_in = true;
         self.set_info("Finish signing in in your browser…");
         let (tx, generation) = (self.tx.clone(), self.login_generation);
         tokio::spawn(async move {
-            let result = async {
-                let token =
-                    auth::login(&client, |url| tracing::info!(%url, "sign-in page")).await?;
-                token_store::save(&token).await
-            }
-            .await;
+            let result = signing_in.await;
             let _ = tx.send(Background::SignedIn { generation, result });
         });
     }
@@ -719,11 +685,10 @@ impl Session {
     pub fn sign_out(&mut self) {
         self.login_generation += 1;
         self.signing_in = false;
-        self.deps.youtube = None;
-        self.logged_in = false;
+        let clearing = self.deps.account.sign_out();
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            let _ = tx.send(Background::SignedOut(token_store::clear().await));
+            let _ = tx.send(Background::SignedOut(clearing.await));
         });
     }
 

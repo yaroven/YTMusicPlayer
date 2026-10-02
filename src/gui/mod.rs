@@ -118,7 +118,7 @@ impl Snapshot {
                 .map(|s| (s.text.clone(), s.is_error)),
             syncing: session.syncing,
             searching: session.searching,
-            signed_in: session.logged_in,
+            signed_in: session.signed_in(),
             signing_in: session.signing_in,
             client_id: session.client_id().unwrap_or_default().to_owned(),
             memory: session.memory.clone(),
@@ -532,7 +532,7 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps) -> Result<()> {
 
     wire_callbacks(&ui, &view, &cmd_tx);
     // First start: nothing works without an account, so ask right away.
-    if deps.youtube.is_none() {
+    if !deps.account.signed_in() {
         ui.set_download_file(downloaded_client_name().into());
         ui.set_account_open(true);
     }

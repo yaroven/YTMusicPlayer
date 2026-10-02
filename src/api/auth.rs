@@ -23,7 +23,7 @@ use tokio::{
     sync::Mutex,
 };
 
-use super::token_store::{self, StoredToken};
+use super::token_store::{StoredToken, Tokens};
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
@@ -96,8 +96,12 @@ pub async fn login(cfg: &OAuthClient, show_url: impl FnOnce(&str)) -> Result<Sto
     Ok(stored(&response, None, false))
 }
 
-/// Device flow: prints a URL and code, polls until approved on any device.
-pub async fn login_device(cfg: &OAuthClient) -> Result<StoredToken> {
+/// Device flow: `show_code(url, code)` tells the user where to approve;
+/// then polls until approved on any device.
+pub async fn login_device(
+    cfg: &OAuthClient,
+    show_code: impl FnOnce(&str, &str),
+) -> Result<StoredToken> {
     let client = basic_client!(cfg)
         .set_device_authorization_url(DeviceAuthorizationUrl::new(DEVICE_URL.into())?)
         // Google wants client credentials in the request body.
@@ -113,10 +117,9 @@ pub async fn login_device(cfg: &OAuthClient) -> Result<StoredToken> {
         )?;
     let _: &EmptyExtraDeviceAuthorizationFields = details.extra_fields();
 
-    println!(
-        "On any phone or computer, open:\n\n    {}\n\nand enter the code:  {}\n\nWaiting for approval…",
+    show_code(
         details.verification_uri().as_str(),
-        details.user_code().secret()
+        details.user_code().secret(),
     );
     let response = client
         .exchange_device_access_token(&details)
@@ -200,33 +203,31 @@ pub struct Auth {
     cfg: OAuthClient,
     /// Refreshes tokens obtained via [`login_device`].
     device_cfg: Option<OAuthClient>,
+    tokens: Tokens,
     token: Mutex<Option<StoredToken>>,
 }
 
 impl Auth {
-    pub fn new(cfg: OAuthClient, device_cfg: Option<OAuthClient>) -> Self {
+    pub fn new(cfg: OAuthClient, device_cfg: Option<OAuthClient>, tokens: Tokens) -> Self {
         Self {
             cfg,
             device_cfg,
+            tokens,
             token: Mutex::new(None),
         }
-    }
-
-    pub async fn is_logged_in(&self) -> bool {
-        matches!(token_store::load().await, Ok(Some(_)))
     }
 
     pub async fn access_token(&self) -> Result<String> {
         let mut guard = self.token.lock().await;
         if guard.is_none() {
-            *guard = token_store::load().await?;
+            *guard = self.tokens.load().await?;
         }
         let Some(token) = guard.as_mut() else {
             bail!("not signed in — {SIGN_IN_AGAIN}");
         };
         if token.is_expired(60) {
             *token = self.refresh(token).await?;
-            token_store::save(token).await?;
+            self.tokens.save(token).await?;
         }
         Ok(token.access_token.clone())
     }

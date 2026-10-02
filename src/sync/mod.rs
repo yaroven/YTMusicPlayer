@@ -27,6 +27,18 @@ pub struct SyncReport {
 }
 
 impl SyncReport {
+    /// "Synced 5 playlists, 812 tracks (3 unchanged, 21 API units) · …".
+    pub fn summary(&self) -> String {
+        format!(
+            "Synced {} playlists, {} tracks ({} unchanged, {} API units) · {}",
+            self.playlists,
+            self.tracks,
+            self.unchanged,
+            self.quota_units,
+            self.liked_note()
+        )
+    }
+
     /// One-line explanation of where the liked list came from.
     pub fn liked_note(&self) -> String {
         match self.liked_source {
