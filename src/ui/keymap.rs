@@ -4,6 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
+    Artist,
     Cast,
     Quit,
     Help,
@@ -70,7 +71,7 @@ pub const HELP: &[(&str, &str)] = &[
     ("i", "albums / artists on this page"),
     ("s / e / A", "shuffle / repeat / autoplay"),
     ("v", "queue (x remove, J/K move, X clear)"),
-    ("u / R", "play next / start radio"),
+    ("u / R / w", "play next / start radio / artist's page"),
     ("f / d", "like / dislike"),
     ("a / x", "add to / remove from playlist"),
     ("D", "download for offline"),
@@ -119,6 +120,7 @@ pub fn action_for(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('v') => Action::ToggleQueue,
         KeyCode::Char('u') => Action::PlayNext,
         KeyCode::Char('R') => Action::Radio,
+        KeyCode::Char('w') => Action::Artist,
         KeyCode::Char('f') => Action::Like,
         KeyCode::Char('d') => Action::Dislike,
         KeyCode::Char('a') => Action::AddToPlaylist,

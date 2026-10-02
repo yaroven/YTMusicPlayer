@@ -74,6 +74,14 @@ pub enum ExtractorError {
         "age-restricted: YouTube wants a signed-in browser (Settings → Age-restricted songs, or cookies_from_browser in config.toml)"
     )]
     AgeRestricted,
+    /// Even with `browser`'s cookies YouTube asks to sign in.
+    #[error(
+        "age-restricted: {browser} isn't signed in to YouTube (or that account can't watch age-restricted videos) — sign in there, or pick another browser in Settings"
+    )]
+    AgeRestrictedSignedOut { browser: String },
+    /// yt-dlp couldn't read `browser`'s cookies.
+    #[error("can't read cookies from {browser}: {message}{}", MACOS_PRIVACY_HINT)]
+    Cookies { browser: String, message: String },
     /// yt-dlp rejected our flags: it predates them.
     #[error(
         "yt-dlp at {path} is too old ({message}); update or uninstall it so ytm can use its own copy"
@@ -144,15 +152,105 @@ impl AudioStream {
     }
 }
 
+/// macOS keeps other apps' data private: reading a browser's cookies needs
+/// Full Disk Access for the player.
+#[cfg(target_os = "macos")]
+const MACOS_PRIVACY_HINT: &str = " — macOS: allow ytm-player in System Settings → Privacy & Security → Full Disk Access, then restart it (or use a cookies.txt file, see README)";
+#[cfg(not(target_os = "macos"))]
+const MACOS_PRIVACY_HINT: &str = "";
+
 /// Browsers yt-dlp can read cookies from (`--cookies-from-browser`).
 pub const COOKIE_BROWSERS: [&str; 8] = [
     "chrome", "firefox", "safari", "edge", "brave", "chromium", "opera", "vivaldi",
 ];
 
-/// The browser whose YouTube login yt-dlp borrows for age-restricted
-/// videos ("" = none). Only used after a plain attempt says the video is
-/// age-restricted, so other tracks never touch the browser's cookie store.
-/// Shared, so the setting can change while the player runs.
+/// Browsers from [`COOKIE_BROWSERS`] with a profile on this computer.
+pub fn installed_browsers() -> Vec<&'static str> {
+    let Some(dirs) = directories::BaseDirs::new() else {
+        return Vec::new();
+    };
+    let (home, config, local) = (dirs.home_dir(), dirs.config_dir(), dirs.data_local_dir());
+    // Where each browser keeps its profiles (macOS: config_dir is
+    // ~/Library/Application Support; Linux: ~/.config; Windows: AppData).
+    let candidates: [(&str, Vec<std::path::PathBuf>); 8] = [
+        (
+            "chrome",
+            vec![
+                config.join("Google/Chrome"),
+                config.join("google-chrome"),
+                local.join("Google/Chrome/User Data"),
+            ],
+        ),
+        (
+            "firefox",
+            vec![
+                config.join("Firefox/Profiles"),
+                home.join(".mozilla/firefox"),
+                config.join("Mozilla/Firefox/Profiles"),
+            ],
+        ),
+        (
+            "safari",
+            vec![
+                home.join("Library/Containers/com.apple.Safari"),
+                home.join("Library/Cookies"),
+            ],
+        ),
+        (
+            "edge",
+            vec![
+                config.join("Microsoft Edge"),
+                config.join("microsoft-edge"),
+                local.join("Microsoft/Edge/User Data"),
+            ],
+        ),
+        (
+            "brave",
+            vec![
+                config.join("BraveSoftware/Brave-Browser"),
+                local.join("BraveSoftware/Brave-Browser/User Data"),
+            ],
+        ),
+        (
+            "chromium",
+            vec![
+                config.join("Chromium"),
+                config.join("chromium"),
+                local.join("Chromium/User Data"),
+            ],
+        ),
+        (
+            "opera",
+            vec![
+                config.join("com.operasoftware.Opera"),
+                config.join("opera"),
+                config.join("Opera Software/Opera Stable"),
+            ],
+        ),
+        (
+            "vivaldi",
+            vec![
+                config.join("Vivaldi"),
+                config.join("vivaldi"),
+                local.join("Vivaldi/User Data"),
+            ],
+        ),
+    ];
+    candidates
+        .into_iter()
+        .filter(|(name, paths)| {
+            (*name != "safari" || cfg!(target_os = "macos"))
+                // Only exists(): macOS privacy blocks listing the folder.
+                && paths.iter().any(|p| p.exists())
+        })
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// Where yt-dlp gets a YouTube login for age-restricted videos: a browser
+/// name, or the path of a cookies.txt file ("" = none). Only used after a
+/// plain attempt says the video is age-restricted, so other tracks never
+/// touch the cookies. Shared, so the setting can change while running.
 #[derive(Debug, Clone, Default)]
 pub struct Cookies(Arc<RwLock<String>>);
 
@@ -163,13 +261,23 @@ impl Cookies {
         cookies
     }
 
-    /// Ignores names yt-dlp doesn't know.
-    pub fn set(&self, browser: &str) {
-        let browser = browser.trim().to_lowercase();
+    /// A browser yt-dlp knows, or an existing file (`~/` allowed);
+    /// anything else turns cookies off.
+    pub fn set(&self, source: &str) {
+        let source = source.trim();
+        let browser = source.to_lowercase();
         let value = if COOKIE_BROWSERS.contains(&browser.as_str()) {
             browser
         } else {
-            String::new()
+            let path = match (source.strip_prefix("~/"), directories::BaseDirs::new()) {
+                (Some(rest), Some(dirs)) => dirs.home_dir().join(rest),
+                _ => std::path::PathBuf::from(source),
+            };
+            if !source.is_empty() && path.is_file() {
+                path.to_string_lossy().into_owned()
+            } else {
+                String::new()
+            }
         };
         *self.0.write().unwrap_or_else(|e| e.into_inner()) = value;
     }
@@ -177,6 +285,24 @@ impl Cookies {
     pub fn browser(&self) -> Option<String> {
         let browser = self.0.read().unwrap_or_else(|e| e.into_inner());
         (!browser.is_empty()).then(|| browser.clone())
+    }
+}
+
+/// yt-dlp's flag for a cookie source: a browser name or a cookies.txt.
+fn cookie_flag(source: &str) -> &'static str {
+    if COOKIE_BROWSERS.contains(&source) {
+        "--cookies-from-browser"
+    } else {
+        "--cookies"
+    }
+}
+
+/// How messages name a cookie source.
+fn cookie_source_name(source: &str) -> String {
+    if COOKIE_BROWSERS.contains(&source) {
+        source.to_owned()
+    } else {
+        "the cookies.txt file".to_owned()
     }
 }
 
@@ -209,6 +335,28 @@ impl YtDlp {
     /// The age-restricted cookie setting (shared).
     pub fn cookies(&self) -> Cookies {
         self.cookies.clone()
+    }
+
+    /// Names the outcome of a retry with `browser`'s cookies.
+    fn with_cookies_outcome<T>(browser: &str, result: Result<T>) -> Result<T> {
+        match result {
+            Err(ExtractorError::AgeRestricted) => Err(ExtractorError::AgeRestrictedSignedOut {
+                browser: cookie_source_name(browser),
+            }),
+            Err(ExtractorError::Failed { message, .. })
+                if message.to_lowercase().contains("cookie")
+                    || message.to_lowercase().contains("keyring") =>
+            {
+                Err(ExtractorError::Cookies {
+                    browser: cookie_source_name(browser),
+                    message: message
+                        .strip_prefix("ERROR: ")
+                        .unwrap_or(&message)
+                        .to_owned(),
+                })
+            }
+            other => other,
+        }
     }
 
     /// The browser to retry with after an age-restricted failure.
@@ -468,7 +616,10 @@ impl YtDlp {
     async fn resolve_inner(&self, video_id: &str, js: Option<&JsRuntime>) -> Result<AudioStream> {
         let result = self.resolve_once(video_id, js, None).await;
         match self.age_retry(&result) {
-            Some(browser) => self.resolve_once(video_id, js, Some(&browser)).await,
+            Some(browser) => Self::with_cookies_outcome(
+                &browser,
+                self.resolve_once(video_id, js, Some(&browser)).await,
+            ),
             None => result,
         }
     }
@@ -499,8 +650,8 @@ impl YtDlp {
         if let Some(arg) = &js_arg {
             args.extend(["--js-runtimes", arg]);
         }
-        if let Some(browser) = cookies {
-            args.extend(["--cookies-from-browser", browser]);
+        if let Some(source) = cookies {
+            args.extend([cookie_flag(source), source]);
         }
         args.extend(self.extra_args.iter().map(String::as_str));
         args.push("--"); // nothing after this is parsed as a flag
@@ -514,7 +665,10 @@ impl YtDlp {
     pub async fn download_audio(&self, video_id: &str, dest: &Path) -> Result<()> {
         let result = self.download_once(video_id, dest, None).await;
         match self.age_retry(&result) {
-            Some(browser) => self.download_once(video_id, dest, Some(&browser)).await,
+            Some(browser) => Self::with_cookies_outcome(
+                &browser,
+                self.download_once(video_id, dest, Some(&browser)).await,
+            ),
             None => result,
         }
     }
@@ -540,8 +694,8 @@ impl YtDlp {
             "--output",
             &dest,
         ];
-        if let Some(browser) = cookies {
-            args.extend(["--cookies-from-browser", browser]);
+        if let Some(source) = cookies {
+            args.extend([cookie_flag(source), source]);
         }
         args.extend(self.extra_args.iter().map(String::as_str));
         args.push("--");
@@ -900,11 +1054,41 @@ cccc  yt-dlp_linux
     }
 
     #[test]
+    fn cookie_retry_failures_say_what_went_wrong() {
+        #[cfg(unix)]
+        let status = std::os::unix::process::ExitStatusExt::from_raw(1 << 8);
+        #[cfg(windows)]
+        let status = std::os::windows::process::ExitStatusExt::from_raw(1);
+        let missing = YtDlp::with_cookies_outcome::<()>(
+            "firefox",
+            Err(ExtractorError::Failed {
+                status,
+                message: "ERROR: could not find firefox cookies database in '/x'".into(),
+            }),
+        );
+        assert!(
+            matches!(&missing, Err(ExtractorError::Cookies { browser, .. }) if browser == "firefox"),
+            "{missing:?}"
+        );
+        let signed_out =
+            YtDlp::with_cookies_outcome::<()>("chrome", Err(ExtractorError::AgeRestricted));
+        assert!(matches!(
+            signed_out,
+            Err(ExtractorError::AgeRestrictedSignedOut { .. })
+        ));
+    }
+
+    #[test]
     fn cookie_browser_must_be_known() {
         let cookies = Cookies::new(" Chrome ");
         assert_eq!(cookies.browser().as_deref(), Some("chrome"));
         cookies.set("--exec=rm");
         assert_eq!(cookies.browser(), None);
+        let file = std::env::temp_dir().join(format!("ytm-cookies-{}.txt", std::process::id()));
+        std::fs::write(&file, "# Netscape HTTP Cookie File\n").unwrap();
+        cookies.set(&file.to_string_lossy());
+        assert_eq!(cookie_flag(&cookies.browser().unwrap()), "--cookies");
+        let _ = std::fs::remove_file(&file);
     }
 
     #[test]

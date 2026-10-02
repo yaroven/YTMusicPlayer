@@ -294,7 +294,9 @@ slint::slint! {
         callback add-to();
         // (x, y) of the ⋮ button in window coordinates, for the menu.
         callback more(length, length);
-        out property <bool> hovered: touch.has-hover || like-btn.hovered || add-btn.hovered || more-btn.hovered;
+        // The artist's name was clicked.
+        callback artist();
+        out property <bool> hovered: touch.has-hover || like-btn.hovered || add-btn.hovered || more-btn.hovered || artist-touch.has-hover;
         height: 64px;
         border-radius: 4px;
         background: root.selected ? Yt.raised : root.hovered ? Yt.hover : transparent;
@@ -319,7 +321,19 @@ slint::slint! {
                 spacing: 2px;
                 horizontal-stretch: 1;
                 Text { text: root.track.title; overflow: elide; color: root.track.playing ? Yt.red : Yt.text; font-weight: 500; font-size: 15px; }
-                Text { text: root.track.artist; overflow: elide; color: Yt.secondary; }
+                // Only the name itself is a link, not the rest of the row.
+                HorizontalLayout {
+                    alignment: start;
+                    Text {
+                        text: root.track.artist;
+                        overflow: elide;
+                        color: artist-touch.has-hover ? Yt.text : Yt.secondary;
+                        artist-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.artist(); }
+                        }
+                    }
+                }
             }
             add-btn := IconButton {
                 visible: root.actions && root.hovered;
@@ -595,6 +609,7 @@ slint::slint! {
                         selected: t.playing;
                         clicked => { root.jump(i); }
                         double-clicked => { root.jump(i); }
+                        artist => { root.queue-action(i, "artist"); }
                     }
                     HorizontalLayout {
                         alignment: end;
@@ -807,6 +822,8 @@ slint::slint! {
         // 0 none, 1 album, 2 artist, 3 playlist page.
         in property <int> page-kind;
         in property <bool> page-saved;
+        // All songs of the page (the list shows only a few of them).
+        in property <int> page-songs;
         // A playlist of the user's (not Liked music): rename / delete.
         in property <bool> own-playlist;
         in property <bool> can-back;
@@ -945,6 +962,7 @@ slint::slint! {
         callback setting-toggled(string);
         callback crossfade-changed(float);
         callback cookies-cycle();
+        callback show-all-songs();
         callback sidebar-resized(length);
         callback account-opened();
         callback save-client(string, string);
@@ -1231,6 +1249,7 @@ slint::slint! {
                                     like => { root.like-row(i); keys.focus(); }
                                     add-to => { root.selected-track = i; add-popup.show(); }
                                     more(x, y) => { root.menu-row = i; root.menu-x = x; root.menu-y = y; row-menu.show(); }
+                                    artist => { root.row-action(i, "artist"); keys.focus(); }
                                 }
                             }
                             // Cards: albums, artists, playlists.
@@ -1257,6 +1276,16 @@ slint::slint! {
                                             like => { root.like-row(i); keys.focus(); }
                                             add-to => { root.selected-track = i; add-popup.show(); }
                                             more(x, y) => { root.menu-row = i; root.menu-x = x; root.menu-y = y; row-menu.show(); }
+                                            artist => { root.row-action(i, "artist"); keys.focus(); }
+                                        }
+                                        // Pages show a few songs; the rest open as a list.
+                                        if root.page-songs > root.tracks.length: HorizontalLayout {
+                                            alignment: start;
+                                            padding-top: 8px;
+                                            Pill {
+                                                text: "Show all " + root.page-songs + " songs";
+                                                clicked => { root.show-all-songs(); keys.focus(); }
+                                            }
                                         }
                                     }
                                     for s[si] in root.shelves: ShelfView {
@@ -1386,7 +1415,15 @@ slint::slint! {
                                     alignment: center;
                                     max-width: 360px;
                                     Text { text: root.now-title != "" ? root.now-title : "Nothing playing"; color: Yt.text; font-weight: 500; overflow: elide; }
-                                    Text { text: root.now-artist; color: Yt.secondary; overflow: elide; }
+                                    Text {
+                                        text: root.now-artist;
+                                        color: now-artist-touch.has-hover ? Yt.text : Yt.secondary;
+                                        overflow: elide;
+                                        now-artist-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.expanded = false; root.row-action(-1, "artist"); keys.focus(); }
+                                        }
+                                    }
                                 }
                                 if root.now-title != "" && !root.compact: IconButton {
                                     icon: "dislike";
@@ -1549,7 +1586,7 @@ slint::slint! {
                     alignment: center;
                     Text { text: "Age-restricted songs"; color: Yt.text; }
                     Text {
-                        text: "Use the YouTube sign-in of this browser, only for such songs";
+                        text: "Use the YouTube sign-in of this browser, only for such songs. macOS: needs Full Disk Access for ytm-player (System Settings → Privacy & Security).";
                         color: Yt.secondary;
                         font-size: 12px;
                         wrap: word-wrap;

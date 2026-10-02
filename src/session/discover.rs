@@ -20,6 +20,17 @@ const API_RESULTS: u8 = 25;
 /// queued again.
 const RADIO_RECENT: usize = 200;
 
+/// "Eminem, Rihanna" / "A & B" / "X - Topic" → the first artist's name.
+fn main_artist(artist: &str) -> String {
+    let artist = artist.strip_suffix(" - Topic").unwrap_or(artist);
+    let cut = [", ", " & ", " feat. ", " ft. ", " x ", " и ", " і "]
+        .iter()
+        .filter_map(|sep| artist.find(sep))
+        .min()
+        .unwrap_or(artist.len());
+    artist[..cut].trim().to_owned()
+}
+
 /// What a search found: songs (playable) and/or cards to open.
 #[derive(Debug, Clone, Default)]
 pub struct Found {
@@ -173,6 +184,43 @@ impl Session {
         );
         tokio::spawn(async move {
             let result = catalog.page(&id).await;
+            let _ = tx.send(Background::PageLoaded { generation, result });
+        });
+    }
+
+    /// Opens the page of `track`'s artist: the one YouTube Music links
+    /// under the song, else the best name match.
+    pub fn open_artist(&mut self, track: &Track) {
+        self.page_generation += 1;
+        self.page_loading = true;
+        let name = main_artist(&track.artist);
+        self.set_info(format!("Opening {name}…"));
+        let (catalog, tx, generation, video_id) = (
+            self.deps.catalog.clone(),
+            self.tx.clone(),
+            self.page_generation,
+            track.video_id.clone(),
+        );
+        tokio::spawn(async move {
+            let result = async {
+                let id = match catalog.artist_id(&video_id).await {
+                    Ok(Some(id)) => id,
+                    other => {
+                        if let Err(err) = other {
+                            tracing::debug!(%err, "artist from the song");
+                        }
+                        let found = catalog.search(&name, SearchKind::Artists).await?;
+                        let pick = found
+                            .iter()
+                            .find(|i| i.title.eq_ignore_ascii_case(&name))
+                            .or(found.first())
+                            .ok_or_else(|| anyhow::anyhow!("no artist named {name}"))?;
+                        pick.id.to_string()
+                    }
+                };
+                catalog.page(&id).await
+            }
+            .await;
             let _ = tx.send(Background::PageLoaded { generation, result });
         });
     }
@@ -332,5 +380,18 @@ impl Session {
                 result,
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_artist_of_a_credit() {
+        assert_eq!(main_artist("Eminem, Rihanna"), "Eminem");
+        assert_eq!(main_artist("Simon & Garfunkel"), "Simon");
+        assert_eq!(main_artist("ABBA - Topic"), "ABBA");
+        assert_eq!(main_artist("Queen"), "Queen");
     }
 }

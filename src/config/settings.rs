@@ -31,9 +31,10 @@ js_fallback = true
 
 # Age-restricted songs need a signed-in YouTube session: yt-dlp borrows
 # the cookies of this browser, only for such songs ("" = off). One of
-# chrome, firefox, safari, edge, brave, chromium, opera, vivaldi; you must
-# be signed in to YouTube there. macOS asks once to allow access to the
-# browser's cookie store (Safari needs Full Disk Access).
+# chrome, firefox, safari, edge, brave, chromium, opera, vivaldi (signed
+# in to YouTube there), or the path of a cookies.txt file exported from a
+# browser. macOS: reading a browser needs Full Disk Access for ytm-player
+# (System Settings → Privacy & Security); a cookies.txt file doesn't.
 cookies_from_browser = ""
 
 # Extra yt-dlp flags.

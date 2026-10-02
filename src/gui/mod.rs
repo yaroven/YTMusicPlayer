@@ -54,6 +54,8 @@ const THUMB_CACHE: usize = 80;
 const CARD_CACHE: usize = 48;
 /// Rows of the "Up next" list sent to the UI.
 const QUEUE_ROWS: usize = 200;
+/// Songs listed above an album / artist page's shelves.
+const PAGE_SONGS: usize = 5;
 /// Parallel thumbnail downloads.
 const ART_FETCHES: usize = 4;
 /// Sleep timer choices are minutes; these mean "end of song" / "off".
@@ -101,6 +103,7 @@ enum Cmd {
     StoreSetting(&'static str, bool),
     CastScan,
     CookiesBrowser(String),
+    OpenArtist(Track),
     CastTo(Option<usize>),
     SaveClient(String, String),
     ImportClient(std::path::PathBuf),
@@ -216,7 +219,7 @@ impl ArtCache {
     /// The image for `key` if decoded, else requests it (once).
     fn get(&mut self, key: &Arc<str>, size: ArtSize) -> Option<Image> {
         let images = match size {
-            ArtSize::Card => &self.cards,
+            ArtSize::Card | ArtSize::Round => &self.cards,
             _ => &self.thumbs,
         };
         if let Some(image) = images.map.get(key) {
@@ -235,7 +238,7 @@ impl ArtCache {
     fn insert(&mut self, key: Arc<str>, size: ArtSize, image: Image) {
         self.requested.remove(&key);
         match size {
-            ArtSize::Card => self.cards.insert(key, image),
+            ArtSize::Card | ArtSize::Round => self.cards.insert(key, image),
             _ => self.thumbs.insert(key, image),
         }
     }
@@ -253,6 +256,8 @@ enum Rows {
 /// only when the list asks for them; no track is copied up front.
 struct TracksModel {
     rows: Rows,
+    /// Show only the first rows (pages list a few songs above shelves).
+    limit: std::cell::Cell<Option<usize>>,
     playing: RefCell<Option<Arc<str>>>,
     art: Rc<RefCell<ArtCache>>,
     notify: ModelNotify,
@@ -262,6 +267,7 @@ impl TracksModel {
     fn new(rows: Rows, art: Rc<RefCell<ArtCache>>) -> Self {
         Self {
             rows,
+            limit: std::cell::Cell::new(None),
             playing: RefCell::default(),
             art,
             notify: ModelNotify::default(),
@@ -319,10 +325,11 @@ impl Model for TracksModel {
     type Data = TrackRow;
 
     fn row_count(&self) -> usize {
-        match &self.rows {
+        let all = match &self.rows {
             Rows::Library(view) => view.borrow().len(),
             Rows::Queue(tracks) => tracks.borrow().len(),
-        }
+        };
+        self.limit.get().map_or(all, |limit| all.min(limit))
     }
 
     fn row_data(&self, row: usize) -> Option<TrackRow> {
@@ -396,7 +403,7 @@ impl Cards {
                 let image = item
                     .thumbnail
                     .as_ref()
-                    .and_then(|url| art.get(url, ArtSize::Card));
+                    .and_then(|url| art.get(url, card_size(item.kind)));
                 CardRow {
                     title: SharedString::from(&*item.title),
                     subtitle: SharedString::from(&*item.subtitle),
@@ -456,6 +463,23 @@ impl Shelves {
         for cards in &self.rows {
             cards.art_arrived(key, image);
         }
+    }
+}
+
+/// "chrome", or "cookies.txt" for a file path.
+fn cookies_label(source: &str) -> &str {
+    if source.contains(['/', '\\']) {
+        "cookies.txt"
+    } else {
+        source
+    }
+}
+
+/// Artists get round pictures.
+fn card_size(kind: ItemKind) -> ArtSize {
+    match kind {
+        ItemKind::Artist => ArtSize::Round,
+        _ => ArtSize::Card,
     }
 }
 
@@ -618,15 +642,18 @@ impl View {
             Source::Search => 6,
             _ => 0,
         });
-        ui.set_list_mode(
-            if !lib.items().is_empty() || matches!(source, Source::Saved(_)) {
-                1
-            } else if !lib.shelves().is_empty() {
-                2
-            } else {
-                0
-            },
-        );
+        let list_mode = if !lib.items().is_empty() || matches!(source, Source::Saved(_)) {
+            1
+        } else if !lib.shelves().is_empty() {
+            2
+        } else {
+            0
+        };
+        ui.set_list_mode(list_mode);
+        // Pages with shelves aren't virtualized: a few songs, then "Show all".
+        let limited = list_mode == 2 && matches!(source, Source::Page(_));
+        self.tracks.limit.set(limited.then_some(PAGE_SONGS));
+        ui.set_page_songs(if limited { lib.len() as i32 } else { 0 });
         ui.set_selected_playlist(lib.selected_playlist().map_or(-1, |i| i as i32));
         ui.set_search_query(lib.search_query().unwrap_or_default().into());
         ui.set_search_kind(match lib.search_kind() {
@@ -656,6 +683,7 @@ impl View {
         }
         let (items, shelves) = (lib.items().clone(), lib.shelves().clone());
         let header: Option<Arc<str>> = lib.thumbnail().map(Arc::from);
+        let page_kind = lib.page_kind();
         drop(lib);
         self.sync_saved(ui);
         {
@@ -665,7 +693,8 @@ impl View {
             self.shelves.set(&shelves, &mut art);
         }
         self.header_art = header.clone();
-        let image = header.and_then(|url| self.art.borrow_mut().get(&url, ArtSize::Card));
+        let size = card_size(page_kind.unwrap_or(ItemKind::Album));
+        let image = header.and_then(|url| self.art.borrow_mut().get(&url, size));
         ui.set_has_page_art(image.is_some());
         ui.set_page_art(image.unwrap_or_default());
         self.tracks.reset();
@@ -763,7 +792,7 @@ impl View {
                 self.tracks.rows_changed(&key);
                 self.queue.rows_changed(&key);
             }
-            ArtSize::Card => {
+            ArtSize::Card | ArtSize::Round => {
                 self.art
                     .borrow_mut()
                     .insert(key.clone(), size, image.clone());
@@ -801,7 +830,7 @@ impl View {
         ui.set_set_notifications(self.prefs.notifications);
         ui.set_set_tray(self.prefs.tray);
         ui.set_set_crossfade(self.prefs.crossfade);
-        ui.set_set_cookies(self.prefs.cookies.as_str().into());
+        ui.set_set_cookies(cookies_label(&self.prefs.cookies).into());
         ui.set_queue_source(self.queue_source.borrow().clone());
         if let Some(width) = self
             .store
@@ -1484,6 +1513,7 @@ fn wire_callbacks(
                 Cmd::Radio(track)
             }
             "dislike" => Cmd::Dislike(track),
+            "artist" => Cmd::OpenArtist(track),
             "download" if v.library.borrow().is_downloaded(&track.video_id) => {
                 Cmd::RemoveDownload(track.video_id)
             }
@@ -1575,6 +1605,16 @@ fn wire_callbacks(
         }
     });
     on!(on_queue_action, [tx, view, ui], |row, action| {
+        if action.as_str() == "artist" {
+            let track = usize::try_from(row)
+                .ok()
+                .and_then(|r| view.borrow().queue.track(r));
+            if let Some(track) = track {
+                ui.set_expanded(false);
+                send(Cmd::OpenArtist(track), tx);
+            }
+            return;
+        }
         // Row 0 is the playing track; upcoming tracks count from row 1.
         let Some(n) = usize::try_from(row).ok().and_then(|r| r.checked_sub(1)) else {
             return;
@@ -1637,14 +1677,24 @@ fn wire_callbacks(
             send(Cmd::Crossfade(secs as u64), tx);
         }
     });
+    on!(on_show_all_songs, [tx, view, ui], || navigate(
+        ui,
+        view,
+        &|lib, _| {
+            lib.show_songs();
+            Ok(())
+        }
+    ));
     on!(on_cookies_cycle, [tx, view, ui], || {
-        // Off, then the browsers people use most.
-        const CHOICES: [&str; 6] = ["", "chrome", "firefox", "safari", "edge", "brave"];
+        // Off, then the browsers that have a profile on this computer.
+        let choices: Vec<&str> = std::iter::once("")
+            .chain(crate::audio::extractor::installed_browsers())
+            .collect();
         let mut v = view.borrow_mut();
-        let at = CHOICES.iter().position(|c| *c == v.prefs.cookies);
-        let next = CHOICES[at.map_or(0, |i| (i + 1) % CHOICES.len())];
+        let at = choices.iter().position(|c| *c == v.prefs.cookies);
+        let next = choices[at.map_or(0, |i| (i + 1) % choices.len())];
         v.prefs.cookies = next.to_owned();
-        ui.set_set_cookies(next.into());
+        ui.set_set_cookies(cookies_label(next).into());
         send(Cmd::CookiesBrowser(next.to_owned()), tx);
     });
     let library = library.clone();
@@ -1821,6 +1871,7 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::StoreSetting(key, on) => session.store_setting(key, &on.to_string()),
         Cmd::CastScan => session.find_cast_devices(),
         Cmd::CookiesBrowser(browser) => session.set_cookies_browser(&browser),
+        Cmd::OpenArtist(track) => session.open_artist(&track),
         Cmd::CastTo(i) => {
             let device = i.and_then(|i| session.cast_devices.get(i).cloned());
             session.cast_to(device);

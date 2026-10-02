@@ -15,8 +15,11 @@ pub enum ArtSize {
     Thumb,
     /// The full-screen "now playing" view.
     Large,
-    /// Album / artist / playlist cards and page headers, by URL.
+    /// Album / playlist cards and page headers, by URL.
     Card,
+    /// Artist pictures: like `Card`, cut to a circle (the software
+    /// renderer doesn't clip images to rounded shapes).
+    Round,
 }
 
 impl ArtSize {
@@ -25,7 +28,7 @@ impl ArtSize {
         match self {
             Self::Thumb => 96,
             Self::Large => 480,
-            Self::Card => 160,
+            Self::Card | Self::Round => 160,
         }
     }
 
@@ -34,7 +37,7 @@ impl ArtSize {
             Self::Thumb => &["mqdefault"],
             // sddefault is missing for some videos; hqdefault always exists.
             Self::Large => &["sddefault", "hqdefault"],
-            Self::Card => &[],
+            Self::Card | Self::Round => &[],
         }
     }
 }
@@ -48,7 +51,7 @@ pub struct Art {
 /// Art for `key`: a video id, or for [`ArtSize::Card`] the image URL.
 pub async fn fetch(http: &reqwest::Client, key: &str, size: ArtSize) -> Result<Art> {
     let urls: Vec<String> = match size {
-        ArtSize::Card => vec![card_url(key, size.pixels())],
+        ArtSize::Card | ArtSize::Round => vec![card_url(key, size.pixels())],
         _ => size
             .sources()
             .iter()
@@ -65,8 +68,14 @@ pub async fn fetch(http: &reqwest::Client, key: &str, size: ArtSize) -> Result<A
         {
             Ok(response) => {
                 let bytes = response.bytes().await?;
-                return tokio::task::spawn_blocking(move || decode_square(&bytes, size.pixels()))
-                    .await?;
+                return tokio::task::spawn_blocking(move || {
+                    let mut art = decode_square(&bytes, size.pixels())?;
+                    if size == ArtSize::Round {
+                        cut_circle(&mut art);
+                    }
+                    Ok(art)
+                })
+                .await?;
             }
             Err(err) => last_err = Some(err),
         }
@@ -112,6 +121,22 @@ pub fn decode_square(jpeg: &[u8], edge: u32) -> Result<Art> {
         pixels: SharedPixelBuffer::clone_from_slice(out.as_raw(), edge, edge),
         tint,
     })
+}
+
+/// Makes everything outside the inscribed circle transparent
+/// (anti-aliased over one pixel).
+fn cut_circle(art: &mut Art) {
+    let (w, h) = (art.pixels.width(), art.pixels.height());
+    let r = w.min(h) as f32 / 2.0;
+    let stride = w as usize;
+    for (i, p) in art.pixels.make_mut_slice().iter_mut().enumerate() {
+        let (x, y) = ((i % stride) as f32 + 0.5, (i / stride) as f32 + 0.5);
+        let d = ((x - r).powi(2) + (y - r).powi(2)).sqrt();
+        let coverage = (r - d + 0.5).clamp(0.0, 1.0);
+        if coverage < 1.0 {
+            p.a = (f32::from(p.a) * coverage) as u8;
+        }
+    }
 }
 
 fn average(img: &RgbaImage) -> (u8, u8, u8) {

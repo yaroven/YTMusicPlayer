@@ -180,7 +180,8 @@ Open **ytm-player** from your applications, or run `ytm gui`.
   **Shuffle**, **Radio**, **Save** / **Follow** and **download all**; artist
   pages add shelves of albums, singles and similar artists. **←** (or
   `Backspace`) goes back.
-- **Track rows:** double-click to play; hover for like and save to
+- **Track rows:** double-click to play; click the artist's name for
+  their page (also in the player bar and the queue); hover for like and save to
   playlist; **⋮** for start radio, play next, add to queue, download,
   dislike and remove from playlist. ↓ marks downloaded songs.
 - **Player bar:** progress (click to seek), previous / play / next, the
@@ -232,7 +233,7 @@ Run `ytm` in a terminal.
 | `i` | albums / artists / shelves on this page |
 | `s` / `e` / `A` | shuffle / repeat (off → all → one) / autoplay |
 | `v` | queue (`x` remove, `J`/`K` move, `X` clear) |
-| `u` / `R` | play next / start radio |
+| `u` / `R` / `w` | play next / start radio / the artist's page |
 | `f` / `d` | like / dislike |
 | `a` / `x` | add to / remove from a playlist |
 | `D` | download for offline (again: remove) |
@@ -286,7 +287,7 @@ optional:
 | `media_controls` | `true` | media keys and system "Now Playing" (macOS, Linux) |
 | `audio_device` | `""` | output device name from `ytm devices`; empty = automatic (Linux: PipeWire, then PulseAudio, then ALSA default) |
 | `js_fallback` | `true` | if yt-dlp fails, retry with a JS runtime (system deno/node, or a ~2 MB QuickJS download). `false` = never run JS |
-| `cookies_from_browser` | `""` | age-restricted songs: borrow the YouTube sign-in of `chrome`, `firefox`, `safari`, `edge`, `brave`, … (only for those songs; also in the window's Settings) |
+| `cookies_from_browser` | `""` | age-restricted songs: borrow the YouTube sign-in of `chrome`, `firefox`, `safari`, `edge`, `brave`, … or a cookies.txt path (only for those songs; also in the window's Settings; see Troubleshooting) |
 | `ytdlp_extra_args` | `[]` | extra yt-dlp flags |
 | `liked_music_only` | `true` | keep only "Music"-category videos in the liked list |
 | `volume` | `0.8` | volume for the very first start |
@@ -361,8 +362,18 @@ By hand: the binary (`/usr/bin/ytm`, `/usr/local/bin/ytm`,
   such songs only to signed-in adults, and yt-dlp is anonymous. Pick the
   browser you're signed in to YouTube with in **Settings → Age-restricted
   songs** (or `cookies_from_browser` in the config). Only those songs use
-  it. macOS asks once to let ytm-player read that browser's cookies
-  (Safari needs Full Disk Access for it).
+  it.
+  - **macOS** keeps other apps' data private: allow **ytm-player** in
+    System Settings → Privacy & Security → **Full Disk Access**, then
+    restart it. Chrome also asks once for its "Safe Storage" key — choose
+    Always Allow.
+  - **Without that permission** (or on Windows, where Chrome encrypts its
+    cookies for itself): export YouTube's cookies with a browser extension
+    such as "Get cookies.txt LOCALLY" and set `cookies_from_browser` to the
+    file's path, e.g. `"~/Documents/youtube-cookies.txt"`. Keep the file
+    private: it signs in as you.
+  - "isn't signed in to YouTube": that browser has no YouTube login, or
+    the account isn't age-verified.
 
 - **No sound on Linux:** install your sound server's ALSA plugin
   (`pipewire-alsa` on PipeWire systems, `libasound2-plugins` / `alsa-plugins-pulseaudio`

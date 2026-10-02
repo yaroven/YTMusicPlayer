@@ -492,6 +492,11 @@ impl App {
                     self.session.start_radio(track);
                 }
             }
+            Action::Artist => {
+                if let Some(track) = self.action_target() {
+                    self.session.open_artist(&track);
+                }
+            }
             Action::Like => {
                 if let Some(track) = self.action_target() {
                     self.session.toggle_like(track);

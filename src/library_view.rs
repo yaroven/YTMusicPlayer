@@ -368,6 +368,21 @@ impl LibraryView {
         self.navigate(shown);
     }
 
+    /// The shown page's songs alone, as a plain list ("Show all").
+    pub fn show_songs(&mut self) {
+        let Source::Page(id) = &self.shown.source else {
+            return;
+        };
+        let shown = Shown {
+            source: Source::Page(format!("{id}#songs")),
+            subtitle: format!("{} songs", self.shown.tracks.len()),
+            shelves: Arc::from([]),
+            items: Arc::from([]),
+            ..self.shown.clone()
+        };
+        self.navigate(shown);
+    }
+
     /// Home: recently played, saved albums, then YouTube Music's shelves.
     pub fn show_home(&mut self, home: Option<&[Shelf]>) -> Result<()> {
         let recent: Arc<[Track]> = self.library.history()?.iter().take(20).cloned().collect();

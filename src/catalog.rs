@@ -183,6 +183,17 @@ impl Catalog {
             }
             token = continuation(&more);
         }
+        // An artist page lists 5 top songs; its "Show all" playlist has
+        // them all (with durations), so Play / Shuffle get the full set.
+        if page.kind == ItemKind::Artist
+            && let Some(all) = top_songs_playlist(&data)
+        {
+            match Box::pin(self.page(&all)).await {
+                Ok(list) if list.tracks.len() > page.tracks.len() => page.tracks = list.tracks,
+                Ok(_) => {}
+                Err(err) => tracing::debug!(%err, "artist's top songs"),
+            }
+        }
         Ok(page)
     }
 
@@ -234,6 +245,26 @@ impl Catalog {
             )
             .await?;
         Ok(parse_loudness(&data))
+    }
+
+    /// The page id of the song's (first) artist, as YouTube Music links
+    /// it under the song.
+    pub async fn artist_id(&self, video_id: &str) -> Result<Option<String>> {
+        let data = self.next(video_id).await?;
+        let items = find_all(&data, "playlistPanelVideoRenderer");
+        let song = items
+            .iter()
+            .find(|v| v.get("videoId").and_then(Value::as_str) == Some(video_id))
+            .or(items.first());
+        Ok(song
+            .and_then(|v| v.pointer("/longBylineText/runs"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|run| run.pointer("/navigationEndpoint/browseEndpoint/browseId"))
+            .filter_map(Value::as_str)
+            .find(|id| id.starts_with("UC"))
+            .map(str::to_owned))
     }
 
     async fn next(&self, video_id: &str) -> Result<Value> {
@@ -516,6 +547,21 @@ fn parse_shelves(data: &Value) -> Vec<Shelf> {
             (!items.is_empty()).then_some(Shelf { title, items })
         })
         .collect()
+}
+
+/// The playlist behind an artist page's "Top songs" shelf.
+fn top_songs_playlist(data: &Value) -> Option<String> {
+    find_all(data, "musicShelfRenderer")
+        .into_iter()
+        .find_map(|shelf| {
+            shelf
+                .get("bottomEndpoint")
+                .or_else(|| shelf.pointer("/title/runs/0/navigationEndpoint"))
+                .and_then(|e| e.pointer("/browseEndpoint/browseId"))
+                .and_then(Value::as_str)
+                .filter(|id| id.starts_with("VL"))
+                .map(str::to_owned)
+        })
 }
 
 fn parse_page(id: &str, data: &Value) -> Page {
@@ -833,8 +879,14 @@ mod tests {
         let artists = catalog.search("abba", SearchKind::Artists).await.unwrap();
         let artist = catalog.page(&artists[0].id).await.unwrap();
         assert!(
-            !artist.tracks.is_empty() && !artist.shelves.is_empty(),
-            "{artist:?}"
+            artist.tracks.len() > 5 && !artist.shelves.is_empty(),
+            "the full top songs: {artist:?}"
+        );
+        assert!(artist.tracks.iter().all(|t| t.duration_secs.is_some()));
+        assert_eq!(
+            catalog.artist_id("uelHwf8o7_U").await.unwrap().as_deref(),
+            Some("UCedvOgsKFzcK3hA5taf3KoQ"),
+            "Eminem, not Rihanna"
         );
         let radio = catalog.radio("YkLLcIKhJ64").await.unwrap();
         assert!(radio.len() > 10);
