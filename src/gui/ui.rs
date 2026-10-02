@@ -1145,9 +1145,9 @@ slint::slint! {
                                     }
                                     Text { text: root.tracks-subtitle; color: Yt.secondary; overflow: elide; }
                                 }
-                                if root.list-mode != 1: Pill { text: "Play"; icon: "play"; filled: true; compact: root.tiny || (root.compact && root.page-kind != 0); y: (parent.height - self.height) / 2; clicked => { root.play-all(); keys.focus(); } }
-                                if root.list-mode != 1 && !root.tiny: Pill { text: "Shuffle"; icon: "shuffle"; compact: root.compact; y: (parent.height - self.height) / 2; clicked => { root.shuffle-play(); keys.focus(); } }
-                                if root.list-mode != 1 && root.page-kind != 0 && !root.tiny: Pill { text: "Radio"; icon: "radio"; compact: true; y: (parent.height - self.height) / 2; clicked => { root.start-radio(); keys.focus(); } }
+                                if root.list-mode != 1 && root.tracks.length > 0: Pill { text: "Play"; icon: "play"; filled: true; compact: root.tiny || (root.compact && root.page-kind != 0); y: (parent.height - self.height) / 2; clicked => { root.play-all(); keys.focus(); } }
+                                if root.list-mode != 1 && root.tracks.length > 0 && !root.tiny: Pill { text: "Shuffle"; icon: "shuffle"; compact: root.compact; y: (parent.height - self.height) / 2; clicked => { root.shuffle-play(); keys.focus(); } }
+                                if root.list-mode != 1 && root.tracks.length > 0 && root.page-kind != 0 && !root.tiny: Pill { text: "Radio"; icon: "radio"; compact: true; y: (parent.height - self.height) / 2; clicked => { root.start-radio(); keys.focus(); } }
                                 if root.page-kind == 1 || root.page-kind == 3: Pill {
                                     text: root.page-saved ? "Saved" : "Save";
                                     icon: root.page-saved ? "check" : "plus";

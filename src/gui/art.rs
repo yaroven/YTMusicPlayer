@@ -48,7 +48,7 @@ pub struct Art {
 /// Art for `key`: a video id, or for [`ArtSize::Card`] the image URL.
 pub async fn fetch(http: &reqwest::Client, key: &str, size: ArtSize) -> Result<Art> {
     let urls: Vec<String> = match size {
-        ArtSize::Card => vec![key.to_owned()],
+        ArtSize::Card => vec![card_url(key, size.pixels())],
         _ => size
             .sources()
             .iter()
@@ -77,10 +77,22 @@ pub async fn fetch(http: &reqwest::Client, key: &str, size: ArtSize) -> Result<A
     }
 }
 
-/// Decodes a JPEG, crops the centre square of its 16:9 picture area and
+/// Google image URLs take a size suffix (`=s576`, `=w226-h226-l90-rj`);
+/// asking for the card's size as JPEG (`-rj`) keeps downloads small and
+/// decodable (they'd be WebP or PNG otherwise).
+fn card_url(url: &str, edge: u32) -> String {
+    match url.rsplit_once('=') {
+        Some((base, _)) if url.contains("googleusercontent.com/") => {
+            format!("{base}=w{edge}-h{edge}-l90-rj")
+        }
+        _ => url.to_owned(),
+    }
+}
+
+/// Decodes a JPEG (or PNG), crops the centre square of its 16:9 picture area and
 /// scales it to `edge` px. Large covers get softly rounded corners.
 pub fn decode_square(jpeg: &[u8], edge: u32) -> Result<Art> {
-    let img = image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg)
+    let img = image::load_from_memory(jpeg)
         .context("decoding thumbnail")?
         .to_rgba8();
     let (w, h) = img.dimensions();
@@ -159,6 +171,16 @@ mod tests {
         let mut out = std::io::Cursor::new(Vec::new());
         img.write_to(&mut out, image::ImageFormat::Jpeg).unwrap();
         out.into_inner()
+    }
+
+    #[test]
+    fn google_image_urls_ask_for_jpeg_at_card_size() {
+        assert_eq!(
+            card_url("https://yt3.googleusercontent.com/abc=s576", 160),
+            "https://yt3.googleusercontent.com/abc=w160-h160-l90-rj"
+        );
+        let ytimg = "https://i.ytimg.com/vi/x/hqdefault.jpg";
+        assert_eq!(card_url(ytimg, 160), ytimg);
     }
 
     #[test]

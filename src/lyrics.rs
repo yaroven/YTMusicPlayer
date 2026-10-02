@@ -232,3 +232,28 @@ mod tests {
         assert_eq!(lyrics.current_line(Duration::from_secs(30)), Some(1));
     }
 }
+
+#[cfg(test)]
+mod live {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn finds_synced_lyrics_live() {
+        let http = reqwest::Client::new();
+        let catalog = Catalog::new(http.clone());
+        let track = Track {
+            video_id: "fJ9rUzIMcZQ".into(),
+            title: "Bohemian Rhapsody".into(),
+            artist: "Queen".into(),
+            duration_secs: Some(359),
+        };
+        let lyrics = find(&http, &catalog, &track, Some(Duration::from_secs(359)))
+            .await
+            .unwrap()
+            .expect("lyrics");
+        println!("{} lines from {}", lyrics.lines.len(), lyrics.source);
+        assert!(lyrics.synced());
+        assert!(lyrics.current_line(Duration::from_secs(60)).is_some());
+    }
+}
