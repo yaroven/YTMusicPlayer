@@ -159,7 +159,7 @@ fn draw_lyrics(frame: &mut Frame, app: &App) {
 }
 
 fn draw_help(frame: &mut Frame) {
-    let area = centered(frame.area(), 66, keymap::HELP.len() as u16 + 2);
+    let area = centered(frame.area(), 74, keymap::HELP.len() as u16 + 2);
     let rows = keymap::HELP
         .iter()
         .map(|(keys, desc)| Row::new([keys.bold(), (*desc).into()]));

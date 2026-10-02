@@ -105,9 +105,15 @@ fn heading(app: &App, count: usize) -> Vec<Span<'static>> {
         name if name.is_empty() => "Tracks".to_owned(),
         name => name,
     };
-    let mut title = vec![Span::raw(format!(" {name} · {count} "))];
+    let mut title = vec![Span::raw(format!(" {name} · "))];
+    // The subtitle already counts the songs ("12 songs", "Album • 2020").
     if !lib.subtitle().is_empty() && !lib.showing_results() {
         title.push(Span::raw(format!("{} ", lib.subtitle())).dark_gray());
+    } else {
+        title.push(Span::raw(format!("{count} ")));
+    }
+    if !lib.filter().is_empty() {
+        title.push(Span::raw(format!("({count} match) ")).fg(ACCENT));
     }
     if lib.showing_results() {
         let current = lib.search_kind();

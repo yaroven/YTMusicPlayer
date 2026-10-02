@@ -49,7 +49,23 @@ stdout/stderr — the terminal belongs to the TUI.
   a double-click in one write (the driver pauses 0.3 s per step).
 - Unit tests use the seams instead of real devices: `Session::with_playback`
   + a recording `Playback` fake, scripted `Extractor`s with a local HTTP
-  server, `Tokens::new(InMemory)`, `Library::open_in_memory`.
+  server, `Tokens::new(InMemory)`, `Library::open_in_memory`. Shared
+  helpers (fake player/extractor, `session_with`, `seeded_library`,
+  `artist_page`) live in `src/testing.rs`.
+- **Regression tests — prefer them to manual GUI/TUI runs**:
+  - TUI (`src/app_tests.rs`): `App::new` on a fake session, keys via
+    `on_key`, screen rendered into ratatui's `TestBackend` and compared
+    with insta snapshots in `src/snapshots/`. After an intended UI change:
+    `INSTA_UPDATE=always cargo test` (or `cargo insta review`), then look
+    at the diff before committing.
+  - GUI (`src/gui/tests.rs`): Slint's headless testing backend
+    (`i-slint-backend-testing`, pinned to the slint version); build with
+    `new_view` + `open_window`, feed `Snapshot`s to `View::absorb`, invoke
+    callbacks like clicks, assert properties and the `Cmd`s sent.
+  - Live services: `.github/workflows/nightly.yml` runs the `#[ignore]`d
+    network tests daily (yt-dlp step is non-blocking: datacenter IPs).
+  - Still manual: macOS-only behaviour (menu bar icon, Dock, Finder
+    launch, LSEnvironment), real audio, memory measurements.
 - Seed a fake library with `sqlite3` into `<data_dir>/library.sqlite3`
   (real video ids; name columns explicitly), delete it afterwards.
 - Memory: compare `footprint -p PID` (phys_footprint, what Activity Monitor

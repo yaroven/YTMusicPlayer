@@ -24,5 +24,7 @@ pub mod session;
 pub mod storage;
 pub mod sync;
 pub mod sysmem;
+#[cfg(test)]
+pub(crate) mod testing;
 pub mod ui;
 pub mod update;

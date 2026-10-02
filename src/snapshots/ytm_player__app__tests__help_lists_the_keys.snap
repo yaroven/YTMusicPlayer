@@ -1,0 +1,35 @@
+---
+source: src/app_tests.rs
+assertion_line: 76
+expression: s
+---
+┌ Library ───────────────────┐┌ Liked music · 3 songs ─────────────────────────────────────────────┐
+│› Liked music 3             ││#      Title                           Artist                Time   │
+│  Road trip 0               ││    1  ♥ Bohemian Rhapsody             Queen                    5:59│
+│            ┌ Keys ──────────────────────────────────────────────────────────────────┐        4:23│
+│            │↑/↓  k/j, PgUp/PgDn  g move · page · top / bottom                       │        4:38│
+│            │Tab  h/l               switch pane                                      │            │
+│            │Enter / double-click   open / play                                      │            │
+│            │b  Backspace           back                                             │            │
+│            │1 2 3 4 5              home · history · downloads · albums · artists    │            │
+│            │Space   n / p          play / pause · next / previous                   │            │
+│            │← / →  click bar       seek                                             │            │
+│            │+ / -                  volume                                           │            │
+│            │/                      filter the list (Esc clears)                     │            │
+│            │o   [ ]                search YouTube Music · other category            │            │
+│            │i                      albums / artists on this page                    │            │
+│            │s / e / A              shuffle / repeat / autoplay                      │            │
+│            │v                      queue (x remove, J/K move, X clear)              │            │
+│            │u / R / w              play next / start radio / artist's page          │            │
+│            │f / d                  like / dislike                                   │            │
+│            │a / x                  add to / remove from playlist                    │            │
+│            │D                      download for offline                             │            │
+│            │S                      save album / follow artist                       │            │
+│            │m                      playlist menu (new, rename, delete)              │            │
+│            │t                      lyrics                                           │            │
+│            │z / C                  sleep timer / play on a Chromecast               │            │
+└────────────│r / L                  sync library / sign in                           │────────────┘
+┌ ■ nothing p│?   q                  this help · quit                                 │at vol  50% ┐
+│0:00 ───────└────────────────────────────────────────────────────── any key to close ┘────────────│
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                                    ? help · q quit

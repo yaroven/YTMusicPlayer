@@ -1,0 +1,35 @@
+---
+source: src/app_tests.rs
+assertion_line: 96
+expression: s
+---
+┌ Library ───────────────────┐┌ Test Artist · 1M monthly audience i albums & artists ──────────────┐
+│› Liked music 3             ││#      Title                           Artist                Time   │
+│  Road trip 0               ││    1  Hit number 0                    Test Artist              3:20│
+│                            ││    2  Hit number 1                    Test Artist              3:21│
+│                            ││    3  Hit number 2                    Test Artist              3:22│
+│                            ││    4  Hit number 3                    Test Artist              3:23│
+│                            ││    5  Hit number 4                    Test Artist              3:24│
+│                            ││    6  Hit number 5                    Test Artist              3:25│
+│                            ││    7  Hit number 6                    Test Artist              3:26│
+│                            ││    8  Hit number 7                    Test Artist              3:27│
+│                            ││    9  Hit number 8                    Test Artist              3:28│
+│                            ││   10  Hit number 9                    Test Artist              3:29│
+│                            ││   11  Hit number 10                   Test Artist              3:30│
+│                            ││   12  Hit number 11                   Test Artist              3:31│
+│                            ││                                                                    │
+│                            ││                                                                    │
+│                            ││                                                                    │
+│                            ││                                                                    │
+│                            ││                                                                    │
+│                            ││                                                                    │
+│                            ││                                                                    │
+│                            ││                                                                    │
+│                            ││                                                                    │
+│                            ││                                                                    │
+│                            ││                                                                    │
+└────────────────────────────┘└────────────────────────────────────────────────────────────────────┘
+┌ ■ nothing playing ──────────────────────────────────────────── autoplay  shuffle repeat vol  50% ┐
+│0:00 ─────────────────────────────────────────────────────────────────────────────────────────────│
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                                    ? help · q quit

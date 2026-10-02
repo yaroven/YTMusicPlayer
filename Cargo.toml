@@ -150,6 +150,10 @@ core-foundation = "0.10"
 
 # Tests: a self-signed certificate for the fake Cast receiver.
 [dev-dependencies]
+# Screen snapshots of the terminal UI (see src/app_tests.rs).
+insta = "1"
+# Headless windows for the GUI tests (src/gui/tests.rs); same version as slint.
+i-slint-backend-testing = { version = "=1.18.1", default-features = false }
 rcgen = { version = "0.14", default-features = false, features = ["ring", "crypto"] }
 
 [profile.release]

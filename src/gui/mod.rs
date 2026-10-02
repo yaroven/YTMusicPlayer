@@ -1176,12 +1176,13 @@ fn in_dock(shown: bool) {
     }
 }
 
-/// Runs the GUI until it quits. `rt` runs the core on its own thread.
-pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Result<()> {
-    let library = deps.library.clone();
-    let library_view = Rc::new(RefCell::new(LibraryView::new(library.clone())?));
-    let (cmd_tx, cmd_rx) = unbounded_channel();
-
+/// The UI-thread state, before any window.
+fn new_view(
+    library: Arc<Library>,
+    library_view: Rc<RefCell<LibraryView>>,
+    prefs: Prefs,
+    cmd_tx: UnboundedSender<Cmd>,
+) -> Rc<RefCell<View>> {
     let art = Rc::new(RefCell::new(ArtCache {
         thumbs: Images::new(THUMB_CACHE),
         cards: Images::new(CARD_CACHE),
@@ -1189,20 +1190,14 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Resu
         large: None,
         tx: cmd_tx.clone(),
     }));
-    let view = Rc::new(RefCell::new(View {
+    Rc::new(RefCell::new(View {
         tx: cmd_tx.clone(),
-        store: library.clone(),
+        store: library,
         last: None,
         queue_source: RefCell::default(),
         cast_names: Rc::new(VecModel::default()),
         cast_scanning: false,
-        prefs: Prefs {
-            cookies: settings.cookies_from_browser.trim().to_lowercase(),
-            normalize: settings.normalize_volume,
-            notifications: settings.notifications,
-            tray: settings.tray,
-            crossfade: settings.crossfade,
-        },
+        prefs,
         geometry: None,
         tracks: Rc::new(TracksModel::new(
             Rows::Library(library_view.clone()),
@@ -1230,7 +1225,27 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Resu
         pending_add: None,
         art,
         now: None,
-    }));
+    }))
+}
+
+/// Runs the GUI until it quits. `rt` runs the core on its own thread.
+pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Result<()> {
+    let library = deps.library.clone();
+    let library_view = Rc::new(RefCell::new(LibraryView::new(library.clone())?));
+    let (cmd_tx, cmd_rx) = unbounded_channel();
+
+    let view = new_view(
+        library.clone(),
+        library_view,
+        Prefs {
+            cookies: settings.cookies_from_browser.trim().to_lowercase(),
+            normalize: settings.normalize_volume,
+            notifications: settings.notifications,
+            tray: settings.tray,
+            crossfade: settings.crossfade,
+        },
+        cmd_tx.clone(),
+    );
     VIEW.with(|cell| *cell.borrow_mut() = Some(view.clone()));
     let library_empty = view.borrow().library.borrow().playlists().is_empty();
 
@@ -1964,3 +1979,6 @@ thread_local! {
     /// The UI-thread view, for handlers queued from the core thread.
     static VIEW: RefCell<Option<Rc<RefCell<View>>>> = const { RefCell::new(None) };
 }
+
+#[cfg(test)]
+mod tests;

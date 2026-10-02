@@ -129,23 +129,7 @@ pub struct App {
 
 pub async fn run(deps: Deps) -> Result<()> {
     let library = LibraryView::new(deps.library.clone())?;
-    let mut app = App {
-        session: Session::new(deps)?,
-        library,
-        playlist_state: ListState::default(),
-        track_offset: 0,
-        cards: false,
-        card_selected: 0,
-        card_offset: 0,
-        queue_selected: 0,
-        focus: Focus::Playlists,
-        view: TracksView::Playlist,
-        mode: Mode::Normal,
-        areas: Areas::default(),
-        quit: false,
-        last_click: None,
-    };
-    app.list_replaced();
+    let mut app = App::new(Session::new(deps)?, library);
     app.session.startup(app.library.playlists().is_empty());
 
     // Restores the terminal on panic too (installs a panic hook).
@@ -160,6 +144,27 @@ pub async fn run(deps: Deps) -> Result<()> {
 }
 
 impl App {
+    pub(crate) fn new(session: Session, library: LibraryView) -> Self {
+        let mut app = App {
+            session,
+            library,
+            playlist_state: ListState::default(),
+            track_offset: 0,
+            cards: false,
+            card_selected: 0,
+            card_offset: 0,
+            queue_selected: 0,
+            focus: Focus::Playlists,
+            view: TracksView::Playlist,
+            mode: Mode::Normal,
+            areas: Areas::default(),
+            quit: false,
+            last_click: None,
+        };
+        app.list_replaced();
+        app
+    }
+
     async fn event_loop(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         let mut input = EventStream::new();
         // Progress bar cadence while playing; idle redraws only on input.
@@ -893,3 +898,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "app_tests.rs"]
+mod tests;
