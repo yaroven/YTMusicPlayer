@@ -186,7 +186,7 @@ Open **ytm-player** from your applications, or run `ytm gui`.
   **Shuffle**, **Radio**, **Save** / **Follow** and **download all**; artist
   pages add shelves of albums, singles and similar artists. **←** (or
   `Backspace`) goes back.
-- **Track rows:** double-click to play; click the artist's name for
+- **Track rows:** click to play; click the artist's name for
   their page (also in the player bar and the queue); hover for like and save to
   playlist; **⋮** for start radio, play next, add to queue, download,
   dislike and remove from playlist. ↓ marks downloaded songs.
@@ -227,7 +227,7 @@ Run `ytm` in a terminal.
 |---|---|
 | `↑/↓` `k/j`, `PgUp/PgDn`, `g/G` | move |
 | `Tab` `h/l` | switch pane |
-| `Enter`, double-click | open / play |
+| `Enter`, click | open / play |
 | `b`, `Backspace` | back |
 | `1` … `5` | home, history, downloads, albums, artists |
 | `Space` | play / pause |

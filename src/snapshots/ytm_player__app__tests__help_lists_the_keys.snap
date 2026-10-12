@@ -1,6 +1,5 @@
 ---
 source: src/app_tests.rs
-assertion_line: 76
 expression: s
 ---
 ┌ Library ───────────────────┐┌ Liked music · 3 songs ─────────────────────────────────────────────┐
@@ -9,7 +8,7 @@ expression: s
 │            ┌ Keys ──────────────────────────────────────────────────────────────────┐        4:23│
 │            │↑/↓  k/j, PgUp/PgDn  g move · page · top / bottom                       │        4:38│
 │            │Tab  h/l               switch pane                                      │            │
-│            │Enter / double-click   open / play                                      │            │
+│            │Enter / click          open / play                                      │            │
 │            │b  Backspace           back                                             │            │
 │            │1 2 3 4 5              home · history · downloads · albums · artists    │            │
 │            │Space   n / p          play / pause · next / previous                   │            │

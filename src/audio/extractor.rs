@@ -288,6 +288,17 @@ impl Cookies {
     }
 }
 
+/// Signed in, YouTube serves age-restricted songs to the web clients only,
+/// and without a PO token there is no audio-only HTTPS format: then the
+/// muxed 360p MP4 (itag 18, AAC inside; the player decodes just the audio).
+/// Measured 2026-10-12: mweb itag 18 URL, every range 206; needs a JS runtime.
+fn signed_in_format(format: &str, cookies: Option<&str>) -> String {
+    match cookies {
+        Some(_) => format!("{format}/18"),
+        None => format.to_owned(),
+    }
+}
+
 /// yt-dlp's flag for a cookie source: a browser name or a cookies.txt.
 fn cookie_flag(source: &str) -> &'static str {
     if COOKIE_BROWSERS.contains(&source) {
@@ -632,6 +643,7 @@ impl YtDlp {
     ) -> Result<AudioStream> {
         validate_video_id(video_id)?;
         let page_url = format!("https://www.youtube.com/watch?v={video_id}");
+        let format = signed_in_format(&self.format, cookies);
 
         let mut args: Vec<&str> = vec![
             "--ignore-config", // user's config could change output/format
@@ -642,7 +654,7 @@ impl YtDlp {
             "--print",
             PRINT_TEMPLATE,
             "--format",
-            &self.format,
+            &format,
             // Deterministic: never pick up a runtime implicitly from PATH.
             "--no-js-runtimes",
         ];
@@ -682,6 +694,7 @@ impl YtDlp {
         validate_video_id(video_id)?;
         let url = format!("https://www.youtube.com/watch?v={video_id}");
         let dest = dest.to_string_lossy();
+        let format = signed_in_format(&self.format, cookies);
         let mut args: Vec<&str> = vec![
             "--ignore-config",
             "--no-playlist",
@@ -689,7 +702,7 @@ impl YtDlp {
             "--no-progress",
             "--no-js-runtimes",
             "--format",
-            &self.format,
+            &format,
             "--no-part",
             "--output",
             &dest,

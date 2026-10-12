@@ -477,6 +477,11 @@ impl Shelves {
     }
 }
 
+thread_local! {
+    /// The row last played by a click, and when (see `on_play_track`).
+    static LAST_PLAY: std::cell::Cell<Option<(i32, std::time::Instant)>> = const { std::cell::Cell::new(None) };
+}
+
 /// "chrome", or "cookies.txt" for a file path.
 fn cookies_label(source: &str) -> &str {
     if source.contains(['/', '\\']) {
@@ -1428,6 +1433,15 @@ fn wire_callbacks(
         view.borrow().selection_from(ui);
     });
     on!(on_play_track, [tx, view, ui], |row| {
+        // One click plays; the second click of a double-click doesn't
+        // start the song over.
+        let now = std::time::Instant::now();
+        let repeat = LAST_PLAY.replace(Some((row, now))).is_some_and(|(r, at)| {
+            r == row && now.duration_since(at) < std::time::Duration::from_millis(500)
+        });
+        if repeat {
+            return;
+        }
         ui.set_selected_track(row);
         let cmd = {
             let v = view.borrow();

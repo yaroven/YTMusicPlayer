@@ -12,34 +12,26 @@
   },
   {
     "auth" : true,
-    "deviceMake" : "Apple",
-    "deviceModel" : "RealityDevice17,1",
-    "hls" : true,
-    "id" : "101",
-    "name" : "VISIONOS",
-    "osName" : "visionOS",
-    "osVersion" : "26.5.23O471",
-    "userAgent" : "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
-    "version" : "1.02",
+    "cipher" : true,
+    "id" : "2",
+    "itags" : [
+      140,
+      18
+    ],
+    "name" : "MWEB",
+    "userAgent" : "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+    "version" : "2.20260708.05.00",
     "visitor" : true
   },
   {
     "auth" : true,
-    "deviceMake" : "Apple",
-    "deviceModel" : "iPhone16,2",
-    "hls" : true,
-    "id" : "5",
-    "name" : "IOS",
-    "osName" : "iPhone",
-    "osVersion" : "18.5.0.22F76",
-    "userAgent" : "com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_5_0 like Mac OS X;)",
-    "version" : "21.26.4",
-    "visitor" : true
-  },
-  {
-    "auth" : true,
+    "cipher" : true,
     "hls" : true,
     "id" : "1",
+    "itags" : [
+      140,
+      18
+    ],
     "name" : "WEB",
     "userAgent" : "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
     "version" : "2.20260708.00.00",

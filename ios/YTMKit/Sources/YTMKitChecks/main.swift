@@ -177,6 +177,17 @@ let albumRow = #"""
     """#)
     check(libraryCards(grid).map(\.browseId) == ["VLLM", "VLPLroad"], "library grid")
 
+    // Signed-in web clients: player script and muxed fallback.
+    check(ChallengeSolver.playerURL(inPage: #"x "jsUrl":"/s/player/ec429320/player_es6_tcc.vflset/en_US/base.js","y""#)?.absoluteString
+          == "https://www.youtube.com/s/player/ec429320/player_ias.vflset/en_US/base.js", "player script URL (main variant)")
+    check(ChallengeSolver.signatureTimestamp(in: "a,signatureTimestamp:20367,b") == 20367, "signatureTimestamp")
+    let muxed = json(#"""
+    {"playabilityStatus":{"status":"OK"},"streamingData":{"formats":[{"itag":18,"url":"https://v/18","mimeType":"video/mp4"}],
+     "adaptiveFormats":[{"itag":140,"signatureCipher":"s=x&url=https://v/140"}]}}
+    """#)
+    let fallback = try? parsePlayer(muxed, itags: [140, 18])
+    check(fallback?.url.absoluteString == "https://v/18" && fallback?.hasVideo == true, "itag 18 when 140 stays ciphered")
+
     check(visitorDataIn(#"x "VISITOR_DATA":"Cgt abc%3D%3D","y""#) == "Cgt abc%3D%3D", "visitor data")
 }
 

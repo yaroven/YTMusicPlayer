@@ -309,7 +309,9 @@ impl Engine {
             .with_mime_type("audio/mp4")
             .build()
             .map_err(|err| format!("cannot decode audio: {err}"))?;
-        let duration = decoder.total_duration().or(load.duration);
+        // yt-dlp's length first: in a muxed MP4 (itag 18) symphonia's is the
+        // audio track's wrong guess (36 s for a 106 s song).
+        let duration = load.duration.or(decoder.total_duration());
         Ok((decoder.amplify(load.gain), duration))
     }
 

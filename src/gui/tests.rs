@@ -116,8 +116,10 @@ fn starts_on_the_library() {
 }
 
 #[test]
-fn double_click_plays_from_that_row() {
+fn one_click_plays_from_that_row() {
     let mut h = harness();
+    h.ui.invoke_play_track(1);
+    // The second click of a double-click: no restart.
     h.ui.invoke_play_track(1);
     let cmds = h.commands();
     assert!(

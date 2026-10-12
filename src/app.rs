@@ -718,20 +718,21 @@ impl App {
                 if index >= len {
                     return;
                 }
-                let double = self
+                // One click opens / plays; the second click of a
+                // double-click doesn't do it again.
+                let repeat = self
                     .last_click
                     .is_some_and(|(t, i)| i == index && t.elapsed() < DOUBLE_CLICK);
                 self.last_click = Some((Instant::now(), index));
+                if repeat {
+                    return;
+                }
                 if cards {
                     self.card_selected = index;
-                    if double {
-                        self.open_card(index);
-                    }
+                    self.open_card(index);
                 } else {
                     self.library.select_row(Some(index));
-                    if double {
-                        self.play_selected();
-                    }
+                    self.play_selected();
                 }
             }
             _ => {}

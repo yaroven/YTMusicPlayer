@@ -10,7 +10,8 @@ let package = Package(
         .library(name: "YTMKit", targets: ["YTMKit"]),
     ],
     targets: [
-        .target(name: "YTMKit"),
+        // yt-dlp-ejs's challenge solver (JavaScriptCore), see Challenges.swift.
+        .target(name: "YTMKit", resources: [.copy("Resources")]),
         // `swift run YTMKitChecks [--live]`: offline parsing checks, and the
         // live ones against YouTube (no XCTest in Command Line Tools).
         .executableTarget(name: "YTMKitChecks", dependencies: ["YTMKit"]),

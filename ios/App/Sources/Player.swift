@@ -71,6 +71,7 @@ final class Player {
     @ObservationIgnored private var preloadTask: Task<Void, Never>?
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var itemObservations: [ObjectIdentifier: NSKeyValueObservation] = [:]
+    @ObservationIgnored private var videoObservations: [ObjectIdentifier: NSKeyValueObservation] = [:]
     @ObservationIgnored private var timeObserver: Any?
     /// Songs whose URL was already refreshed once after a failure.
     @ObservationIgnored private var retried: Set<String> = []
@@ -242,6 +243,12 @@ final class Player {
         let stream = try await Services.resolver.stream(track.videoId)
         try Task.checkCancellation()
         let item = AVPlayerItem(url: stream.url)
+        if stream.hasVideo {
+            // A muxed MP4 (age-restricted songs): decode only its audio.
+            videoObservations[ObjectIdentifier(item)] = item.observe(\.tracks, options: [.new]) { item, _ in
+                for track in item.tracks where track.assetTrack?.mediaType == .video { track.isEnabled = false }
+            }
+        }
         if let duration = stream.duration {
             // AVFoundation thinks YouTube's fMP4 is twice as long.
             item.forwardPlaybackEndTime = CMTime(seconds: duration, preferredTimescale: 1000)
@@ -371,7 +378,10 @@ final class Player {
     }
 
     private func forgetItem(_ item: AVPlayerItem?) {
-        if let item { itemObservations[ObjectIdentifier(item)] = nil }
+        if let item {
+            itemObservations[ObjectIdentifier(item)] = nil
+            videoObservations[ObjectIdentifier(item)] = nil
+        }
     }
 
     private func statusChanged(_ status: AVPlayer.TimeControlStatus) {

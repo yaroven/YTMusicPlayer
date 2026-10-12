@@ -60,7 +60,7 @@ pub enum Action {
 pub const HELP: &[(&str, &str)] = &[
     ("↑/↓  k/j, PgUp/PgDn  g/G", "move · page · top / bottom"),
     ("Tab  h/l", "switch pane"),
-    ("Enter / double-click", "open / play"),
+    ("Enter / click", "open / play"),
     ("b  Backspace", "back"),
     ("1 2 3 4 5", "home · history · downloads · albums · artists"),
     ("Space   n / p", "play / pause · next / previous"),

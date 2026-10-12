@@ -21,6 +21,12 @@ public struct ClientProfile: Codable, Sendable, Hashable {
     public var auth: Bool?
     /// Without a plain audio URL, take the HLS manifest's audio playlist.
     public var hls: Bool?
+    /// Web clients: formats are ciphered and throttled; solve YouTube's JS
+    /// challenges (Challenges.swift) for `itags`.
+    public var cipher: Bool?
+    /// Formats to take, in order (default: 140, the AAC audio). 18 is the
+    /// muxed 360p MP4: its audio is what plays.
+    public var itags: [Int]?
 
     /// Measured 2026-10-12: itag 140 URL, every range 206, AppleCoreMedia UA
     /// accepted. IOS URLs 403 past the first chunk (PO token); ANDROID_VR
@@ -43,10 +49,17 @@ public struct ClientProfile: Codable, Sendable, Hashable {
             userAgent: "com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_5_0 like Mac OS X;)",
             deviceMake: "Apple", deviceModel: "iPhone16,2", osName: "iPhone", osVersion: "18.5.0.22F76",
             visitor: true, auth: true, hls: true)
+        // Measured 2026-10-12 with a real account: signed in, VISIONOS and
+        // IOS answer HTTP 400; MWEB returns OK with every format ciphered,
+        // and yt-dlp plays its itag 18 (other itags want a PO token).
+        let mweb = ClientProfile(
+            name: "MWEB", version: "2.20260708.05.00", id: "2",
+            userAgent: "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+            visitor: true, auth: true, cipher: true, itags: [140, 18])
         let safari = ClientProfile(
             name: "WEB", version: "2.20260708.00.00", id: "1", userAgent: visionOS.userAgent,
-            visitor: true, auth: true, hls: true)
-        return [vision, ios, safari]
+            visitor: true, auth: true, hls: true, cipher: true, itags: [140, 18])
+        return [mweb, safari]
     }()
 
     public static let builtIn = [visionOS] + signedIn
@@ -78,6 +91,8 @@ public struct Stream: Sendable {
     public var loudnessDb: Double?
     /// `url` is an HLS playlist.
     public var hls = false
+    /// A muxed video (itag 18): only its audio track should play.
+    public var hasVideo = false
 }
 
 /// Video id → stream URL on the device itself (no yt-dlp): asks the player
@@ -94,10 +109,14 @@ public actor Resolver {
     var visitors: [Bool: (value: String, at: Date)] = [:]
     var cache: [String: Stream] = [:]
     var order: [String] = []
+    /// The player script named by the last signed-in watch page.
+    var playerURL: URL?
+    let solver: ChallengeSolver
 
     public init(session: URLSession = .shared, auth: Auth? = nil) {
         self.session = session
         self.auth = auth
+        solver = ChallengeSolver(session: session)
     }
 
     public func stream(_ videoId: String) async throws -> Stream {
@@ -191,7 +210,9 @@ public actor Resolver {
         request.setValue("en-US,en", forHTTPHeaderField: "Accept-Language")
         let (data, response) = try await send(request, signedIn: signedIn)
         _ = response
-        guard let value = visitorDataIn(String(decoding: data, as: UTF8.self)) else { return nil }
+        let page = String(decoding: data, as: UTF8.self)
+        if let player = ChallengeSolver.playerURL(inPage: page) { playerURL = player }
+        guard let value = visitorDataIn(page) else { return nil }
         visitors[signedIn] = (value, Date())
         return value
     }
@@ -217,8 +238,15 @@ public actor Resolver {
             client["visitorData"] = visitor
             request.setValue(visitor, forHTTPHeaderField: "X-Goog-Visitor-Id")
         }
-        let body: [String: Any] = ["context": ["client": client], "videoId": videoId,
+        var body: [String: Any] = ["context": ["client": client], "videoId": videoId,
                                    "contentCheckOk": true, "racyCheckOk": true]
+        if profile.cipher == true {
+            if playerURL == nil { _ = try await visitorData(videoId, profile: profile, signedIn: signedIn) }
+            guard let player = playerURL else { throw YTMError.unplayable("YouTube's player script not found") }
+            if let ts = try await solver.signatureTimestamp(player) {
+                body["playbackContext"] = ["contentPlaybackContext": ["signatureTimestamp": ts]]
+            }
+        }
         request.httpMethod = "POST"
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -229,7 +257,11 @@ public actor Resolver {
         let (data, response) = try await send(request, signedIn: signedIn)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else { throw YTMError.http("YouTube player", status) }
-        var stream = try parsePlayer(try JSONSerialization.jsonObject(with: data), hls: profile.hls == true)
+        var json = try JSONSerialization.jsonObject(with: data)
+        if profile.cipher == true, let player = playerURL, string(json, "playabilityStatus/status") == "OK" {
+            json = try await decipherFormats(json, itags: profile.itags ?? [140], player: player, solver: solver)
+        }
+        var stream = try parsePlayer(json, hls: profile.hls == true, itags: profile.itags ?? [140])
         if stream.hls {
             // The master lists video too; play only its audio playlist.
             let (master, _) = try await session.data(from: stream.url)
@@ -273,7 +305,7 @@ func audioPlaylist(_ master: String, base: URL) -> URL? {
 
 /// The AAC (itag 140) stream of a player response; with `hls`, the HLS
 /// manifest when no plain URL is there.
-func parsePlayer(_ data: Any, hls: Bool = false) throws -> Stream {
+func parsePlayer(_ data: Any, hls: Bool = false, itags: [Int] = [140]) throws -> Stream {
     let status = string(data, "playabilityStatus/status") ?? ""
     guard status == "OK" else {
         let reason = string(data, "playabilityStatus/reason") ?? status
@@ -282,8 +314,10 @@ func parsePlayer(_ data: Any, hls: Bool = false) throws -> Stream {
     }
     let length = (pointer(data, "videoDetails/lengthSeconds") as? String).flatMap(Double.init)
     let expiresIn = (pointer(data, "streamingData/expiresInSeconds") as? String).flatMap(Double.init)
-    let formats = pointer(data, "streamingData/adaptiveFormats") as? [JSON] ?? []
-    guard let aac = formats.first(where: { $0["itag"] as? Int == 140 && $0["url"] != nil })
+    let formats = (pointer(data, "streamingData/adaptiveFormats") as? [JSON] ?? [])
+        + (pointer(data, "streamingData/formats") as? [JSON] ?? [])
+    let wanted = itags.lazy.compactMap { itag in formats.first { $0["itag"] as? Int == itag && $0["url"] != nil } }.first
+    guard let aac = wanted
         ?? formats.first(where: { ($0["mimeType"] as? String ?? "").hasPrefix("audio/mp4") && $0["url"] != nil }),
         let url = (aac["url"] as? String).flatMap(URL.init(string:)) else {
         if hls, let manifest = string(data, "streamingData/hlsManifestUrl").flatMap(URL.init(string:)) {
@@ -302,5 +336,6 @@ func parsePlayer(_ data: Any, hls: Bool = false) throws -> Stream {
         ?? length
     return Stream(url: url, expires: Date().addingTimeInterval(expires),
                   contentLength: (aac["contentLength"] as? String).flatMap(Int.init),
-                  duration: duration, loudnessDb: loudness)
+                  duration: duration, loudnessDb: loudness,
+                  hasVideo: (aac["mimeType"] as? String ?? "").hasPrefix("video/"))
 }

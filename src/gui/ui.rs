@@ -660,7 +660,6 @@ slint::slint! {
                         actions: false;
                         selected: t.playing;
                         clicked => { root.jump(i); }
-                        double-clicked => { root.jump(i); }
                         artist => { root.queue-action(i, "artist"); }
                     }
                     HorizontalLayout {
@@ -1346,8 +1345,7 @@ slint::slint! {
                                 for t[i] in root.tracks: TrackItem {
                                     track: t;
                                     selected: i == root.selected-track;
-                                    clicked => { root.select-track(i); keys.focus(); }
-                                    double-clicked => { root.play-track(i); }
+                                    clicked => { root.play-track(i); keys.focus(); }
                                     like => { root.like-row(i); keys.focus(); }
                                     add-to => { root.selected-track = i; add-popup.show(); }
                                     more(x, y) => { root.menu-row = i; root.menu-x = x; root.menu-y = y; row-menu.show(); }
@@ -1379,8 +1377,7 @@ slint::slint! {
                                         for t[i] in root.tracks: TrackItem {
                                             track: t;
                                             selected: i == root.selected-track;
-                                            clicked => { root.select-track(i); keys.focus(); }
-                                            double-clicked => { root.play-track(i); }
+                                            clicked => { root.play-track(i); keys.focus(); }
                                             like => { root.like-row(i); keys.focus(); }
                                             add-to => { root.selected-track = i; add-popup.show(); }
                                             more(x, y) => { root.menu-row = i; root.menu-x = x; root.menu-y = y; row-menu.show(); }

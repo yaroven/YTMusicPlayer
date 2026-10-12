@@ -235,6 +235,18 @@ impl StreamResolver {
             }
         }
 
+        // Signed in, age-restricted songs come only from clients whose URLs
+        // need YouTube's JS challenges solved: retry with the JS runtime
+        // whatever the policy (without it there is nothing to play).
+        if !use_js && matches!(result, Err(ExtractorError::AgeRestrictedSignedOut { .. })) {
+            tracing::info!(
+                video_id,
+                "age-restricted with a sign-in; retrying with JS runtime"
+            );
+            use_js = true;
+            result = self.attempt(video_id, true).await;
+        }
+
         // An extractor broken by a YouTube change is fixed by updating yt-dlp.
         // An outdated managed copy is fixed the same way.
         let outdated = matches!(result, Err(ExtractorError::Outdated { .. }));

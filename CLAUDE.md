@@ -338,6 +338,18 @@ Domain terms are defined in `CONTEXT.md`.
   Measured 2026-10-12 (M1, release, GUI idle 25 s, `footprint`): 46 MB
   before and after (WebKit linked but unused); binary +0.36 MB.
 
+- **Age-restricted songs, signed in (measured 2026-10-12 with a real
+  account):** YouTube serves them only to web clients, whose URLs need
+  the JS challenges solved. Desktop: the cookie retry runs yt-dlp with the
+  JS runtime whatever `js_fallback` says, and adds `/18` to the format
+  (no audio-only HTTPS format without a PO token; itag 18 = muxed 360p
+  MP4, rodio picks its AAC track; symphonia gets its length wrong, so
+  yt-dlp's duration wins). iPhone: VISIONOS / IOS answer HTTP 400 with
+  cookies; MWEB answers OK with everything ciphered → `Challenges.swift`
+  runs yt-dlp-ejs 0.8.0 (bundled, Unlicense) in JavaScriptCore with the
+  watch page's player script (main variant, `signatureTimestamp` in the
+  request); deciphered itag 140 then plays, every range 206.
+
 ## Open TODOs
 
 - iPhone: verify signed-in age-restricted playback on a real account,
