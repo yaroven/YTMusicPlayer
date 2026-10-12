@@ -350,6 +350,19 @@ Domain terms are defined in `CONTEXT.md`.
   watch page's player script (main variant, `signatureTimestamp` in the
   request); deciphered itag 140 then plays, every range 206.
 
+- **Karaoke lyrics** (user asked for better-lyrics' look; better-lyrics
+  is GPL-3 and its word-synced sources sit behind its own Turnstile-gated
+  API, so: our own code, LRCLIB lines + Enhanced-LRC word stamps when
+  present, else words spread by length, `Lyrics::progress` /
+  `word_times`, same numbers in YTMKit). Window: the sung line is a
+  `StyledText` (`<font color>` spans, wraps; the software renderer draws
+  it via parley), a 60 ms `slint::Timer` changes the model only when a
+  word starts. One full repaint 0.8 ms (release, 1100x720,
+  `gui::tests::lyrics_png`, which also writes `target/lyrics.png` with the
+  real renderer, headless). Blurred cover = a 12 px copy stretched with
+  smooth scaling (no blur filter in the renderer). iPhone: TimelineView at
+  10 Hz while on screen, `Player.exactPosition`.
+
 ## Open TODOs
 
 - iPhone: verify signed-in age-restricted playback on a real account,

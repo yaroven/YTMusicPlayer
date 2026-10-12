@@ -72,6 +72,7 @@ enum Cmd {
     Next,
     Prev,
     SeekRatio(f64),
+    SeekTo(Duration),
     Volume(f32),
     Shuffle,
     Repeat,
@@ -178,7 +179,8 @@ impl Snapshot {
 }
 
 /// The playing track's big cover: id, image, average colour.
-type LargeArt = (Arc<str>, Image, (u8, u8, u8));
+/// Video id, cover, average colour, blurred backdrop.
+type LargeArt = (Arc<str>, Image, (u8, u8, u8), Image);
 
 /// Bounded LRU-ish map of decoded images.
 struct Images {
@@ -517,55 +519,157 @@ fn hue(artist: &str) -> f32 {
     (h % 360) as f32 / 360.0
 }
 
-/// Lyrics of the playing track and the line being sung.
+/// Lyrics of the playing track, karaoke style: the sung line lights up
+/// word by word (see [`Lyrics::progress`]), instrumental breaks show three
+/// dots. A timer redraws only when a word starts, not every frame.
 struct LyricsView {
     lyrics: Option<Arc<Lyrics>>,
     model: Rc<VecModel<LyricLine>>,
-    current: Option<usize>,
+    /// Model row of lyrics line 0: 1 when an intro row comes first.
+    offset: usize,
+    /// Model row being sung and its words (or dots) lit.
+    progress: Option<(usize, usize)>,
     /// Asked for and not answered yet.
     loading: bool,
+    /// Position at the last snapshot, and when it came (`None`: paused).
+    clock: (Duration, Option<std::time::Instant>),
+    ticker: slint::Timer,
 }
 
+/// How often the timer looks for the next word (no redraw unless one starts).
+const LYRICS_TICK: Duration = Duration::from_millis(60);
+
 impl LyricsView {
-    fn set(&mut self, lyrics: Option<Arc<Lyrics>>) {
-        let synced = lyrics.as_ref().is_some_and(|l| l.synced());
-        let rows: Vec<LyricLine> = lyrics
-            .iter()
-            .flat_map(|l| &l.lines)
-            .map(|line| LyricLine {
-                text: line.text.as_str().into(),
-                state: if synced { 0 } else { 3 },
-            })
-            .collect();
-        self.model.set_vec(rows);
-        self.lyrics = lyrics;
-        self.current = None;
+    fn new() -> Self {
+        Self {
+            lyrics: None,
+            model: Rc::new(VecModel::default()),
+            offset: 0,
+            progress: None,
+            loading: false,
+            clock: (Duration::ZERO, None),
+            ticker: slint::Timer::default(),
+        }
     }
 
-    /// Highlights the line sung at `position`.
-    fn follow(&mut self, position: Duration) {
-        let Some(lyrics) = &self.lyrics else {
-            return;
-        };
-        let current = lyrics.current_line(position);
-        if current == self.current {
-            return;
+    fn set(&mut self, lyrics: Option<Arc<Lyrics>>) {
+        let synced = lyrics.as_ref().is_some_and(|l| l.synced());
+        let intro = lyrics
+            .as_ref()
+            .filter(|_| synced)
+            .and_then(|l| l.lines.first()?.at)
+            .is_some_and(|at| at >= crate::lyrics::INTRO_GAP);
+        let mut rows: Vec<LyricLine> = Vec::new();
+        if intro {
+            rows.push(LyricLine {
+                instrumental: true,
+                at: 0,
+                ..LyricLine::default()
+            });
         }
-        let (a, b) = (
-            self.current.unwrap_or(0).min(current.unwrap_or(0)),
-            self.current.unwrap_or(0).max(current.unwrap_or(0)),
-        );
-        for row in a..=b.min(self.model.row_count().saturating_sub(1)) {
-            if let Some(mut line) = self.model.row_data(row) {
-                line.state = match current {
-                    Some(c) if row == c => 1,
-                    Some(c) if row < c => 2,
-                    _ => 0,
-                };
-                self.model.set_row_data(row, line);
+        rows.extend(lyrics.iter().flat_map(|l| &l.lines).map(|line| LyricLine {
+            text: line.text.as_str().into(),
+            state: if synced { 0 } else { 3 },
+            at: line.at.map_or(-1, |at| at.as_millis() as i32),
+            instrumental: synced && line.instrumental(),
+            ..LyricLine::default()
+        }));
+        self.model.set_vec(rows);
+        self.offset = usize::from(intro);
+        self.lyrics = lyrics;
+        self.progress = None;
+    }
+
+    /// The player's position at a snapshot; the timer runs on from it.
+    fn follow(&mut self, position: Duration, playing: bool) {
+        self.clock = (position, playing.then(std::time::Instant::now));
+        self.tick();
+    }
+
+    fn position(&self) -> Duration {
+        let (at, since) = self.clock;
+        since.map_or(at, |t| at + t.elapsed())
+    }
+
+    /// Lights the words sung by now; true when something changed.
+    fn tick(&mut self) -> bool {
+        let Some(lyrics) = self.lyrics.clone().filter(|l| l.synced()) else {
+            return false;
+        };
+        let position = self.position();
+        let first = lyrics.lines.first().and_then(|l| l.at).unwrap_or_default();
+        let progress = if self.offset == 1 && position < first {
+            // The intro: dots light up until the first line.
+            let lit = (position.as_secs_f64() / first.as_secs_f64().max(0.1) * 4.0) as usize;
+            Some((0, lit.min(3)))
+        } else {
+            lyrics
+                .progress(position)
+                .map(|p| (p.line + self.offset, p.words))
+        };
+        if progress == self.progress {
+            return false;
+        }
+        let old = self.progress.map(|(row, _)| row);
+        let new = progress.map(|(row, _)| row);
+        if old != new {
+            // States between the old and the new line change (seeks too).
+            let (a, b) = (
+                old.unwrap_or(0).min(new.unwrap_or(0)),
+                old.unwrap_or(0).max(new.unwrap_or(0)),
+            );
+            for row in a..=b.min(self.model.row_count().saturating_sub(1)) {
+                if let Some(mut line) = self.model.row_data(row) {
+                    line.state = match new {
+                        Some(c) if row == c => 1,
+                        Some(c) if row < c => 2,
+                        _ => 0,
+                    };
+                    if line.state != 1 {
+                        line.dots = 0;
+                    }
+                    self.model.set_row_data(row, line);
+                }
             }
         }
-        self.current = current;
+        if let Some((row, lit)) = progress
+            && let Some(mut line) = self.model.row_data(row)
+        {
+            if line.instrumental {
+                line.dots = lit as i32;
+            } else {
+                let words = row
+                    .checked_sub(self.offset)
+                    .and_then(|i| lyrics.lines.get(i))
+                    .map(|l| l.split_words())
+                    .unwrap_or_default();
+                line.styled = karaoke_markup(&words, lit);
+            }
+            self.model.set_row_data(row, line);
+        }
+        self.progress = progress;
+        true
+    }
+
+    /// Runs the word timer while synced lyrics play in an open window.
+    fn schedule(&self, view: std::rc::Weak<RefCell<View>>) {
+        let synced = self.lyrics.as_ref().is_some_and(|l| l.synced());
+        let wanted = synced && self.clock.1.is_some() && current_ui().is_some();
+        if wanted == self.ticker.running() {
+            return;
+        }
+        if !wanted {
+            self.ticker.stop();
+            return;
+        }
+        self.ticker
+            .start(slint::TimerMode::Repeated, LYRICS_TICK, move || {
+                if let Some(view) = view.upgrade()
+                    && let Ok(mut view) = view.try_borrow_mut()
+                {
+                    view.lyrics.tick();
+                }
+            });
     }
 
     fn render(&self, ui: &MainWindow) {
@@ -576,9 +680,37 @@ impl LyricsView {
                 .unwrap_or_default()
                 .into(),
         );
-        ui.set_lyrics_current(self.current.map_or(-1, |c| c as i32));
+        ui.set_lyrics_current(self.progress.map_or(-1, |(row, _)| row as i32));
         ui.set_lyrics_loading(self.loading);
     }
+}
+
+/// The sung line: its sung words bright, the rest dimmed (StyledText
+/// markup; the words are escaped).
+fn karaoke_markup(words: &[&str], sung: usize) -> slint::StyledText {
+    fn escape(text: &str) -> String {
+        let mut out = String::with_capacity(text.len() + 8);
+        for c in text.chars() {
+            if c.is_ascii_punctuation() {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        out
+    }
+    let sung = sung.min(words.len());
+    let done = escape(words[..sung].concat().trim_end());
+    let rest = escape(words[sung..].concat().trim_end());
+    let space = if sung > 0 && sung < words.len() {
+        " "
+    } else {
+        ""
+    };
+    let markup = format!(
+        "**<font color=\"#ffffff\">{done}</font>{space}<font color=\"#ffffff66\">{rest}</font>**"
+    );
+    slint::StyledText::from_markdown(&markup)
+        .unwrap_or_else(|_| slint::StyledText::from_plain_text(&words.concat()))
 }
 
 /// Settings the window shows and changes.
@@ -770,8 +902,9 @@ impl View {
 
         let mut art = self.art.borrow_mut();
         match &art.large {
-            Some((large_id, image, tint)) if *large_id == id => {
+            Some((large_id, image, tint, backdrop)) if *large_id == id => {
                 ui.set_now_art(image.clone());
+                ui.set_now_backdrop(backdrop.clone());
                 ui.set_now_has_art(true);
                 ui.set_now_tint(Color::from_rgb_u8(tint.0, tint.1, tint.2));
             }
@@ -822,7 +955,8 @@ impl View {
                 return;
             }
             ArtSize::Large if is_now => {
-                self.art.borrow_mut().large = Some((key.clone(), image, art.tint));
+                let backdrop = art.backdrop.map(Image::from_rgba8).unwrap_or_default();
+                self.art.borrow_mut().large = Some((key.clone(), image, art.tint, backdrop));
             }
             ArtSize::Large => return, // track changed meanwhile
         }
@@ -870,6 +1004,7 @@ impl View {
 
     /// The window closed: drop what only it needed (art, cards).
     fn detach(&mut self) {
+        self.lyrics.ticker.stop();
         {
             let mut art = self.art.borrow_mut();
             art.thumbs.clear();
@@ -1031,7 +1166,8 @@ impl View {
             self.lyrics.set(snap.lyrics.clone());
             self.lyrics.loading = false;
         }
-        self.lyrics.follow(snap.view.position);
+        self.lyrics
+            .follow(snap.view.position, snap.view.state == PlayState::Playing);
         if let Some(related) = &snap.related {
             self.related_data = related.clone();
         }
@@ -1071,6 +1207,7 @@ impl View {
             self.sync_saved(ui);
         }
         self.lyrics.render(ui);
+        self.lyrics.schedule(view_weak());
         if changed || snap.related.is_some() {
             let (art, related) = (self.art.clone(), self.related_data.clone());
             self.related.set(&related, &mut art.borrow_mut());
@@ -1109,6 +1246,11 @@ pub fn raise() {
             }
         }
     });
+}
+
+/// The UI-thread view, weakly (for timers it owns).
+fn view_weak() -> std::rc::Weak<RefCell<View>> {
+    VIEW.with(|v| v.borrow().as_ref().map(Rc::downgrade).unwrap_or_default())
 }
 
 fn current_ui() -> Option<MainWindow> {
@@ -1229,12 +1371,7 @@ fn new_view(
         shelves: Shelves::new(),
         related: Shelves::new(),
         related_data: Arc::from([]),
-        lyrics: LyricsView {
-            lyrics: None,
-            model: Rc::new(VecModel::default()),
-            current: None,
-            loading: false,
-        },
+        lyrics: LyricsView::new(),
         home: None,
         header_art: None,
         pending_add: None,
@@ -1431,6 +1568,11 @@ fn wire_callbacks(
     on!(on_select_track, [tx, view, ui], |row| {
         ui.set_selected_track(row);
         view.borrow().selection_from(ui);
+    });
+    on!(on_lyrics_seek, [tx, view, ui], |ms| {
+        if let Ok(ms) = u64::try_from(ms) {
+            send(Cmd::SeekTo(Duration::from_millis(ms)), tx);
+        }
     });
     on!(on_play_track, [tx, view, ui], |row| {
         // One click plays; the second click of a double-click doesn't
@@ -1936,6 +2078,7 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::Next => session.skip(1),
         Cmd::Prev => session.skip(-1),
         Cmd::SeekRatio(r) => session.seek_ratio(r),
+        Cmd::SeekTo(at) => session.seek_to(at),
         Cmd::Volume(v) => session.set_volume(v),
         Cmd::Shuffle => session.toggle_shuffle(),
         Cmd::Repeat => session.cycle_repeat(),

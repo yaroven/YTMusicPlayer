@@ -194,8 +194,12 @@ Open **ytm-player** from your applications, or run `ytm gui`.
   current track with dislike, like and ⋮, volume, repeat, shuffle,
   **Cast**, **sleep timer** and the full-screen view.
 - **Now playing** (click the track or ▲): big cover with **Up next**
-  (reorder, remove, clear, autoplay switch), **Lyrics** (the sung line is
-  highlighted when synced) and **Related**. `Esc` or ▼ closes it.
+  (reorder, remove, clear, autoplay switch), **Lyrics** and **Related**,
+  over a blurred copy of the cover. Synced lyrics play karaoke style, in
+  the spirit of [Better Lyrics](https://github.com/better-lyrics/better-lyrics):
+  the sung line lights up word by word (word timings from the lyrics when
+  LRCLIB has them, else spread over the line), instrumental breaks show
+  three dots, and a click on a line seeks there. Same on the iPhone. `Esc` or ▼ closes it.
 - **Settings:** autoplay, volume normalization, crossfade (0 = gapless),
   notifications, tray icon. Saved to `config.toml`.
 - Keys: `Space` play/pause, `n`/`p` next/previous, `f` like, `t` lyrics,

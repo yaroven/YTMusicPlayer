@@ -36,8 +36,18 @@ struct NowPlayingView: View {
         .padding(.top, 28)
         .padding(.bottom, 8)
         .background {
-            LinearGradient(colors: [Color.accentColor.opacity(0.35), Color.black], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
+            ZStack {
+                Color.black
+                if let track = player.current {
+                    // The cover, blurred, as better-lyrics does.
+                    Artwork(source: .video(track.videoId), size: 200)
+                        .scaleEffect(4)
+                        .blur(radius: 60)
+                        .opacity(0.6)
+                }
+                LinearGradient(colors: [.black.opacity(0.2), .black.opacity(0.7)], startPoint: .top, endPoint: .bottom)
+            }
+            .ignoresSafeArea()
         }
     }
 
@@ -175,6 +185,8 @@ private struct Scrubber: View {
     }
 }
 
+/// Karaoke lyrics: big bold lines, the sung one lighting up word by word,
+/// instrumental breaks as three dots, a tap seeks to a line.
 private struct LyricsPane: View {
     let track: Track
     @Environment(Player.self) private var player
@@ -184,7 +196,20 @@ private struct LyricsPane: View {
     var body: some View {
         Group {
             if let lyrics {
-                lines(lyrics)
+                if lyrics.synced {
+                    // Redraws only while on screen; 10 per second is enough
+                    // for words to light up on time.
+                    TimelineView(.periodic(from: .now, by: 0.1)) { _ in
+                        SyncedLyrics(lyrics: lyrics, progress: lyrics.progress(at: player.exactPosition + 0.15))
+                    }
+                } else {
+                    ScrollView(showsIndicators: false) {
+                        Text(lyrics.lines.map(\.text).joined(separator: "\n"))
+                            .font(.title3.weight(.medium))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 24)
+                    }
+                }
             } else if loading {
                 ProgressView()
             } else {
@@ -200,35 +225,91 @@ private struct LyricsPane: View {
             loading = false
         }
     }
+}
 
-    private func lines(_ lyrics: Lyrics) -> some View {
-        let current = lyrics.currentLine(at: player.position + 0.3)
-        return ScrollViewReader { proxy in
+private struct SyncedLyrics: View {
+    let lyrics: Lyrics
+    let progress: LyricsProgress?
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 22) {
+                    if lyrics.hasIntro {
+                        Dots(lit: progress?.line == -1 ? progress?.words ?? 0 : 0, active: progress?.line == -1)
+                            .id(-1)
+                    }
                     ForEach(Array(lyrics.lines.enumerated()), id: \.offset) { i, line in
-                        Text(line.text.isEmpty ? "♪" : line.text)
-                            .font(lyrics.synced ? .title2.bold() : .body)
-                            .foregroundStyle(!lyrics.synced || i == current ? Color.primary : Color.secondary.opacity(0.6))
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        lineView(i, line)
                             .id(i)
+                            .contentShape(Rectangle())
                             .onTapGesture { if let at = line.at { player.seek(to: at) } }
                     }
                     Text(lyrics.source)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .padding(.vertical, 40)
+                .padding(.top, 24)
+                .padding(.bottom, 280)
             }
-            .onChange(of: current) { _, line in
+            .onChange(of: progress?.line) { _, line in
                 guard let line else { return }
-                withAnimation(.easeInOut(duration: 0.4)) { proxy.scrollTo(line, anchor: .center) }
+                withAnimation(.spring(response: 0.55, dampingFraction: 0.9)) {
+                    proxy.scrollTo(line, anchor: UnitPoint(x: 0, y: 0.3))
+                }
             }
-            .onAppear { if let current { proxy.scrollTo(current, anchor: .center) } }
+            .onAppear {
+                if let line = progress?.line { proxy.scrollTo(line, anchor: UnitPoint(x: 0, y: 0.3)) }
+            }
         }
-        .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.08),
-                                     .init(color: .black, location: 0.92), .init(color: .clear, location: 1)],
+        .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.06),
+                                     .init(color: .black, location: 0.9), .init(color: .clear, location: 1)],
                              startPoint: .top, endPoint: .bottom))
+    }
+
+    @ViewBuilder
+    private func lineView(_ i: Int, _ line: LyricLine) -> some View {
+        let current = progress?.line == i
+        let sung = progress.map { i < $0.line } ?? false
+        Group {
+            if line.instrumental {
+                Dots(lit: current ? progress?.words ?? 0 : 0, active: current)
+            } else if current {
+                // Sung words bright, the rest dim; Text concatenation wraps.
+                let words = line.words
+                let lit = min(progress?.words ?? 0, words.count)
+                (Text(words[..<lit].joined()).foregroundColor(.white)
+                    + Text(words[lit...].joined()).foregroundColor(.white.opacity(0.38)))
+                    .animation(.easeOut(duration: 0.2), value: lit)
+            } else {
+                Text(line.text)
+                    .foregroundColor(.white.opacity(sung ? 0.22 : 0.38))
+            }
+        }
+        .font(.system(size: 28, weight: .bold))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .scaleEffect(current ? 1 : 0.97, anchor: .leading)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: current)
+    }
+}
+
+/// An instrumental break: three dots lighting up until the next line.
+private struct Dots: View {
+    let lit: Int
+    let active: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(0..<3, id: \.self) { d in
+                Circle()
+                    .fill(.white.opacity(active && d < lit ? 1 : 0.25))
+                    .frame(width: active ? 13 : 9, height: active ? 13 : 9)
+            }
+        }
+        .frame(height: 34)
+        .animation(.easeOut(duration: 0.45), value: lit)
+        .animation(.spring(response: 0.4), value: active)
     }
 }
 

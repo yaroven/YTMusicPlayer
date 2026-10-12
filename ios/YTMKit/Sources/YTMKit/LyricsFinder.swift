@@ -54,15 +54,30 @@ public struct LyricsFinder: Sendable {
     }
 }
 
+func lrcTime<S: StringProtocol>(_ stamp: S) -> TimeInterval? {
+    let parts = stamp.split(separator: ":")
+    guard parts.count == 2, let min = Double(parts[0]), let sec = Double(parts[1]) else { return nil }
+    return min * 60 + sec
+}
+
 /// `[mm:ss.xx] text` lines; untimed ones (metadata tags) are dropped.
+/// Enhanced LRC word stamps (`<mm:ss.xx>word`) become word times.
 func parseLrc(_ lrc: String) -> [LyricLine] {
-    lrc.split(separator: "\n").compactMap { line in
-        guard line.hasPrefix("["), let close = line.firstIndex(of: "]") else { return nil }
-        let stamp = line[line.index(after: line.startIndex)..<close]
-        let parts = stamp.split(separator: ":")
-        guard parts.count == 2, let min = Double(parts[0]), let sec = Double(parts[1]) else { return nil }
-        let text = line[line.index(after: close)...].trimmingCharacters(in: .whitespaces)
-        return LyricLine(at: min * 60 + sec, text: text)
+    lrc.split(separator: "\n", omittingEmptySubsequences: false).compactMap { line in
+        guard line.hasPrefix("["), let close = line.firstIndex(of: "]"),
+              let at = lrcTime(line[line.index(after: line.startIndex)..<close]) else { return nil }
+        var text = ""
+        var times: [TimeInterval] = []
+        for (i, part) in line[line.index(after: close)...].split(separator: "<", omittingEmptySubsequences: false).enumerated() {
+            if i > 0, let end = part.firstIndex(of: ">"), let when = lrcTime(part[..<end]) {
+                let word = part[part.index(after: end)...]
+                if !word.trimmingCharacters(in: .whitespaces).isEmpty { times.append(when) }
+                text += word
+            } else {
+                text += (i > 0 ? "<" : "") + part
+            }
+        }
+        return LyricLine(at: at, text: text.trimmingCharacters(in: .whitespaces), wordTimes: times)
     }
 }
 

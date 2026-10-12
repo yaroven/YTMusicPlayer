@@ -106,6 +106,45 @@ public struct Page: Sendable {
 public struct LyricLine: Hashable, Sendable {
     public var at: TimeInterval?
     public var text: String
+    /// Word start times when the lyrics have them (Enhanced LRC).
+    public var wordTimes: [TimeInterval] = []
+
+    public init(at: TimeInterval?, text: String, wordTimes: [TimeInterval] = []) {
+        self.at = at
+        self.text = text
+        self.wordTimes = wordTimes
+    }
+
+    /// No words: an instrumental break ("", "♪").
+    public var instrumental: Bool {
+        text.allSatisfy { $0.isWhitespace || "♪♫♬…•".contains($0) }
+    }
+
+    /// The words, each with its trailing space.
+    public var words: [String] {
+        var out: [String] = []
+        var current = ""
+        var inSpace = false
+        for c in text {
+            if c.isWhitespace {
+                inSpace = true
+            } else if inSpace {
+                out.append(current)
+                current = ""
+                inSpace = false
+            }
+            current.append(c)
+        }
+        if !current.isEmpty { out.append(current) }
+        return out
+    }
+}
+
+/// Karaoke state: the line being sung and how many words (or, on an
+/// instrumental line, dots 0...3) are lit. Line -1 is the intro.
+public struct LyricsProgress: Equatable, Sendable {
+    public var line: Int
+    public var words: Int
 }
 
 public struct Lyrics: Sendable {
@@ -119,5 +158,52 @@ public struct Lyrics: Sendable {
     public func currentLine(at position: TimeInterval) -> Int? {
         guard synced else { return nil }
         return lines.lastIndex { ($0.at ?? .infinity) <= position }
+    }
+
+    /// Before the first line, a gap this long shows as an instrumental intro.
+    public static let introGap: TimeInterval = 4
+    static let perChar: TimeInterval = 0.085
+    static let lineExtra: TimeInterval = 0.4
+
+    public var hasIntro: Bool {
+        synced && (lines.first?.at ?? 0) >= Self.introGap
+    }
+
+    /// When each word of line `i` starts: the lyrics' own times, else
+    /// spread by length over the time the line is sung (same as the
+    /// desktop player's `Lyrics::word_times`).
+    public func wordTimes(_ i: Int) -> [TimeInterval] {
+        guard lines.indices.contains(i) else { return [] }
+        let line = lines[i]
+        let words = line.words
+        if line.wordTimes.count == words.count, !words.isEmpty { return line.wordTimes }
+        guard let start = line.at else { return [] }
+        let chars = words.map { max(1, $0.trimmingCharacters(in: .whitespaces).count) }
+        let total = chars.reduce(0, +)
+        var span = Self.perChar * Double(total) + Self.lineExtra
+        if i + 1 < lines.count, let next = lines[i + 1].at {
+            let gap = next - start
+            span = max(min(span, gap - 0.2), min(gap, 0.5))
+        }
+        var before = 0
+        return chars.map { c in
+            defer { before += c }
+            return start + span * Double(before) / Double(max(total, 1))
+        }
+    }
+
+    public func progress(at position: TimeInterval) -> LyricsProgress? {
+        guard synced else { return nil }
+        if hasIntro, let first = lines.first?.at, position < first {
+            return LyricsProgress(line: -1, words: min(3, Int(position / max(first, 0.1) * 4)))
+        }
+        guard let line = currentLine(at: position) else { return nil }
+        let current = lines[line]
+        if current.instrumental {
+            let start = current.at ?? 0
+            let end = line + 1 < lines.count ? (lines[line + 1].at ?? start + 6) : start + 6
+            return LyricsProgress(line: line, words: min(3, Int((position - start) / max(end - start, 0.1) * 4)))
+        }
+        return LyricsProgress(line: line, words: wordTimes(line).filter { $0 <= position }.count)
     }
 }

@@ -46,6 +46,9 @@ pub struct Art {
     pub pixels: SharedPixelBuffer<Rgba8Pixel>,
     /// Average colour, for the now-playing background.
     pub tint: (u8, u8, u8),
+    /// Large covers: a 12 px copy that, stretched over the now-playing
+    /// view, looks like a blurred cover (no blur filter in the renderer).
+    pub backdrop: Option<SharedPixelBuffer<Rgba8Pixel>>,
 }
 
 /// Art for `key`: a video id, or for [`ArtSize::Card`] the image URL.
@@ -98,6 +101,8 @@ fn card_url(url: &str, edge: u32) -> String {
     }
 }
 
+const BACKDROP: u32 = 12;
+
 /// Decodes a JPEG (or PNG), crops the centre square of its 16:9 picture area and
 /// scales it to `edge` px. Large covers get softly rounded corners.
 pub fn decode_square(jpeg: &[u8], edge: u32) -> Result<Art> {
@@ -114,12 +119,17 @@ pub fn decode_square(jpeg: &[u8], edge: u32) -> Result<Art> {
     drop(img);
     let mut out = image::imageops::resize(&square, edge, edge, FilterType::Triangle);
     let tint = average(&out);
+    let backdrop = (edge >= 256).then(|| {
+        let small = image::imageops::resize(&out, BACKDROP, BACKDROP, FilterType::Triangle);
+        SharedPixelBuffer::clone_from_slice(small.as_raw(), BACKDROP, BACKDROP)
+    });
     if edge >= 256 {
         round_corners(&mut out, edge / 40);
     }
     Ok(Art {
         pixels: SharedPixelBuffer::clone_from_slice(out.as_raw(), edge, edge),
         tint,
+        backdrop,
     })
 }
 

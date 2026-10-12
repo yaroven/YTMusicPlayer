@@ -111,6 +111,16 @@ let albumRow = #"""
     check(cleanTitle(artist: "Daft Punk", title: "Get Lucky feat. Pharrell Williams") == ("Daft Punk", "Get Lucky"), "clean 3")
     check(cleanTitle(artist: "Queen", title: "Bohemian Rhapsody") == ("Queen", "Bohemian Rhapsody"), "clean 4")
 
+    let karaoke = Lyrics(lines: parseLrc("[00:10.00] One two three\n[00:20.00]\n[00:30.00] Last"), source: "LRCLIB")
+    let times = karaoke.wordTimes(0)
+    check(times.count == 3 && times[0] == 10 && times[2] > times[1] && times[2] < 12, "word times \(times)")
+    check(karaoke.progress(at: 10.1) == LyricsProgress(line: 0, words: 1), "first word")
+    check(karaoke.progress(at: 15) == LyricsProgress(line: 0, words: 3), "whole line")
+    check(karaoke.lines[1].instrumental && karaoke.progress(at: 28) == LyricsProgress(line: 1, words: 3), "instrumental dots")
+    check(karaoke.hasIntro && karaoke.progress(at: 5) == LyricsProgress(line: -1, words: 2), "intro")
+    let exact = Lyrics(lines: parseLrc("[00:05.00] <00:05.00>Hello <00:07.00>world"), source: "LRCLIB")
+    check(exact.lines[0].text == "Hello world" && exact.lines[0].words == ["Hello ", "world"], "enhanced text")
+    check(exact.wordTimes(0) == [5, 7] && exact.progress(at: 6)?.words == 1, "enhanced word times")
     let lrc = Lyrics(lines: parseLrc("[ar:ABBA]\n[00:17.37] Ooh, you can dance\n[00:25.18] Having the time\n[01:02.00]"),
                      source: "LRCLIB")
     check(lrc.lines.count == 3 && lrc.synced, "lrc lines")

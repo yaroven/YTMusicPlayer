@@ -50,9 +50,17 @@ slint::slint! {
     }
 
     // state: 0 upcoming, 1 being sung, 2 sung, 3 not synced.
+    // state: 0 upcoming, 1 being sung, 2 sung, 3 unsynced lyrics.
     export struct LyricLine {
         text: string,
+        // The line being sung, its sung words bright (karaoke).
+        styled: styled-text,
         state: int,
+        // Start in ms, -1 unsynced (a click seeks there).
+        at: int,
+        // An instrumental break: three dots, `dots` of them lit.
+        instrumental: bool,
+        dots: int,
     }
 
     global Yt {
@@ -603,6 +611,7 @@ slint::slint! {
         callback clear-queue();
         callback toggle-autoplay();
         callback related-open(int, int);
+        callback lyrics-seek(int);
         spacing: 8px;
         tabs := Rectangle {
             height: 38px;
@@ -686,28 +695,64 @@ slint::slint! {
                 width: parent.width;
                 height: parent.height;
             }
+            // Big bold lines; the sung one lights up word by word and
+            // stays in the upper third; a click seeks to a line.
             lyrics-view := Flickable {
-                // Keeps the sung line in the upper third.
-                property <length> line-height: 34px;
+                property <length> target;
                 content-height: lines.preferred-height;
-                property <int> current: root.lyrics-current;
-                changed current => {
-                    if (self.current >= 0) {
-                        self.content-y = min(0px, max(self.height - self.content-height, -(self.current * self.line-height) + self.height / 3));
-                    }
+                changed target => {
+                    self.content-y = min(0px, max(self.height - self.content-height, -self.target + self.height * 0.3));
                 }
-                animate content-y { duration: 300ms; easing: ease-out; }
+                changed height => {
+                    self.content-y = min(0px, max(self.height - self.content-height, -self.target + self.height * 0.3));
+                }
+                animate content-y { duration: 500ms; easing: cubic-bezier(0.2, 0, 0, 1); }
                 lines := VerticalLayout {
-                    padding-top: 8px;
-                    padding-bottom: 40px;
-                    for l in root.lyrics: Text {
-                        min-height: lyrics-view.line-height;
-                        text: l.text;
-                        wrap: word-wrap;
-                        font-size: l.state == 3 ? 16px : 20px;
-                        font-weight: l.state == 1 ? 700 : 500;
-                        color: l.state == 1 ? Yt.text : l.state == 2 ? #ffffff80 : l.state == 3 ? Yt.text : #ffffffb0;
-                        animate color { duration: 300ms; }
+                    padding-top: 12px;
+                    // Room for the last line to reach the upper third.
+                    padding-bottom: 320px;
+                    spacing: 18px;
+                    for l[i] in root.lyrics: Rectangle {
+                        property <int> state: l.state;
+                        changed state => { if (self.state == 1) { lyrics-view.target = self.y; } }
+                        init => { if (self.state == 1) { lyrics-view.target = self.y; } }
+                        height: line.preferred-height;
+                        opacity: l.state == 2 ? 0.5 : 1;
+                        animate opacity { duration: 400ms; }
+                        line-touch := TouchArea {
+                            enabled: l.at >= 0;
+                            mouse-cursor: l.at >= 0 ? pointer : default;
+                            clicked => { root.lyrics-seek(l.at); }
+                        }
+                        line := VerticalLayout {
+                            if l.instrumental: HorizontalLayout {
+                                alignment: start;
+                                spacing: 10px;
+                                height: 34px;
+                                for d in 3: Rectangle {
+                                    y: (parent.height - self.height) / 2;
+                                    width: l.state == 1 ? 14px : 10px;
+                                    height: self.width;
+                                    border-radius: self.width / 2;
+                                    background: l.state == 1 && d < l.dots ? #ffffff : #ffffff40;
+                                    animate background { duration: 450ms; easing: ease-out; }
+                                    animate width { duration: 300ms; easing: ease-out; }
+                                }
+                            }
+                            if !l.instrumental && l.state == 1: StyledText {
+                                text: l.styled;
+                                default-font-size: 26px;
+                                default-color: #ffffff66;
+                            }
+                            if !l.instrumental && l.state != 1: Text {
+                                text: l.text;
+                                wrap: word-wrap;
+                                font-size: l.state == 3 ? 18px : 26px;
+                                font-weight: l.state == 3 ? 500 : 700;
+                                color: l.state == 3 ? Yt.text : line-touch.has-hover ? #ffffffcc : #ffffff66;
+                                animate color { duration: 200ms; }
+                            }
+                        }
                     }
                     if root.lyrics-source != "": Text { text: root.lyrics-source; color: Yt.secondary; font-size: 12px; }
                 }
@@ -915,6 +960,8 @@ slint::slint! {
         in property <image> now-thumb;
         in property <bool> now-has-thumb;
         in property <image> now-art;
+        // A tiny copy of the cover, stretched: a blurred background.
+        in property <image> now-backdrop;
         in property <bool> now-has-art;
         in property <color> now-tint: #303030;
         in property <bool> playing;
@@ -1005,6 +1052,7 @@ slint::slint! {
         callback next();
         callback prev();
         callback seek(float);
+        callback lyrics-seek(int);
         callback volume-changed(float);
         callback toggle-shuffle();
         callback cycle-repeat();
@@ -1406,6 +1454,18 @@ slint::slint! {
                     // --- full-screen now playing ---
                     if root.expanded: Rectangle {
                         background: @linear-gradient(180deg, root.now-tint.mix(Yt.bg, 0.55) 0%, Yt.bg 85%);
+                        // The cover, blurred, behind everything (dimmed for the text).
+                        if root.now-has-art: Image {
+                            width: parent.width;
+                            height: parent.height;
+                            source: root.now-backdrop;
+                            image-fit: cover;
+                            image-rendering: smooth;
+                            opacity: 0.55;
+                        }
+                        if root.now-has-art: Rectangle {
+                            background: @linear-gradient(180deg, #00000059 0%, #000000b3 100%);
+                        }
                         // Slides up from the player bar.
                         property <length> slide: 48px;
                         opacity: 0;
@@ -1442,6 +1502,7 @@ slint::slint! {
                                 clear-queue => { root.clear-queue(); }
                                 toggle-autoplay => { root.toggle-autoplay(); }
                                 related-open(s, c) => { root.open-related(s, c); }
+                                lyrics-seek(ms) => { root.lyrics-seek(ms); }
                             }
                         }
                         if !root.wide-now: VerticalLayout {
@@ -1470,6 +1531,7 @@ slint::slint! {
                                 clear-queue => { root.clear-queue(); }
                                 toggle-autoplay => { root.toggle-autoplay(); }
                                 related-open(s, c) => { root.open-related(s, c); }
+                                lyrics-seek(ms) => { root.lyrics-seek(ms); }
                             }
                         }
                     }

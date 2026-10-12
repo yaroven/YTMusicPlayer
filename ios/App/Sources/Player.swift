@@ -53,6 +53,12 @@ final class Player {
     }
 
     var current: Track? { queue.indices.contains(index) ? queue[index] : nil }
+    /// The player's own clock, between the half-second `position` updates
+    /// (karaoke lyrics read it ten times a second).
+    var exactPosition: TimeInterval {
+        let t = av.currentTime().seconds
+        return t.isFinite && loaded != nil ? t : position
+    }
     var upNext: ArraySlice<Track> { queue.dropFirst(index + 1) }
 
     private struct Loaded {

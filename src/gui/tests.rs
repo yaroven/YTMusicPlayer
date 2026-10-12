@@ -284,6 +284,7 @@ fn synced_lyrics_follow_the_song() {
     let line = |s: u64, text: &str| Line {
         at: Some(Duration::from_secs(s)),
         text: text.into(),
+        ..Line::default()
     };
     snap.lyrics = Some(Arc::new(Lyrics {
         lines: vec![line(0, "one"), line(5, "two"), line(10, "three")],
@@ -347,4 +348,106 @@ fn signing_in_closes_the_account_dialog() {
         },
     ));
     assert!(!h.ui.get_account_open());
+}
+
+/// Renders the now-playing lyrics into `target/lyrics.png` with the real
+/// software renderer (a look at the karaoke view without a screen). Its own
+/// process: `cargo test -- --ignored --exact gui::tests::lyrics_png`.
+#[test]
+#[ignore = "writes target/lyrics.png; needs its own process (a different Slint platform)"]
+fn lyrics_png() {
+    use slint::platform::software_renderer::{
+        MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType,
+    };
+
+    struct Headless(Rc<MinimalSoftwareWindow>, std::time::Instant);
+    impl slint::platform::Platform for Headless {
+        fn create_window_adapter(
+            &self,
+        ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
+            Ok(self.0.clone())
+        }
+        fn duration_since_start(&self) -> Duration {
+            self.1.elapsed()
+        }
+    }
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    slint::platform::set_platform(Box::new(Headless(
+        window.clone(),
+        std::time::Instant::now(),
+    )))
+    .unwrap();
+    let (w, h) = (1100u32, 720u32);
+    window.set_size(slint::PhysicalSize::new(w, h));
+
+    let library = seeded_library();
+    let library_view = Rc::new(RefCell::new(LibraryView::new(library.clone()).unwrap()));
+    let (tx, _rx) = unbounded_channel();
+    let prefs = Prefs {
+        cookies: String::new(),
+        normalize: true,
+        notifications: false,
+        tray: true,
+        crossfade: 0.0,
+    };
+    let view = new_view(library, library_view, prefs, tx);
+    VIEW.with(|cell| *cell.borrow_mut() = Some(view.clone()));
+    let ui = open_window().unwrap();
+    ui.show().unwrap();
+
+    let mut session = session_view();
+    session.now = Some(track("Bohemian Rhapsody"));
+    session.position = Duration::from_millis(14_600);
+    session.state = PlayState::Paused;
+    let mut snap = snapshot(
+        session,
+        Changes {
+            lyrics: true,
+            ..Changes::default()
+        },
+    );
+    let lrc = "[00:06.00] Is this the real life?\n[00:10.00] Is this just fantasy?\n\
+        [00:14.00] Caught in a landslide, no escape from reality\n[00:22.00]\n\
+        [00:28.00] Open your eyes, look up to the skies and see\n[00:34.00] I'm just a poor boy";
+    snap.lyrics = Some(Arc::new(Lyrics {
+        lines: crate::lyrics::parse_lrc_for_tests(lrc),
+        source: "LRCLIB".into(),
+    }));
+    view.borrow_mut().absorb(snap, Some(&ui));
+    ui.set_expanded(true);
+    ui.set_now_tab(1);
+    // Let the opening animations finish.
+    let mut scratch = vec![PremultipliedRgbaColor::default(); (w * h) as usize];
+    for _ in 0..60 {
+        slint::platform::update_timers_and_animations();
+        std::thread::sleep(Duration::from_millis(25));
+        window.request_redraw();
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut scratch, w as usize);
+        });
+    }
+    // What a word change costs: one full repaint.
+    let started = std::time::Instant::now();
+    for _ in 0..20 {
+        window.request_redraw();
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut scratch, w as usize);
+        });
+    }
+    println!("full repaint: {:?}", started.elapsed() / 20);
+    let mut pixels = vec![PremultipliedRgbaColor::default(); (w * h) as usize];
+    window.request_redraw();
+    window.draw_if_needed(|renderer| {
+        renderer.render(&mut pixels, w as usize);
+    });
+    let raw: Vec<u8> = pixels
+        .iter()
+        .flat_map(|p| [p.red, p.green, p.blue])
+        .collect();
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lyrics.png");
+    image::RgbImage::from_raw(w, h, raw)
+        .unwrap()
+        .save(&out)
+        .unwrap();
+    println!("wrote {}", out.display());
 }
