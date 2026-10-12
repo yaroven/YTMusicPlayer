@@ -25,7 +25,14 @@ pub async fn with_window() -> Result<Cookies> {
         bail!("sign in to YouTube in a browser, then use \"Import from browser\"");
     }
     let exe = std::env::current_exe().context("finding the ytm binary")?;
-    let output = tokio::process::Command::new(exe)
+    let mut command = tokio::process::Command::new(exe);
+    #[cfg(windows)]
+    {
+        // ytm.exe is a console program: no console window for the child.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command
         .arg("sign-in-window")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
