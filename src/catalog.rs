@@ -7,6 +7,7 @@
 //! renderers are skipped, never an error. Responses are 50–600 KB of JSON,
 //! parsed and dropped per request; nothing is cached here.
 
+use crate::youtube_session::YouTubeSession;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
@@ -113,11 +114,21 @@ pub struct Lyrics {
 #[derive(Clone)]
 pub struct Catalog {
     http: reqwest::Client,
+    /// Signed in, YouTube Music answers as the account (its home, library).
+    session: Option<YouTubeSession>,
 }
 
 impl Catalog {
     pub fn new(http: reqwest::Client) -> Self {
-        Self { http }
+        Self {
+            http,
+            session: None,
+        }
+    }
+
+    pub fn with_session(mut self, session: YouTubeSession) -> Self {
+        self.session = Some(session);
+        self
     }
 
     async fn call(&self, endpoint: &str, body: Value) -> Result<Value> {
@@ -135,10 +146,19 @@ impl Catalog {
         body["context"] = json!({
             "client": { "clientName": client, "clientVersion": version, "hl": "en", "gl": "US" }
         });
-        let response = self
+        let mut request = self
             .http
             .post(format!("{BASE}/{endpoint}?prettyPrint=false"))
-            .header("Origin", "https://music.youtube.com")
+            .header("Origin", "https://music.youtube.com");
+        // Only YouTube Music's own client goes as the account.
+        if client == CLIENT_NAME
+            && let Some(session) = &self.session
+        {
+            for (name, value) in session.headers("https://music.youtube.com") {
+                request = request.header(name, value);
+            }
+        }
+        let response = request
             .json(&body)
             .send()
             .await

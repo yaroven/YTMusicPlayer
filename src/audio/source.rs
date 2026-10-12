@@ -78,6 +78,16 @@ pub trait Extractor: Send + Sync + 'static {
         video_id: &'a str,
         dest: &'a Path,
     ) -> BoxFuture<'a, extractor::Result<()>>;
+
+    /// A browser's cookies as cookies.txt ("Import from browser").
+    fn export_cookies<'a>(&'a self, browser: &'a str) -> BoxFuture<'a, extractor::Result<String>> {
+        let _ = browser;
+        Box::pin(async {
+            Err(extractor::ExtractorError::Unavailable(
+                "no cookie export".into(),
+            ))
+        })
+    }
 }
 
 impl Extractor for YtDlp {
@@ -120,6 +130,10 @@ impl Extractor for YtDlp {
         dest: &'a Path,
     ) -> BoxFuture<'a, extractor::Result<()>> {
         Box::pin(YtDlp::download_audio(self, video_id, dest))
+    }
+
+    fn export_cookies<'a>(&'a self, browser: &'a str) -> BoxFuture<'a, extractor::Result<String>> {
+        Box::pin(YtDlp::export_cookies(self, browser))
     }
 }
 
@@ -283,6 +297,11 @@ impl TrackSource {
     /// Which browser's cookies age-restricted videos use ("" = none).
     pub fn set_cookies_browser(&self, browser: &str) {
         self.options.cookies.set(browser);
+    }
+
+    /// `browser`'s youtube.com sign-in (cookies.txt text).
+    pub async fn export_cookies(&self, browser: &str) -> Result<String> {
+        Ok(self.extractor.export_cookies(browser).await?)
     }
 
     /// Turns loudness normalization on or off (from the next track).

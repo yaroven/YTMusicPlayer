@@ -21,6 +21,7 @@ use crate::{
     discord, lastfm,
     session::{Deps, Listener},
     storage::Library,
+    youtube_session::{self, YouTubeSession},
 };
 
 /// One client for API, media and art requests. Few hosts and sequential
@@ -34,9 +35,32 @@ pub fn http_client() -> Result<reqwest::Client> {
         .build()?)
 }
 
+/// The youtube.com sign-in from the credential store (blocking read off the
+/// runtime); its cookies.txt lives in the data directory.
+pub async fn youtube_session(paths: &AppPaths) -> YouTubeSession {
+    let file = paths.data_dir().join("youtube-cookies.txt");
+    tokio::task::spawn_blocking(move || YouTubeSession::load(youtube_session::Keyring, file))
+        .await
+        .unwrap_or_else(|_| YouTubeSession::none())
+}
+
+/// What yt-dlp signs in with for age-restricted songs: the YouTube sign-in,
+/// else the browser from the settings.
+pub fn cookie_source(settings: &Settings, youtube: &YouTubeSession) -> String {
+    match youtube.cookies_file() {
+        Some(file) => file.to_string_lossy().into_owned(),
+        None => settings.cookies_from_browser.clone(),
+    }
+}
+
 /// The managed yt-dlp, downloaded on first use (a system copy if that
 /// fails), with the user's extra arguments.
-pub async fn ytdlp(paths: &AppPaths, settings: &Settings, http: &reqwest::Client) -> Result<YtDlp> {
+pub async fn ytdlp(
+    paths: &AppPaths,
+    settings: &Settings,
+    http: &reqwest::Client,
+    cookies: &str,
+) -> Result<YtDlp> {
     let ytdlp = match YtDlp::find(&paths.bin_dir()) {
         Some(found) => found,
         None => {
@@ -49,7 +73,7 @@ pub async fn ytdlp(paths: &AppPaths, settings: &Settings, http: &reqwest::Client
     };
     Ok(ytdlp
         .with_extra_args(settings.ytdlp_extra_args.iter().cloned())
-        .with_cookies(Cookies::new(&settings.cookies_from_browser)))
+        .with_cookies(Cookies::new(cookies)))
 }
 
 /// `force_js` (`ytm resolve --js`) beats the `js_fallback` setting.
@@ -90,7 +114,8 @@ pub fn track_source(
 pub async fn deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
     let http = http_client()?;
     let library = Arc::new(Library::open(&paths.database())?);
-    let ytdlp = ytdlp(paths, settings, &http).await?;
+    let youtube = youtube_session(paths).await;
+    let ytdlp = ytdlp(paths, settings, &http, &cookie_source(settings, &youtube)).await?;
     let source = track_source(paths, settings, &http, ytdlp, false, Some(library.clone()));
     source.spawn_maintenance();
     Ok(Deps {
@@ -102,7 +127,9 @@ pub async fn deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
         volume: settings.volume,
         media_controls: settings.media_controls,
         audio_device: settings.audio_device(),
-        catalog: Catalog::new(http.clone()),
+        catalog: Catalog::new(http.clone()).with_session(youtube.clone()),
+        youtube,
+        cookies_from_browser: settings.cookies_from_browser.clone(),
         autoplay: settings.autoplay,
         crossfade: Duration::from_secs_f32(settings.crossfade),
         listeners: listeners(paths, settings, &http),

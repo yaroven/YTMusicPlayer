@@ -21,6 +21,7 @@ pub mod media;
 #[cfg(feature = "gui")]
 pub mod notify;
 pub mod session;
+pub mod signin;
 pub mod storage;
 pub mod sync;
 pub mod sysmem;
@@ -28,3 +29,4 @@ pub mod sysmem;
 pub(crate) mod testing;
 pub mod ui;
 pub mod update;
+pub mod youtube_session;

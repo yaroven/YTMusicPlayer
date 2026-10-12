@@ -320,6 +320,24 @@ Domain terms are defined in `CONTEXT.md`.
   challenge in JavaScriptCore (yt-dlp-ejs). The in-app "Test age-restricted
   playback" prints per-client results for that decision.
 
+- **Desktop "Sign in with Google" = the iPhone's scheme** (user's choice
+  2026-10-12, over keeping the own-OAuth-client flow): Google's page in
+  the system web view (wry 0.57 + winit: WebKit on macOS, WebView2 on
+  Windows) in a **child process** `ytm sign-in-window` that prints the
+  youtube.com cookies as JSON, so the player never runs a browser engine.
+  Linux has no web view without webkit2gtk (would be a hard link-time
+  dependency of the whole binary): it imports a browser's sign-in via
+  yt-dlp `--cookies-from-browser … --cookies <tmp>` (`ytm sign-in --from`).
+  `YouTubeSession` keeps the cookies in the keyring (`youtube-session`),
+  writes `<data_dir>/youtube-cookies.txt` (0600) for yt-dlp, which beats
+  `cookies_from_browser`, and reads back cookies yt-dlp rotated; it signs
+  WEB_REMIX catalog calls (`SAPISIDHASH`, same vector as YTMKitChecks).
+  The OAuth client stays as optional "Library sync (YouTube Data API)"
+  until the library moves to InnerTube.
+  Sandbox-HOME runs log "A default keychain could not be found" — fine.
+  Measured 2026-10-12 (M1, release, GUI idle 25 s, `footprint`): 46 MB
+  before and after (WebKit linked but unused); binary +0.36 MB.
+
 ## Open TODOs
 
 - iPhone: verify signed-in age-restricted playback on a real account,

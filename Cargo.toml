@@ -16,7 +16,7 @@ path = "src/main.rs"
 [features]
 default = ["gui"]
 # Desktop window (`ytm gui`); off => terminal-only, smaller binary.
-gui = ["dep:slint", "dep:image", "dep:notify-rust", "dep:tray-icon", "dep:ksni"]
+gui = ["dep:slint", "dep:image", "dep:notify-rust", "dep:tray-icon", "dep:ksni", "dep:wry", "dep:winit"]
 
 [dependencies]
 # --- Async runtime -----------------------------------------------------------
@@ -125,6 +125,7 @@ souvlaki = { version = "0.8", default-features = false, features = ["use_zbus"] 
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 md5 = "0.8"              # Last.fm request signatures
+sha1 = "0.10"            # YouTube's SAPISIDHASH (already in the tree)
 discord-rich-presence = "1.1"  # Discord "Listening to" status over local IPC
 
 # Tray icon: StatusNotifierItem over zbus on Linux, native elsewhere.
@@ -133,6 +134,13 @@ ksni = { version = "0.3", optional = true }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = { version = "0.26", optional = true, default-features = false }
+
+# "Sign in with Google": Google's page in the system web view (WebKit /
+# WebView2), in a child process only while signing in. Linux imports the
+# sign-in from a browser instead (webkit2gtk would be a hard dependency).
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+wry = { version = "0.57", optional = true, default-features = false }
+winit = { version = "0.30", optional = true }
 
 # Process memory (macOS `proc_pid_rusage`), quiet SIGPIPE handling.
 [target.'cfg(unix)'.dependencies]

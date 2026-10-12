@@ -950,6 +950,7 @@ slint::slint! {
         in property <bool> syncing;
         in property <string> memory-text;
         in-out property <bool> account-open;
+        in-out property <bool> oauth-expanded;
         in property <bool> signed-in;
         in property <bool> signing-in;
         in property <string> client-id;
@@ -962,6 +963,11 @@ slint::slint! {
         in property <float> set-crossfade;
         // Browser whose YouTube login age-restricted songs use ("" = off).
         in property <string> set-cookies;
+        // YouTube sign-in ("Sign in with Google").
+        in property <bool> yt-signed-in;
+        in property <bool> yt-signing-in;
+        // macOS / Windows: Google's page in a window; Linux: import only.
+        in property <bool> yt-window;
         // Sidebar width set by dragging its edge (0 = automatic).
         in-out property <length> sidebar-width: 0px;
 
@@ -1036,6 +1042,9 @@ slint::slint! {
         callback setting-toggled(string);
         callback crossfade-changed(float);
         callback cookies-cycle();
+        callback yt-sign-in();
+        callback yt-import();
+        callback yt-sign-out();
         callback show-all-songs();
         callback update-now();
         callback check-updates();
@@ -1118,7 +1127,7 @@ slint::slint! {
                                     NavItem {
                                         horizontal-stretch: 1;
                                         icon: "account";
-                                        text: root.signed-in ? "Account" : "Sign in";
+                                        text: root.signed-in || root.yt-signed-in ? "Account" : "Sign in";
                                         clicked => { root.account-opened(); root.account-open = true; }
                                     }
                                     IconButton { icon: "sync"; size: 40px; icon-size: 20px; clicked => { root.sync(); } }
@@ -1603,6 +1612,61 @@ slint::slint! {
             title: "Google account";
             card-width: 480px;
             close => { root.account-open = false; keys.focus(); }
+            // The YouTube sign-in: age-restricted songs, the account's YouTube Music.
+            VerticalLayout {
+                spacing: 10px;
+                Text {
+                    text: root.yt-signed-in
+                        ? "✓ Signed in to YouTube. Age-restricted songs and your YouTube Music use this account."
+                        : root.yt-window
+                            ? "Sign in to play age-restricted songs and see your YouTube Music. Google's own page opens in a window; the password goes only to Google."
+                            : "Sign in at youtube.com in a browser on this computer, pick that browser and Import its sign-in (age-restricted songs, your YouTube Music).";
+                    color: Yt.text;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    Pill {
+                        text: root.yt-signing-in ? "Signing in…" : root.yt-signed-in ? "Sign out" : root.yt-window ? "Sign in with Google" : "Import";
+                        icon: "account";
+                        filled: !root.yt-signed-in && !root.yt-signing-in;
+                        clicked => {
+                            if (root.yt-signing-in) { return; }
+                            if (root.yt-signed-in) { root.yt-sign-out(); }
+                            else if (root.yt-window) { root.yt-sign-in(); }
+                            else { root.yt-import(); }
+                        }
+                    }
+                    if !root.yt-signed-in && !root.yt-window: Pill {
+                        text: root.set-cookies == "" ? "Pick browser" : root.set-cookies;
+                        icon: "dropdown";
+                        clicked => { root.cookies-cycle(); }
+                    }
+                }
+            }
+            Rectangle { height: 1px; background: Yt.divider; }
+            // Optional: syncing the library through the YouTube Data API.
+            HorizontalLayout {
+                spacing: 12px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    Text { text: "Library sync (YouTube Data API)"; color: Yt.text; font-weight: 600; }
+                    Text {
+                        text: root.signed-in ? "Connected." : "Optional: liked music and playlists through your own Google OAuth client.";
+                        color: Yt.secondary;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
+                if !root.signed-in: Pill {
+                    text: root.oauth-expanded ? "Hide" : "Set up";
+                    icon: root.oauth-expanded ? "up" : "down";
+                    y: (parent.height - self.height) / 2;
+                    clicked => { root.oauth-expanded = !root.oauth-expanded; }
+                }
+            }
             if root.signed-in: VerticalLayout {
                 spacing: 12px;
                 Text { text: "✓ Signed in. Your library syncs from YouTube; likes and playlist changes go back to it."; color: Yt.text; wrap: word-wrap; }
@@ -1612,7 +1676,7 @@ slint::slint! {
                     Pill { text: "Sign out"; icon: "account"; clicked => { root.sign-out(); } }
                 }
             }
-            if !root.signed-in: VerticalLayout {
+            if !root.signed-in && root.oauth-expanded: VerticalLayout {
                 spacing: 10px;
                 Text { text: "1. Your Google OAuth client"; color: Yt.text; font-weight: 600; }
                 Text {
@@ -1720,7 +1784,37 @@ slint::slint! {
                 VerticalLayout {
                     horizontal-stretch: 1;
                     alignment: center;
-                    Text { text: "Age-restricted songs"; color: Yt.text; }
+                    Text { text: "YouTube account"; color: Yt.text; }
+                    Text {
+                        text: root.yt-signed-in
+                            ? "Signed in. Age-restricted songs and your YouTube Music use this account."
+                            : root.yt-window
+                                ? "For age-restricted songs and your YouTube Music. Google's own page opens in a window; the password goes only to Google."
+                                : "For age-restricted songs and your YouTube Music: sign in at youtube.com in a browser, pick it below, then Import.";
+                        color: Yt.secondary;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
+                Pill {
+                    text: root.yt-signing-in ? "Signing in…" : root.yt-signed-in ? "Sign out" : root.yt-window ? "Sign in with Google" : "Import";
+                    icon: "account";
+                    filled: !root.yt-signed-in && !root.yt-signing-in;
+                    y: (parent.height - self.height) / 2;
+                    clicked => {
+                        if (root.yt-signing-in) { return; }
+                        if (root.yt-signed-in) { root.yt-sign-out(); }
+                        else if (root.yt-window) { root.yt-sign-in(); }
+                        else { root.yt-import(); }
+                    }
+                }
+            }
+            if !root.yt-signed-in: HorizontalLayout {
+                spacing: 12px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    Text { text: root.yt-window ? "Or use a browser's sign-in" : "Browser"; color: Yt.text; }
                     Text {
                         text: "Use the YouTube sign-in of this browser, only for such songs. macOS: needs Full Disk Access for ytm-player (System Settings → Privacy & Security).";
                         color: Yt.secondary;

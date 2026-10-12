@@ -71,7 +71,7 @@ pub enum ExtractorError {
     Unavailable(String),
     /// YouTube wants a signed-in viewer; see [`Cookies`].
     #[error(
-        "age-restricted: YouTube wants a signed-in browser (Settings → Age-restricted songs, or cookies_from_browser in config.toml)"
+        "age-restricted: YouTube wants a signed-in account (Settings → YouTube account → Sign in with Google)"
     )]
     AgeRestricted,
     /// Even with `browser`'s cookies YouTube asks to sign in.
@@ -723,6 +723,38 @@ impl YtDlp {
             )
             .await?;
         Ok(parse_search(&stdout))
+    }
+
+    /// The browser's youtube.com cookies as a cookies.txt (yt-dlp reads
+    /// them; we only keep YouTube's). For "Import from browser".
+    pub async fn export_cookies(&self, browser: &str) -> Result<String> {
+        let file = std::env::temp_dir().join(format!("ytm-cookies-{}.txt", std::process::id()));
+        let path = file.to_string_lossy().into_owned();
+        let result = self
+            .run(
+                &[
+                    "--ignore-config",
+                    "--no-warnings",
+                    "--no-js-runtimes",
+                    "--flat-playlist",
+                    "--skip-download",
+                    "--cookies-from-browser",
+                    browser,
+                    "--cookies",
+                    &path,
+                    "--",
+                    "https://www.youtube.com/watch?v=YkLLcIKhJ64",
+                ],
+                RESOLVE_TIMEOUT,
+            )
+            .await;
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        std::fs::remove_file(&file).ok();
+        // yt-dlp saves the cookies even when the video itself fails.
+        match result {
+            Err(err) if !text.contains("youtube.com") => Err(err),
+            _ => Ok(text),
+        }
     }
 
     async fn run(&self, args: &[&str], timeout: Duration) -> Result<String> {

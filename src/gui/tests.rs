@@ -69,6 +69,8 @@ fn session_view() -> SessionView {
         searching: false,
         signed_in: true,
         signing_in: false,
+        youtube_signed_in: false,
+        youtube_signing_in: false,
         client_id: String::new(),
         memory: String::new(),
         autoplay: true,
@@ -217,6 +219,33 @@ fn settings_change_and_are_saved() {
         .copied()
         .unwrap_or("");
     assert!(matches!(&h.commands()[..], [Cmd::CookiesBrowser(b)] if b == first));
+}
+
+#[test]
+fn youtube_sign_in_and_out() {
+    let mut h = harness();
+    assert!(!h.ui.get_yt_signed_in());
+    assert_eq!(
+        h.ui.get_yt_window(),
+        cfg!(any(target_os = "macos", windows))
+    );
+    h.ui.invoke_yt_sign_in();
+    assert!(matches!(&h.commands()[..], [Cmd::YouTubeSignIn(None)]));
+
+    // Import needs a browser picked.
+    h.view.borrow_mut().prefs.cookies = String::new();
+    h.ui.invoke_yt_import();
+    assert!(h.commands().is_empty());
+    h.view.borrow_mut().prefs.cookies = "firefox".into();
+    h.ui.invoke_yt_import();
+    assert!(matches!(&h.commands()[..], [Cmd::YouTubeSignIn(Some(b))] if b == "firefox"));
+
+    let mut view = session_view();
+    view.youtube_signed_in = true;
+    h.absorb(snapshot(view, Changes::default()));
+    assert!(h.ui.get_yt_signed_in());
+    h.ui.invoke_yt_sign_out();
+    assert!(matches!(&h.commands()[..], [Cmd::YouTubeSignOut]));
 }
 
 #[test]

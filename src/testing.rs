@@ -177,6 +177,8 @@ pub(crate) async fn session_with(
         catalog: Catalog::new(http.clone()),
         http,
         account,
+        youtube: crate::youtube_session::YouTubeSession::none(),
+        cookies_from_browser: String::new(),
         liked_music_only: true,
         volume: 0.5,
         media_controls: false,

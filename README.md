@@ -43,12 +43,16 @@ after YouTube Music, and a terminal UI. macOS, Linux and Windows.
 1. **Install** the package for your system from the
    [latest release](https://github.com/yaroven/YTMusicPlayer/releases/latest)
    (see [Install](#install)).
-2. **Create a Google OAuth client** once (~5 minutes, free):
-   [Set up Google sign-in](#set-up-google-sign-in-once-5-minutes).
-3. **Open ytm-player** from your applications. The **Google account** dialog
-   opens by itself: click **Import downloaded JSON** (or paste the client ID
-   and secret), then **Sign in with Google**. Your library syncs and you can
-   play.
+2. **Open ytm-player** from your applications. The **Google account** dialog
+   opens by itself: **Sign in with Google** opens Google's own sign-in page
+   in a window (macOS, Windows; on Linux sign in at youtube.com in a browser
+   and **Import** it). Age-restricted songs then play with your account.
+   Searching and playing work without signing in too.
+3. Optional — **library sync through the YouTube Data API** (your liked music
+   and playlists in the sidebar, likes going back to YouTube): create your own
+   Google OAuth client once (~5 minutes, free,
+   [Set up Google sign-in](#set-up-google-sign-in-once-5-minutes)), then
+   **Google account → Library sync → Set up**.
 
 ## Install
 
@@ -408,11 +412,15 @@ By hand: the binary (`/usr/bin/ytm`, `/usr/local/bin/ytm`,
 
 ## Troubleshooting
 
-- **"age-restricted: YouTube wants a signed-in browser"**: YouTube plays
-  such songs only to signed-in adults, and yt-dlp is anonymous. Pick the
-  browser you're signed in to YouTube with in **Settings → Age-restricted
-  songs** (or `cookies_from_browser` in the config). Only those songs use
-  it.
+- **"age-restricted: YouTube wants a signed-in account"**: YouTube plays
+  such songs only to signed-in adults. **Sign in → Sign in with Google**
+  (or `ytm sign-in`; `ytm sign-in --from firefox` takes a browser's
+  sign-in). The session (youtube.com cookies) is kept in the OS credential
+  store, and only those songs use it for playback. Alternatively pick the
+  browser you're signed in to YouTube with in **Settings → Or use a
+  browser's sign-in** (or `cookies_from_browser` in the config).
+  - If Google says the browser "may not be secure", sign in at youtube.com
+    in your normal browser and use `ytm sign-in --from <browser>`.
   - **macOS** keeps other apps' data private: allow **ytm-player** in
     System Settings → Privacy & Security → **Full Disk Access**, then
     restart it. Chrome also asks once for its "Safe Storage" key — choose
@@ -433,8 +441,8 @@ By hand: the binary (`/usr/bin/ytm`, `/usr/local/bin/ytm`,
 - **Sign-in isn't remembered on Linux:** a Secret Service provider is
   needed — GNOME Keyring or KWallet, unlocked.
 - **A track won't play:** yt-dlp updates itself when YouTube changes; the
-  player retries automatically. Age-restricted tracks need browser cookies
-  (`ytdlp_extra_args`). Details are in the log.
+  player retries automatically. Age-restricted tracks need a sign-in (see
+  above). Details are in the log.
 - **The window doesn't open on Linux:** it needs `libxkbcommon` plus X11 or
   Wayland libraries (installed with the desktop; the packages recommend them).
 - `ytm status` shows the config path, whether the OAuth client is set,

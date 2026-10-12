@@ -12,7 +12,9 @@ mod cast;
 mod discover;
 mod library;
 mod updates;
+mod youtube;
 
+use crate::youtube_session::YouTubeSession;
 use std::{
     collections::HashSet,
     sync::{Arc, atomic::AtomicBool},
@@ -49,7 +51,7 @@ pub const VOLUME_STEP: f32 = 0.05;
 const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 /// How often memory use is re-measured for display.
 const MEMORY_SAMPLE: Duration = Duration::from_secs(2);
-const NOT_SIGNED_IN: &str = "Not signed in: “Sign in” in the window, or `ytm login`";
+const NOT_SIGNED_IN: &str = "Not signed in: Sign in → Sign in with Google (or `ytm sign-in`)";
 /// Smallest memory change worth a redraw.
 const MEMORY_STEP: u64 = 2 << 20;
 /// The next track is opened this long before the current one ends (plus
@@ -67,6 +69,12 @@ pub struct Deps {
     pub audio_device: Option<String>,
     /// OAuth client, sign-in and the YouTube API client.
     pub account: Account,
+    /// The youtube.com sign-in ("Sign in with Google"): age-restricted
+    /// songs, the account's YouTube Music.
+    pub youtube: YouTubeSession,
+    /// The browser (or cookies.txt) for age-restricted songs when not
+    /// signed in to YouTube.
+    pub cookies_from_browser: String,
     /// Keep playing the last song's radio when the queue runs out.
     pub autoplay: bool,
     /// Overlap between tracks (zero: gapless).
@@ -149,6 +157,9 @@ pub struct SessionView {
     pub searching: bool,
     pub signed_in: bool,
     pub signing_in: bool,
+    /// Signed in to YouTube ("Sign in with Google").
+    pub youtube_signed_in: bool,
+    pub youtube_signing_in: bool,
     /// Configured OAuth client ID ("" when none).
     pub client_id: String,
     pub memory: String,
@@ -245,6 +256,8 @@ enum Background {
         result: Result<()>,
     },
     SignedOut(Result<()>),
+    YouTubeSignedIn(Result<()>),
+    YouTubeSignedOut(Result<()>),
     CastDevices(Result<Vec<crate::cast::Device>>),
     UpdateChecked {
         manual: bool,
@@ -286,6 +299,9 @@ pub struct Session {
     /// Waiting for the user to finish signing in in the browser.
     pub signing_in: bool,
     login_generation: u64,
+    /// The YouTube sign-in window (or browser import) is running.
+    youtube_signing_in: bool,
+    cookies_browser: String,
     pub status: Option<Status>,
     pub player_status: PlayerStatus,
     /// "RAM 15 MB (+ yt-dlp …)", refreshed every [`MEMORY_SAMPLE`].
@@ -371,6 +387,7 @@ impl Session {
         queue.shuffle = meta("shuffle").as_deref() == Some("1");
         queue.repeat = Repeat::parse(meta("repeat").as_deref().unwrap_or_default());
         player.set_crossfade(deps.crossfade);
+        let cookies_browser = deps.cookies_from_browser.clone();
         Self {
             player_status: player.status(),
             deps,
@@ -393,6 +410,8 @@ impl Session {
             downloading: HashSet::new(),
             signing_in: false,
             login_generation: 0,
+            youtube_signing_in: false,
+            cookies_browser,
             status: None,
             memory: String::new(),
             memory_at: None,
@@ -439,6 +458,8 @@ impl Session {
             searching: self.searching,
             signed_in: self.signed_in(),
             signing_in: self.signing_in,
+            youtube_signed_in: self.deps.youtube.signed_in(),
+            youtube_signing_in: self.youtube_signing_in,
             client_id: self.client_id().unwrap_or_default().to_owned(),
             memory: self.memory.clone(),
             autoplay: self.deps.autoplay,
@@ -456,7 +477,12 @@ impl Session {
         }
         match (self.signed_in(), library_empty) {
             (true, true) => self.start_sync(),
-            (false, true) => self.set_error(NOT_SIGNED_IN),
+            // Signed in to YouTube only: nothing to sync yet, not an error.
+            (false, true) => {
+                if !self.deps.youtube.signed_in() {
+                    self.set_error(NOT_SIGNED_IN);
+                }
+            }
             (false, false) => self.set_info("Offline library (not signed in) — sign in to sync"),
             (true, false) => {}
         }
@@ -610,6 +636,9 @@ impl Session {
             | Background::DownloadRemoved { .. }
             | Background::SignedIn { .. }
             | Background::SignedOut(_) => self.library_event(event, &mut changes),
+            Background::YouTubeSignedIn(_) | Background::YouTubeSignedOut(_) => {
+                self.youtube_event(event, &mut changes)
+            }
             Background::Searched { .. }
             | Background::PageLoaded { .. }
             | Background::Home(_)
@@ -831,7 +860,11 @@ impl Session {
 
     /// Lets age-restricted songs use `browser`'s YouTube login ("" = off).
     pub fn set_cookies_browser(&mut self, browser: &str) {
-        self.deps.source.set_cookies_browser(browser);
+        browser.clone_into(&mut self.cookies_browser);
+        // The YouTube sign-in, when there is one, stays in charge.
+        if !self.deps.youtube.signed_in() {
+            self.deps.source.set_cookies_browser(browser);
+        }
         self.store_setting("cookies_from_browser", &format!("{browser:?}"));
     }
 

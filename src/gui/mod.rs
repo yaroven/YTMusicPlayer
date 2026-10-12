@@ -113,6 +113,10 @@ enum Cmd {
     ImportClient(std::path::PathBuf),
     SignIn,
     SignOut,
+    /// Sign in to YouTube: Google's page in a window, or (`Some`) a
+    /// browser's sign-in.
+    YouTubeSignIn(Option<String>),
+    YouTubeSignOut,
     FetchArt(Arc<str>, ArtSize),
     /// Save state and stop.
     Quit,
@@ -838,6 +842,7 @@ impl View {
         ui.set_set_tray(self.prefs.tray);
         ui.set_set_crossfade(self.prefs.crossfade);
         ui.set_set_cookies(cookies_label(&self.prefs.cookies).into());
+        ui.set_yt_window(cfg!(any(target_os = "macos", windows)));
         ui.set_queue_source(self.queue_source.borrow().clone());
         ui.set_app_version(env!("CARGO_PKG_VERSION").into());
         if let Some(width) = self
@@ -901,6 +906,8 @@ impl View {
         ui.set_searching(view.searching);
         ui.set_signed_in(view.signed_in);
         ui.set_signing_in(view.signing_in);
+        ui.set_yt_signed_in(view.youtube_signed_in);
+        ui.set_yt_signing_in(view.youtube_signing_in);
         ui.set_client_id(view.client_id.as_str().into());
         ui.set_memory_text(view.memory.as_str().into());
         let (text, error) = view.status.clone().unwrap_or_default();
@@ -1042,7 +1049,7 @@ impl View {
                 crate::notify::track_changed(track);
             }
         }
-        let signed_in = snap.view.signed_in;
+        let signed_in = snap.view.signed_in || snap.view.youtube_signed_in;
         self.last = Some(snap.view);
 
         let Some(ui) = ui else {
@@ -1255,7 +1262,7 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Resu
     let ui = open_window()?;
     ui.set_autoplay(deps.autoplay);
     // First start: nothing works without an account, so ask right away.
-    if !deps.account.signed_in() {
+    if !deps.account.signed_in() && !deps.youtube.signed_in() {
         ui.set_download_file(downloaded_client_name().into());
         ui.set_account_open(true);
     }
@@ -1774,6 +1781,22 @@ fn wire_callbacks(
         }
     });
     on!(on_sign_in, [tx, view, ui], || send(Cmd::SignIn, tx));
+    on!(on_yt_sign_in, [tx, view, ui], || send(
+        Cmd::YouTubeSignIn(None),
+        tx
+    ));
+    on!(on_yt_sign_out, [tx, view, ui], || send(
+        Cmd::YouTubeSignOut,
+        tx
+    ));
+    on!(on_yt_import, [tx, view, ui], || {
+        let browser = view.borrow().prefs.cookies.clone();
+        if crate::audio::extractor::COOKIE_BROWSERS.contains(&browser.as_str()) {
+            send(Cmd::YouTubeSignIn(Some(browser)), tx);
+        } else {
+            ui.set_status_text("Pick the browser you're signed in to YouTube with first".into());
+        }
+    });
     on!(on_sign_out, [tx, view, ui], || send(Cmd::SignOut, tx));
     on!(on_open_console, [tx, view, ui], || {
         let _ = open::that_detached(account::CONSOLE_URL);
@@ -1949,6 +1972,8 @@ fn apply(session: &mut Session, cmd: Cmd) {
             session.import_client(&path);
         }
         Cmd::SignIn => session.sign_in(),
+        Cmd::YouTubeSignIn(browser) => session.sign_in_youtube(browser),
+        Cmd::YouTubeSignOut => session.sign_out_youtube(),
         Cmd::SignOut => session.sign_out(),
         Cmd::FetchArt(..) | Cmd::Quit => {}
     }

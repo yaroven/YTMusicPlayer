@@ -28,8 +28,12 @@ ytm — lightweight YouTube Music player
 USAGE:
     ytm                         open the player (TUI, or the window if config has ui = gui)
     ytm tui | ytm gui           open the terminal / window interface
-    ytm login [--device]        sign in with Google (browser, or a code with --device)
-    ytm logout                  forget the stored sign-in
+    ytm sign-in [--from <browser>]
+                                sign in to YouTube: Google's page in a window, or the
+                                sign-in of a browser (firefox, chrome, safari, ...)
+    ytm sign-out                forget the YouTube sign-in
+    ytm login [--device]        connect the YouTube Data API with your own OAuth client
+    ytm logout                  forget the Data API sign-in
     ytm import-client <json> [--device]
                                 read client ID/secret from Google's downloaded JSON
     ytm sync                    refresh the local library from YouTube
@@ -70,6 +74,13 @@ fn main() -> Result<()> {
         .filter(|a| !a.starts_with("-psn_"))
         .collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
+
+    // The sign-in window's child process (see `signin`): main thread, no
+    // instance lock, prints the cookies.
+    #[cfg(all(feature = "gui", any(target_os = "macos", windows)))]
+    if args.as_slice() == ["sign-in-window"] {
+        return ytm_player::signin::run_window();
+    }
 
     let gui = matches!(args.as_slice(), ["gui"])
         || (args.is_empty() && (settings.ui.eq_ignore_ascii_case("gui") || in_app_bundle()));
@@ -167,6 +178,13 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
 async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Result<()> {
     match args {
         [] => run_tui(paths, settings).await,
+        ["sign-in"] => youtube_sign_in(paths, settings, None).await,
+        ["sign-in", "--from", browser] => youtube_sign_in(paths, settings, Some(browser)).await,
+        ["sign-out"] => {
+            bootstrap::youtube_session(paths).await.sign_out()?;
+            println!("Signed out of YouTube.");
+            Ok(())
+        }
         ["login"] => login(paths, settings, Flow::Browser).await,
         ["login", "--device"] => login(paths, settings, Flow::Device).await,
         ["logout"] => {
@@ -411,11 +429,40 @@ async fn sync(paths: &AppPaths, settings: &Settings) -> Result<()> {
     Ok(())
 }
 
+async fn youtube_sign_in(
+    paths: &AppPaths,
+    settings: &Settings,
+    browser: Option<&str>,
+) -> Result<()> {
+    let cookies = match browser {
+        None => {
+            println!("Sign in in the window that opens…");
+            ytm_player::signin::with_window().await?
+        }
+        Some(browser) => {
+            let http = bootstrap::http_client()?;
+            let ytdlp = bootstrap::ytdlp(paths, settings, &http, "").await?;
+            println!("Reading {browser}'s YouTube sign-in…");
+            ytm_player::signin::from_browser_export(&ytdlp.export_cookies(browser).await?, browser)?
+        }
+    };
+    bootstrap::youtube_session(paths).await.sign_in(cookies)?;
+    println!("Signed in to YouTube.");
+    Ok(())
+}
+
 async fn play(paths: &AppPaths, settings: &Settings, input: &str) -> Result<()> {
     let video_id = video_id_from_input(input).context("not a YouTube video id or URL")?;
     let http = bootstrap::http_client()?;
     let library = Arc::new(Library::open(&paths.database())?);
-    let ytdlp = bootstrap::ytdlp(paths, settings, &http).await?;
+    let youtube = bootstrap::youtube_session(paths).await;
+    let ytdlp = bootstrap::ytdlp(
+        paths,
+        settings,
+        &http,
+        &bootstrap::cookie_source(settings, &youtube),
+    )
+    .await?;
     let source = bootstrap::track_source(paths, settings, &http, ytdlp, false, Some(library));
 
     let started = Instant::now();
@@ -477,7 +524,7 @@ fn fmt(d: Duration) -> String {
 async fn resolve(paths: &AppPaths, settings: &Settings, id: &str, js: bool) -> Result<()> {
     let video_id = video_id_from_input(id).context("not a YouTube video id or URL")?;
     let http = bootstrap::http_client()?;
-    let ytdlp = bootstrap::ytdlp(paths, settings, &http).await?;
+    let ytdlp = bootstrap::ytdlp(paths, settings, &http, &settings.cookies_from_browser).await?;
     println!("yt-dlp: {} ({:?})", ytdlp.path().display(), ytdlp.source());
     // No persistent store: this command is for debugging resolution itself.
     let source = bootstrap::track_source(paths, settings, &http, ytdlp, js, None);
