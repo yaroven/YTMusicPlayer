@@ -117,6 +117,8 @@ main services the CFRunLoop for media keys).
 | `fmt` | display formatting shared by both UIs |
 | `packaging/` | Linux .desktop, Arch PKGBUILD, Inno Setup script, macOS pkg builder |
 | `config::{paths, settings}` | per-OS dirs; `config.toml` (template on first run, `store_client` / `store_value` rewrite keys in place, keeping comments) |
+| `ios/YTMKit` (Swift package) | iPhone core, no UI: InnerTube catalog + LRCLIB lyrics ported from `catalog.rs` / `lyrics.rs` (same lenient `findAll` parsing), `Resolver` = on-device stream URLs (no yt-dlp), client list overridable by `ios/clients.json` on main; `swift run YTMKitChecks [--live]` (no XCTest in CLT) |
+| `ios/App` (SwiftUI, iOS 17) | `Player` (AVQueuePlayer, next song resolved ahead, radio autoplay, Now Playing / remote commands, queue saved to `queue.json`), `Library` (liked, history, playlists, saved pages in one JSON), `Router` (per-tab paths); `project.yml` → XcodeGen in CI; `ios/player-check.sh` runs `Player` on macOS, muted, live |
 
 Domain terms are defined in `CONTEXT.md`.
 
@@ -278,7 +280,37 @@ Domain terms are defined in `CONTEXT.md`.
   instructions only. GUI restart: `sh -c 'sleep 1; open -n <app>'` (never
   exec a LaunchServices app). No release signing yet (user's call).
 
+- **iPhone app is native Swift, not Rust**: no Xcode here (only Command
+  Line Tools, no iOS SDK); the app is built only by `.github/workflows/ios.yml`
+  (macos-15, XcodeGen, unsigned `.ipa` + `sidestore.json`, called by the
+  Release workflow). Locally: `swift run YTMKitChecks --live`,
+  `ios/player-check.sh`, and typecheck the app against the macOS SDK
+  (`swiftc -typecheck -I YTMKit/.build/debug/Modules App/Sources/*.swift`
+  plus no-op shims for `navigationBarTitleDisplayMode` / `EditButton`).
+  Distribution: SideStore source at `releases/latest/download/sidestore.json`
+  (free Apple ID, re-signed on the phone every 7 days).
+- **iPhone stream URLs: InnerTube `player` as VISIONOS + visitorData**
+  (measured 2026-10-12): `visitorData` scraped from `youtube.com/watch`
+  (`"VISITOR_DATA"`) in `context.client.visitorData` and
+  `X-Goog-Visitor-Id`; itag 140 URL, every range 206, AppleCoreMedia UA
+  fine, ~1.4 s. IOS client URLs 403 past the first chunk (PO token);
+  ANDROID_VR / TVHTML5 get "confirm you're not a bot"; age-restricted is
+  LOGIN_REQUIRED everywhere. URLs are IP-bound, ~6 h. Clients change:
+  edit `ios/clients.json` (fetched at the first resolve) instead of
+  shipping a build.
+- **AVFoundation reads YouTube's fMP4 as twice as long** (230.4 s song →
+  460.8 s asset, silence after the real end; decoded PTS are right):
+  `AVPlayerItem.forwardPlaybackEndTime` = `approxDurationMs` (or the URL's
+  `dur`), which also makes AVQueuePlayer move on gaplessly there.
+- **iOS `Player` pitfalls** (found by `player-check.sh`): AVPlayer's rate
+  survives `removeAllItems` (pause first or the new item starts by itself);
+  `timeControlStatus` KVO arrives late, so `isPlaying` is the intent while
+  resolving and pause during resolving is remembered.
+
 ## Open TODOs
+
+- iPhone: Google sign-in + library sync, offline downloads, memory
+  measurement on a real device.
 
 - Windows media keys in the TUI (needs a hidden window for SMTC).
 - Chromecast verified only against the simulated receiver in

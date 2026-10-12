@@ -133,6 +133,11 @@ let albumRow = #"""
         check(error.localizedDescription == "Sign in to confirm your age", "reason passed on")
     }
     check(trackLoudness(json(#"{"playerConfig":{"audioConfig":{"trackAbsoluteLoudnessLkfs":-10.0,"loudnessTargetLkfs":-14.0}}}"#)) == 4, "track loudness")
+    // ios/clients.json (the list the app fetches) must decode and match the built-in one.
+    let clients = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .appendingPathComponent("../../../clients.json")
+    let remote = (try? Data(contentsOf: clients)).flatMap { try? JSONDecoder().decode([ClientProfile].self, from: $0) }
+    check(remote == ClientProfile.builtIn, "ios/clients.json decodes to the built-in clients")
     check(visitorDataIn(#"x "VISITOR_DATA":"Cgt abc%3D%3D","y""#) == "Cgt abc%3D%3D", "visitor data")
 }
 

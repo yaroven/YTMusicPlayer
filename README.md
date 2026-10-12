@@ -22,6 +22,8 @@ after YouTube Music, and a terminal UI. macOS, Linux and Windows.
 - Media keys and the system "Now Playing" widget, tray / menu bar icon,
   track-change notifications, Last.fm scrobbling, Discord status; one
   player instance at a time.
+- **iPhone:** a native app (SwiftUI) installed with SideStore — see
+  [iPhone](#iphone).
 - Audio comes from [yt-dlp](https://github.com/yt-dlp/yt-dlp), which the
   app downloads and keeps updated by itself.
 
@@ -335,6 +337,33 @@ SHA256SUMS.
   The desktop Discord app must be running.
 - **Offline:** downloads are stored in the data directory's `downloads`
   folder (AAC, ~1 MB per minute) and play without network.
+
+## iPhone
+
+A separate native app (`ios/`, iOS 17+): home, search, album / artist /
+playlist pages, radio and autoplay, synced lyrics, editable queue, gapless
+playback that keeps going with the screen locked, lock screen and Control
+Center controls, AirPlay. Liked songs, playlists, saved pages and history
+are kept on the phone (no Google sign-in yet). It needs no yt-dlp: the app
+gets the audio URL from YouTube itself.
+
+It isn't on the App Store; install it with [SideStore](https://sidestore.io),
+which signs apps with your own free Apple ID and re-signs them every 7 days
+by itself, on the phone:
+
+1. Install SideStore once (needs a computer:
+   <https://docs.sidestore.io/docs/installation/prerequisites>).
+2. In SideStore: **Sources → +** and add
+   `https://github.com/yaroven/YTMusicPlayer/releases/latest/download/sidestore.json`.
+3. Install **YTM Player** from that source. New releases show up there as
+   updates.
+
+Or download `ytm-player-<version>.ipa` from a release and open it with
+SideStore / AltStore. A free Apple ID allows 3 sideloaded apps at a time
+(SideStore counts as one).
+
+Age-restricted songs don't play on the phone (YouTube wants a signed-in
+account for them).
 
 ## Uninstall
 
