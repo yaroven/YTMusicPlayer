@@ -131,10 +131,12 @@ actor ChallengeSolver {
     }
 }
 
+extension Resolver {
 /// Plain URLs for the wanted formats of a web client's player response:
 /// `signatureCipher` (s, sp, url) gets its signature, every URL its "n"
-/// solved. Formats left ciphered are dropped.
-func decipherFormats(_ data: Any, itags: [Int], player: URL, solver: ChallengeSolver) async throws -> Any {
+/// solved. Formats left ciphered are dropped. Actor-isolated: the JSON
+/// (not Sendable) stays here, only strings go to the solver.
+func decipherFormats(_ data: Any, itags: [Int], player: URL) async throws -> Any {
     guard var root = data as? JSON, var streaming = root["streamingData"] as? JSON else { return data }
     struct Pending { var key: String; var index: Int; var url: URLComponents; var s: String?; var sp: String }
     var pending: [Pending] = []
@@ -171,4 +173,5 @@ func decipherFormats(_ data: Any, itags: [Int], player: URL, solver: ChallengeSo
     }
     root["streamingData"] = streaming
     return root
+}
 }

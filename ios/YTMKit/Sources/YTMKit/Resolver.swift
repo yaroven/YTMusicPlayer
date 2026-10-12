@@ -259,7 +259,7 @@ public actor Resolver {
         guard status == 200 else { throw YTMError.http("YouTube player", status) }
         var json = try JSONSerialization.jsonObject(with: data)
         if profile.cipher == true, let player = playerURL, string(json, "playabilityStatus/status") == "OK" {
-            json = try await decipherFormats(json, itags: profile.itags ?? [140], player: player, solver: solver)
+            json = try await decipherFormats(json, itags: profile.itags ?? [140], player: player)
         }
         var stream = try parsePlayer(json, hls: profile.hls == true, itags: profile.itags ?? [140])
         if stream.hls {
