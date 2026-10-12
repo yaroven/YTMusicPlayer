@@ -1,0 +1,6 @@
+YTMKit/.build/
+YTMKit/.swiftpm/
+*.xcodeproj/
+App/Info.plist
+build/
+*.ipa

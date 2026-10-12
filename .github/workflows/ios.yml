@@ -1,0 +1,55 @@
+# iPhone app: YTMKit checks, then an unsigned .ipa (SideStore / AltStore
+# sign it on the phone) and the SideStore source. Runs on iOS changes; the
+# Release workflow calls it to attach both to a release.
+name: iOS
+
+on:
+  push:
+    branches: [main]
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  pull_request:
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: xcodebuild -version
+      - name: YTMKit checks (offline)
+        working-directory: ios/YTMKit
+        run: swift run YTMKitChecks
+      - name: Generate the Xcode project
+        working-directory: ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Build
+        working-directory: ios
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' ../Cargo.toml | head -1)
+          build=$(git rev-list --count HEAD)
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "BUILD=$build" >> "$GITHUB_ENV"
+          xcodebuild -project YTMPlayer.xcodeproj -scheme YTMPlayer -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build \
+            MARKETING_VERSION="$v" CURRENT_PROJECT_VERSION="$build" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tail -30
+      - name: Package
+        run: |
+          mkdir -p dist Payload
+          cp -R ios/build/Build/Products/Release-iphoneos/YTMPlayer.app Payload/
+          /usr/libexec/PlistBuddy -c Print Payload/YTMPlayer.app/Info.plist | grep -E 'Version|Identifier|Background' -A1
+          du -sh Payload/YTMPlayer.app
+          zip -qry "dist/ytm-player-$VERSION.ipa" Payload
+          ios/sidestore-source.py "$GITHUB_REPOSITORY" "$VERSION" "$BUILD" "dist/ytm-player-$VERSION.ipa" dist/sidestore.json
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: dist/*

@@ -8,6 +8,7 @@
 #   macOS          ytm-player-<v>-macos.pkg          (universal: arm64 + x86_64)
 #   install.sh / install.ps1 downloads: ytm-<target>.tar.gz / .zip
 #   uninstall.sh / uninstall.ps1
+#   iPhone         ytm-player-<v>.ipa + sidestore.json (SideStore source)
 #
 #   git tag v0.3.0 && git push origin v0.3.0
 #
@@ -187,8 +188,11 @@ jobs:
           name: macos
           path: dist/*
 
+  ios:
+    uses: ./.github/workflows/ios.yml
+
   release:
-    needs: [linux, arch, verify-linux, windows, macos]
+    needs: [linux, arch, verify-linux, windows, macos, ios]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:

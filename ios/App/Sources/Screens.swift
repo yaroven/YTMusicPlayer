@@ -1,0 +1,334 @@
+import SwiftUI
+import YTMKit
+
+struct HomeView: View {
+    @State private var shelves: [Shelf] = []
+    @State private var error: String?
+    @Environment(Library.self) private var library
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 28) {
+                if !library.history.isEmpty {
+                    ShelfView(shelf: Shelf(title: "Listen again", items: library.history.prefix(20).map(\.item)))
+                }
+                ForEach(shelves) { ShelfView(shelf: $0) }
+            }
+            .padding(.vertical)
+        }
+        .overlay {
+            if shelves.isEmpty {
+                if let error {
+                    ContentUnavailableView {
+                        Label("Can't load Home", systemImage: "wifi.exclamationmark")
+                    } description: {
+                        Text(error)
+                    } actions: {
+                        Button("Retry") { Task { await load() } }
+                    }
+                } else if library.history.isEmpty {
+                    ProgressView()
+                }
+            }
+        }
+        .navigationTitle("Home")
+        .task { if shelves.isEmpty { await load() } }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        do {
+            shelves = try await Services.catalog.home()
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
+extension Track {
+    var item: Item {
+        Item(kind: .song, browseId: videoId, title: title, subtitle: artist, thumbnail: nil, track: self)
+    }
+}
+
+struct SearchView: View {
+    @State private var query = ""
+    @State private var kind: SearchKind = .songs
+    @State private var results: [Item] = []
+    @State private var searched = ""
+    @State private var searching = false
+    @State private var error: String?
+    @State private var task: Task<Void, Never>?
+
+    var body: some View {
+        List {
+            Picker("Kind", selection: $kind) {
+                ForEach(SearchKind.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .listRowSeparator(.hidden)
+            if kind == .songs {
+                let tracks = results.compactMap(\.track)
+                ForEach(Array(tracks.enumerated()), id: \.offset) { i, track in
+                    TrackRow(track: track, list: tracks, index: i)
+                }
+            } else {
+                ForEach(results) { ItemRow(item: $0) }
+            }
+        }
+        .listStyle(.plain)
+        .overlay {
+            if searching {
+                ProgressView()
+            } else if let error {
+                ContentUnavailableView("Search failed", systemImage: "exclamationmark.triangle",
+                                       description: Text(error))
+            } else if results.isEmpty, !searched.isEmpty {
+                ContentUnavailableView.search(text: searched)
+            }
+        }
+        .navigationTitle("Search")
+        .searchable(text: $query, prompt: "Songs, albums, artists")
+        .onSubmit(of: .search) { run() }
+        .onChange(of: kind) { run() }
+    }
+
+    private func run() {
+        let text = query.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        task?.cancel()
+        searched = text
+        searching = true
+        let kind = kind
+        task = Task {
+            do {
+                let found = try await Services.catalog.search(text, kind: kind)
+                guard !Task.isCancelled else { return }
+                results = found
+                error = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                results = []
+                self.error = error.localizedDescription
+            }
+            searching = false
+        }
+    }
+}
+
+struct PageView: View {
+    let id: String
+    @State private var page: Page?
+    @State private var error: String?
+    @State private var showAll = false
+    @Environment(Player.self) private var player
+    @Environment(Library.self) private var library
+
+    /// Artist pages show this many top songs until "Show all".
+    private static let topSongs = 5
+
+    var body: some View {
+        Group {
+            if let page {
+                content(page)
+            } else if let error {
+                ContentUnavailableView("Can't open", systemImage: "exclamationmark.triangle", description: Text(error))
+            } else {
+                ProgressView()
+            }
+        }
+        .navigationTitle(page?.title ?? "")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let page {
+                Button {
+                    library.toggleSaved(page)
+                } label: {
+                    Image(systemName: library.isSaved(page.id) ? "bookmark.fill" : "bookmark")
+                }
+            }
+        }
+        .task {
+            guard page == nil else { return }
+            do {
+                page = try await Services.catalog.page(id)
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private func content(_ page: Page) -> some View {
+        let shown = page.kind == .artist && !showAll ? Array(page.tracks.prefix(Self.topSongs)) : page.tracks
+        return List {
+            VStack(spacing: 12) {
+                Artwork(source: page.thumbnail.map(ArtworkSource.url) ?? .none, size: 220, round: page.kind == .artist)
+                    .shadow(radius: 16)
+                Text(page.title)
+                    .font(.title2.bold())
+                    .multilineTextAlignment(.center)
+                Text(page.subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                HStack {
+                    Button { player.play(page.tracks) } label: {
+                        Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button { player.play(page.tracks.shuffled()) } label: {
+                        Label("Shuffle", systemImage: "shuffle").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .disabled(page.tracks.isEmpty)
+            }
+            .frame(maxWidth: .infinity)
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+
+            Section {
+                ForEach(Array(shown.enumerated()), id: \.offset) { i, track in
+                    TrackRow(track: track, list: page.tracks, index: i, number: page.kind == .album ? i + 1 : nil)
+                }
+                if shown.count < page.tracks.count {
+                    Button("Show all \(page.tracks.count) songs") {
+                        withAnimation { showAll = true }
+                    }
+                }
+            } header: {
+                if page.kind == .artist, !page.tracks.isEmpty { Text("Top songs") }
+            }
+
+            ForEach(page.shelves) { shelf in
+                Section {
+                    ShelfView(shelf: shelf, showTitle: false)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                } header: {
+                    Text(shelf.title)
+                }
+            }
+        }
+        .listStyle(.plain)
+    }
+}
+
+struct LibraryView: View {
+    @Environment(Library.self) private var library
+    @Environment(Player.self) private var player
+    @State private var naming = false
+    @State private var newName = ""
+
+    var body: some View {
+        @Bindable var player = player
+        List {
+            Section {
+                NavigationLink { TrackListView(list: .liked) } label: {
+                    Label("Liked songs", systemImage: "heart.fill")
+                        .badge(library.liked.count)
+                }
+                NavigationLink { TrackListView(list: .history) } label: {
+                    Label("History", systemImage: "clock")
+                }
+            }
+            Section("Playlists") {
+                ForEach(library.playlists) { playlist in
+                    NavigationLink { TrackListView(list: .playlist(playlist.id)) } label: {
+                        Label(playlist.name, systemImage: "music.note.list")
+                            .badge(playlist.tracks.count)
+                    }
+                }
+                .onDelete { library.deletePlaylists(at: $0) }
+                Button("New playlist", systemImage: "plus") {
+                    newName = ""
+                    naming = true
+                }
+            }
+            if !library.saved.isEmpty {
+                Section("Albums, artists, playlists") {
+                    ForEach(library.saved) { saved in
+                        NavigationLink(value: Route.page(saved.id)) {
+                            HStack(spacing: 12) {
+                                Artwork(source: saved.thumbnail.map(ArtworkSource.url) ?? .none, size: 48,
+                                        round: saved.kind == .artist)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(saved.title).lineLimit(1)
+                                    Text(saved.subtitle)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                        }
+                    }
+                    .onDelete { library.deleteSaved(at: $0) }
+                }
+            }
+            Section("Playback") {
+                Toggle("Autoplay similar songs", isOn: $player.autoplay)
+                Toggle("Normalize volume", isOn: $player.normalize)
+            }
+            Section {
+                LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-")
+                Link("Source code", destination: URL(string: "https://github.com/yaroven/YTMusicPlayer")!)
+            }
+        }
+        .navigationTitle("Library")
+        .alert("New playlist", isPresented: $naming) {
+            TextField("Name", text: $newName)
+            Button("Create") { library.createPlaylist(newName) }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+}
+
+struct TrackListView: View {
+    let list: LocalList
+    @Environment(Library.self) private var library
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        let tracks = library.tracks(list)
+        List {
+            if !tracks.isEmpty {
+                HStack {
+                    Button { player.play(tracks) } label: {
+                        Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button { player.play(tracks.shuffled()) } label: {
+                        Label("Shuffle", systemImage: "shuffle").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .listRowSeparator(.hidden)
+            }
+            ForEach(Array(tracks.enumerated()), id: \.offset) { i, track in
+                TrackRow(track: track, list: tracks, index: i)
+            }
+            .onDelete { library.remove(at: $0, from: list) }
+            .onMove(perform: isPlaylist ? { library.move(from: $0, to: $1, in: list) } : nil)
+        }
+        .listStyle(.plain)
+        .overlay {
+            if tracks.isEmpty {
+                ContentUnavailableView("No songs yet", systemImage: "music.note",
+                                       description: Text("Long-press a song to like it or add it to a playlist."))
+            }
+        }
+        .navigationTitle(library.title(list))
+        .toolbar {
+            if isPlaylist { EditButton() }
+            if list == .history, !tracks.isEmpty {
+                Button("Clear") { library.clearHistory() }
+            }
+        }
+    }
+
+    private var isPlaylist: Bool {
+        if case .playlist = list { return true }
+        return false
+    }
+}
