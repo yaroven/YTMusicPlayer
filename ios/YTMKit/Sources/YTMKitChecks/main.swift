@@ -138,6 +138,45 @@ let albumRow = #"""
         .appendingPathComponent("../../../clients.json")
     let remote = (try? Data(contentsOf: clients)).flatMap { try? JSONDecoder().decode([ClientProfile].self, from: $0) }
     check(remote == ClientProfile.builtIn, "ios/clients.json decodes to the built-in clients")
+    // Signed-in requests.
+    let cookies = ["SAPISID": "abc", "__Secure-3PAPISID": "abc", "SID": "s", "YSC": "y"]
+    check(Auth.isSignedIn(cookies) && !Auth.isSignedIn(["YSC": "y"]), "signed-in cookies")
+    let header = authorization(cookies, origin: "https://www.youtube.com", now: Date(timeIntervalSince1970: 1_700_000_000))
+    // sha1("1700000000 abc https://www.youtube.com"), SAPISID and 3PAPISID
+    let h = "1700000000_27b236f59d4ec583d7530f2c7055d2f9c6aecf92"
+    check(header == "SAPISIDHASH \(h) SAPISID3PHASH \(h)", "authorization: \(header)")
+    let signedHeaders = Auth(cookies: cookies).headers(origin: "https://music.youtube.com")
+    check(signedHeaders["Cookie"] == "SAPISID=abc; SID=s; YSC=y; __Secure-3PAPISID=abc", "cookie header")
+    check(Auth().headers(origin: "x").isEmpty, "no headers when signed out")
+    do {
+        _ = try parsePlayer(json(#"{"playabilityStatus":{"status":"LOGIN_REQUIRED","reason":"Sign in to confirm your age"}}"#))
+    } catch YTMError.signInRequired {
+    } catch {
+        check(false, "LOGIN_REQUIRED → signInRequired")
+    }
+    let hlsOnly = json(#"""
+    {"playabilityStatus":{"status":"OK"},"videoDetails":{"lengthSeconds":"201"},
+     "streamingData":{"hlsManifestUrl":"https://m/master.m3u8","adaptiveFormats":[{"itag":140,"signatureCipher":"s=x"}]}}
+    """#)
+    check((try? parsePlayer(hlsOnly)) == nil, "cipher only: no stream")
+    let viaHLS = try? parsePlayer(hlsOnly, hls: true)
+    check(viaHLS?.hls == true && viaHLS?.duration == 201 && viaHLS?.url.absoluteString == "https://m/master.m3u8", "HLS fallback")
+    let master = """
+    #EXTM3U
+    #EXT-X-MEDIA:URI="https://m/api/manifest/hls_playlist/itag/234/index.m3u8",TYPE=AUDIO,GROUP-ID="234",NAME="Default"
+    #EXT-X-MEDIA:URI="https://m/api/manifest/hls_playlist/itag/140/index.m3u8",TYPE=AUDIO,GROUP-ID="140",NAME="Default"
+    #EXT-X-STREAM-INF:BANDWIDTH=1,CODECS="avc1",AUDIO="234"
+    https://m/video.m3u8
+    """
+    check(audioPlaylist(master, base: URL(string: "https://m/master.m3u8")!)?.absoluteString
+          == "https://m/api/manifest/hls_playlist/itag/140/index.m3u8", "audio playlist from HLS master")
+    let grid = json(#"""
+    {"gridRenderer":{"items":[
+      {"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"Liked music"}]},"navigationEndpoint":\#(browse("VLLM", "MUSIC_PAGE_TYPE_PLAYLIST"))}},
+      {"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"Road trip"}]},"navigationEndpoint":\#(browse("VLPLroad", "MUSIC_PAGE_TYPE_PLAYLIST"))}}]}}
+    """#)
+    check(libraryCards(grid).map(\.browseId) == ["VLLM", "VLPLroad"], "library grid")
+
     check(visitorDataIn(#"x "VISITOR_DATA":"Cgt abc%3D%3D","y""#) == "Cgt abc%3D%3D", "visitor data")
 }
 
@@ -184,6 +223,14 @@ let albumRow = #"""
     }
 }
 
+if CommandLine.arguments.contains("--write-clients") {
+    // Regenerates ios/clients.json from ClientProfile.builtIn.
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../clients.json")
+    try! (encoder.encode(ClientProfile.builtIn) + Data("\n".utf8)).write(to: file)
+    print("wrote \(file.standardized.path)")
+}
 offline()
 if CommandLine.arguments.contains("--live") {
     do { try await live() } catch {

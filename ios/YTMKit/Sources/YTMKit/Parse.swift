@@ -179,3 +179,9 @@ func artistId(_ next: Any, videoId: String) -> String? {
         .compactMap { string($0, "navigationEndpoint/browseEndpoint/browseId") }
         .first { $0.hasPrefix("UC") }
 }
+
+/// Cards in a library grid (playlists, albums), not in carousels.
+func libraryCards(_ data: Any) -> [Item] {
+    findAll(data, "musicTwoRowItemRenderer").compactMap { ($0 as? JSON).flatMap(card) }
+        .filter { $0.kind == .playlist || $0.kind == .album }
+}

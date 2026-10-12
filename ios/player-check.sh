@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 out=$(mktemp -d)
 swiftc -swift-version 5 -target "$(uname -m)-apple-macos14" -I YTMKit/.build/debug/Modules \
   -o "$out/player-check" PlayerCheck/main.swift \
-  App/Sources/Player.swift App/Sources/Library.swift App/Sources/Navigation.swift App/Sources/Artwork.swift \
+  App/Sources/Player.swift App/Sources/Library.swift App/Sources/Navigation.swift App/Sources/Keychain.swift App/Sources/Artwork.swift \
   YTMKit/.build/debug/YTMKit.build/*.o
 mkdir -p "$out/home"
 HOME="$out/home" "$out/player-check" | tee "$out/log"

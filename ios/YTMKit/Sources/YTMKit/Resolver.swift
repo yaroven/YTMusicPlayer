@@ -16,6 +16,11 @@ public struct ClientProfile: Codable, Sendable, Hashable {
     /// Needs `visitorData` from youtube.com (VISIONOS does: without it the
     /// URLs 403).
     public var visitor: Bool
+    /// Sent with the signed-in account's cookies, and only for songs the
+    /// anonymous clients can't play (age-restricted).
+    public var auth: Bool?
+    /// Without a plain audio URL, take the HLS manifest's audio playlist.
+    public var hls: Bool?
 
     /// Measured 2026-10-12: itag 140 URL, every range 206, AppleCoreMedia UA
     /// accepted. IOS URLs 403 past the first chunk (PO token); ANDROID_VR
@@ -26,7 +31,27 @@ public struct ClientProfile: Codable, Sendable, Hashable {
         deviceMake: "Apple", deviceModel: "RealityDevice17,1",
         osName: "visionOS", osVersion: "26.5.23O471", visitor: true)
 
-    public static let builtIn = [visionOS]
+    /// Signed-in candidates for age-restricted songs. Untested with a real
+    /// account when written: Settings → "Test age-restricted playback"
+    /// shows which one works, and `ios/clients.json` reorders them.
+    public static let signedIn: [ClientProfile] = {
+        var vision = visionOS
+        vision.auth = true
+        vision.hls = true
+        let ios = ClientProfile(
+            name: "IOS", version: "21.26.4", id: "5",
+            userAgent: "com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_5_0 like Mac OS X;)",
+            deviceMake: "Apple", deviceModel: "iPhone16,2", osName: "iPhone", osVersion: "18.5.0.22F76",
+            visitor: true, auth: true, hls: true)
+        let safari = ClientProfile(
+            name: "WEB", version: "2.20260708.00.00", id: "1", userAgent: visionOS.userAgent,
+            visitor: true, auth: true, hls: true)
+        return [vision, ios, safari]
+    }()
+
+    public static let builtIn = [visionOS] + signedIn
+
+    var label: String { name + (auth == true ? " (signed in)" : "") }
 
     var context: [String: Any] {
         var c: [String: Any] = ["clientName": name, "clientVersion": version, "userAgent": userAgent,
@@ -51,6 +76,8 @@ public struct Stream: Sendable {
     public var duration: TimeInterval?
     /// Loudness relative to YouTube's target in dB (positive: louder).
     public var loudnessDb: Double?
+    /// `url` is an HLS playlist.
+    public var hls = false
 }
 
 /// Video id → stream URL on the device itself (no yt-dlp): asks the player
@@ -60,29 +87,41 @@ public actor Resolver {
     static let cacheSize = 16
 
     let session: URLSession
+    let auth: Auth?
     var profiles = ClientProfile.builtIn
     var fetchedProfiles = false
-    var visitor: (value: String, at: Date)?
+    /// Anonymous and signed-in visitor ids, each kept for an hour.
+    var visitors: [Bool: (value: String, at: Date)] = [:]
     var cache: [String: Stream] = [:]
     var order: [String] = []
 
-    public init(session: URLSession = .shared) {
+    public init(session: URLSession = .shared, auth: Auth? = nil) {
         self.session = session
+        self.auth = auth
     }
 
     public func stream(_ videoId: String) async throws -> Stream {
         if let hit = cache[videoId], hit.expires.timeIntervalSinceNow > 600 { return hit }
         await loadRemoteProfiles()
         var lastError: Error = YTMError.noStream
-        for profile in profiles {
+        var needsSignIn = false
+        for profile in profiles where profile.auth != true {
             do {
-                let stream = try await resolve(videoId, as: profile)
-                remember(videoId, stream)
-                return stream
+                return remember(videoId, try await resolve(videoId, as: profile))
             } catch let error as YTMError {
-                // Age restriction etc. won't change with another client.
-                if case .unplayable = error, profile == profiles.last { throw error }
+                if case .signInRequired = error { needsSignIn = true }
                 lastError = error
+            } catch {
+                lastError = error
+            }
+        }
+        guard needsSignIn else { throw lastError }
+        guard let auth, auth.signedIn else {
+            throw YTMError.signInRequired("Age-restricted: sign in with Google (Library → Google account) to play it")
+        }
+        for profile in profiles where profile.auth == true {
+            do {
+                return remember(videoId, try await resolve(videoId, as: profile))
             } catch {
                 lastError = error
             }
@@ -90,17 +129,47 @@ public actor Resolver {
         throw lastError
     }
 
+    /// One line per client: what the player endpoint answers for the video
+    /// and whether the audio actually downloads (for Settings).
+    public func diagnose(_ videoId: String) async -> [String] {
+        await loadRemoteProfiles()
+        var lines: [String] = []
+        for profile in profiles where profile.auth != true || auth?.signedIn == true {
+            do {
+                let stream = try await resolve(videoId, as: profile)
+                var request = URLRequest(url: stream.url, timeoutInterval: 10)
+                let middle = (stream.contentLength ?? 0) / 2
+                if !stream.hls { request.setValue("bytes=\(middle)-\(middle + 65_535)", forHTTPHeaderField: "Range") }
+                let status = (try? await session.data(for: request)).flatMap { ($0.1 as? HTTPURLResponse)?.statusCode }
+                let ok = status == 206 || (stream.hls && status == 200)
+                lines.append("\(ok ? "✓" : "✗") \(profile.label): \(stream.hls ? "HLS" : "AAC") → HTTP \(status.map(String.init) ?? "error")")
+            } catch {
+                lines.append("✗ \(profile.label): \(error.localizedDescription)")
+            }
+        }
+        if auth?.signedIn != true { lines.append("Not signed in: signed-in clients skipped") }
+        return lines
+    }
+
     /// Drop a URL that stopped working (403/410, network change).
     public func forget(_ videoId: String) {
         cache[videoId] = nil
-        visitor = nil
+        visitors = [:]
     }
 
-    func remember(_ videoId: String, _ stream: Stream) {
+    /// After signing in or out.
+    public func reset() {
+        cache = [:]
+        order = []
+        visitors = [:]
+    }
+
+    func remember(_ videoId: String, _ stream: Stream) -> Stream {
         cache[videoId] = stream
         order.removeAll { $0 == videoId }
         order.append(videoId)
         if order.count > Self.cacheSize { cache[order.removeFirst()] = nil }
+        return stream
     }
 
     func loadRemoteProfiles() async {
@@ -115,22 +184,36 @@ public actor Resolver {
         profiles = remote
     }
 
-    /// youtube.com's visitor id, kept for an hour.
-    func visitorData(_ videoId: String, userAgent: String) async throws -> String? {
-        if let visitor, -visitor.at.timeIntervalSinceNow < 3600 { return visitor.value }
+    func visitorData(_ videoId: String, profile: ClientProfile, signedIn: Bool) async throws -> String? {
+        if let visitor = visitors[signedIn], -visitor.at.timeIntervalSinceNow < 3600 { return visitor.value }
         var request = URLRequest(url: URL(string: "https://www.youtube.com/watch?v=\(videoId)")!)
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(profile.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("en-US,en", forHTTPHeaderField: "Accept-Language")
-        let (data, _) = try await session.data(for: request)
+        let (data, response) = try await send(request, signedIn: signedIn)
+        _ = response
         guard let value = visitorDataIn(String(decoding: data, as: UTF8.self)) else { return nil }
-        visitor = (value, Date())
+        visitors[signedIn] = (value, Date())
         return value
     }
 
+    /// Signed-in requests go through the account's own session with its
+    /// cookies; anonymous ones never carry them.
+    func send(_ request: URLRequest, signedIn: Bool) async throws -> (Data, URLResponse) {
+        guard signedIn, let auth else { return try await session.data(for: request) }
+        var request = request
+        for (name, value) in auth.headers(origin: "https://www.youtube.com") {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        let (data, response) = try await auth.session.data(for: request)
+        auth.absorb(response)
+        return (data, response)
+    }
+
     func resolve(_ videoId: String, as profile: ClientProfile) async throws -> Stream {
+        let signedIn = profile.auth == true
         var client = profile.context
         var request = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/player?prettyPrint=false")!)
-        if profile.visitor, let visitor = try await visitorData(videoId, userAgent: profile.userAgent) {
+        if profile.visitor, let visitor = try await visitorData(videoId, profile: profile, signedIn: signedIn) {
             client["visitorData"] = visitor
             request.setValue(visitor, forHTTPHeaderField: "X-Goog-Visitor-Id")
         }
@@ -143,10 +226,18 @@ public actor Resolver {
         request.setValue(profile.id, forHTTPHeaderField: "X-YouTube-Client-Name")
         request.setValue(profile.version, forHTTPHeaderField: "X-YouTube-Client-Version")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await send(request, signedIn: signedIn)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else { throw YTMError.http("YouTube player", status) }
-        return try parsePlayer(try JSONSerialization.jsonObject(with: data))
+        var stream = try parsePlayer(try JSONSerialization.jsonObject(with: data), hls: profile.hls == true)
+        if stream.hls {
+            // The master lists video too; play only its audio playlist.
+            let (master, _) = try await session.data(from: stream.url)
+            if let audio = audioPlaylist(String(decoding: master, as: UTF8.self), base: stream.url) {
+                stream.url = audio
+            }
+        }
+        return stream
     }
 }
 
@@ -167,26 +258,49 @@ func visitorDataIn(_ html: String) -> String? {
     return value.isEmpty ? nil : value
 }
 
-/// The AAC (itag 140) stream of a player response.
-func parsePlayer(_ data: Any) throws -> Stream {
+/// An HLS master playlist's audio-only rendition (AAC itag 140 if listed).
+func audioPlaylist(_ master: String, base: URL) -> URL? {
+    let uris = master.split(separator: "\n")
+        .filter { $0.hasPrefix("#EXT-X-MEDIA:") && $0.contains("TYPE=AUDIO") }
+        .compactMap { line -> String? in
+            guard let start = line.range(of: "URI=\"") else { return nil }
+            let rest = line[start.upperBound...]
+            return rest.firstIndex(of: "\"").map { String(rest[..<$0]) }
+        }
+    let pick = uris.first { $0.contains("/itag/140/") } ?? uris.first
+    return pick.flatMap { URL(string: $0, relativeTo: base)?.absoluteURL }
+}
+
+/// The AAC (itag 140) stream of a player response; with `hls`, the HLS
+/// manifest when no plain URL is there.
+func parsePlayer(_ data: Any, hls: Bool = false) throws -> Stream {
     let status = string(data, "playabilityStatus/status") ?? ""
     guard status == "OK" else {
         let reason = string(data, "playabilityStatus/reason") ?? status
-        throw YTMError.unplayable(reason.isEmpty ? "This song can't be played" : reason)
+        let message = reason.isEmpty ? "This song can't be played" : reason
+        throw status == "LOGIN_REQUIRED" ? YTMError.signInRequired(message) : YTMError.unplayable(message)
     }
+    let length = (pointer(data, "videoDetails/lengthSeconds") as? String).flatMap(Double.init)
+    let expiresIn = (pointer(data, "streamingData/expiresInSeconds") as? String).flatMap(Double.init)
     let formats = pointer(data, "streamingData/adaptiveFormats") as? [JSON] ?? []
     guard let aac = formats.first(where: { $0["itag"] as? Int == 140 && $0["url"] != nil })
         ?? formats.first(where: { ($0["mimeType"] as? String ?? "").hasPrefix("audio/mp4") && $0["url"] != nil }),
-        let url = (aac["url"] as? String).flatMap(URL.init(string:)) else { throw YTMError.noStream }
-    let expiresIn = (pointer(data, "streamingData/expiresInSeconds") as? String).flatMap(Double.init)
-        ?? URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
-        .first { $0.name == "expire" }?.value.flatMap(Double.init).map { $0 - Date().timeIntervalSince1970 }
+        let url = (aac["url"] as? String).flatMap(URL.init(string:)) else {
+        if hls, let manifest = string(data, "streamingData/hlsManifestUrl").flatMap(URL.init(string:)) {
+            return Stream(url: manifest, expires: Date().addingTimeInterval(expiresIn ?? 3600),
+                          duration: length, loudnessDb: trackLoudness(data), hls: true)
+        }
+        throw YTMError.noStream
+    }
+    let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    let expires = expiresIn
+        ?? query.first { $0.name == "expire" }?.value.flatMap(Double.init).map { $0 - Date().timeIntervalSince1970 }
         ?? 3600
     let loudness = aac["loudnessDb"] as? Double ?? trackLoudness(data)
     let duration = (aac["approxDurationMs"] as? String).flatMap(Double.init).map { $0 / 1000 }
-        ?? URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
-        .first { $0.name == "dur" }?.value.flatMap(Double.init)
-    return Stream(url: url, expires: Date().addingTimeInterval(expiresIn),
+        ?? query.first { $0.name == "dur" }?.value.flatMap(Double.init)
+        ?? length
+    return Stream(url: url, expires: Date().addingTimeInterval(expires),
                   contentLength: (aac["contentLength"] as? String).flatMap(Int.init),
                   duration: duration, loudnessDb: loudness)
 }

@@ -3,8 +3,11 @@ import YTMKit
 
 /// The app's one copy of each YTMKit service.
 enum Services {
-    static let catalog = Catalog()
-    static let resolver = Resolver()
+    /// The Google account's youtube.com cookies, kept in the Keychain
+    /// (rotated cookies are saved back as YouTube sends them).
+    static let auth = Auth(cookies: Keychain.cookies() ?? [:], onChange: { Keychain.save($0) })
+    static let catalog = Catalog(auth: auth)
+    static let resolver = Resolver(auth: auth)
     static let lyrics = LyricsFinder(catalog: catalog)
 }
 

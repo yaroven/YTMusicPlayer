@@ -3,12 +3,14 @@ import Foundation
 public enum YTMError: LocalizedError, Sendable {
     case http(String, Int)
     case unplayable(String)
+    /// Age-restricted (or a bot check): needs a signed-in account.
+    case signInRequired(String)
     case noStream
 
     public var errorDescription: String? {
         switch self {
         case let .http(what, status): "\(what): HTTP \(status)"
-        case let .unplayable(reason): reason
+        case let .unplayable(reason), let .signInRequired(reason): reason
         case .noStream: "YouTube returned no audio stream for this song"
         }
     }
@@ -22,9 +24,13 @@ public final class Catalog: Sendable {
     static let maxPages = 10
 
     let session: URLSession
+    let auth: Auth?
 
-    public init(session: URLSession = .shared) {
+    /// With `auth` signed in, requests go as the account (personal home,
+    /// its library).
+    public init(session: URLSession = .shared, auth: Auth? = nil) {
         self.session = session
+        self.auth = auth
     }
 
     func call(_ endpoint: String, _ body: [String: Any]) async throws -> Any {
@@ -36,7 +42,17 @@ public final class Catalog: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://music.youtube.com", forHTTPHeaderField: "Origin")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await session.data(for: request)
+        let data: Data
+        let response: URLResponse
+        if let auth, auth.signedIn {
+            for (name, value) in auth.headers(origin: "https://music.youtube.com") {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+            (data, response) = try await auth.session.data(for: request)
+            auth.absorb(response)
+        } else {
+            (data, response) = try await session.data(for: request)
+        }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else { throw YTMError.http("YouTube Music \(endpoint)", status) }
         return try JSONSerialization.jsonObject(with: data)
@@ -97,6 +113,24 @@ public final class Catalog: Sendable {
     /// The song's (first) artist page id.
     public func artistId(_ videoId: String) async throws -> String? {
         YTMKit.artistId(try await next(videoId), videoId: videoId)
+    }
+
+    /// The signed-in account's name ("Jane Doe"), to show who is signed in.
+    public func accountName() async throws -> String? {
+        let data = try await call("account/account_menu", [:])
+        let name = text(findFirst(data, "accountName"))
+        return name.isEmpty ? nil : name
+    }
+
+    /// The signed-in account's liked songs (YouTube Music's "Liked music").
+    public func likedSongs() async throws -> [Track] {
+        try await page("VLLM").tracks
+    }
+
+    /// The signed-in account's playlists and saved albums' lists.
+    public func libraryPlaylists() async throws -> [Item] {
+        let data = try await call("browse", ["browseId": "FEmusic_liked_playlists"])
+        return libraryCards(data).filter { $0.browseId != "VLLM" && $0.browseId != "LM" }
     }
 
     func next(_ videoId: String) async throws -> Any {

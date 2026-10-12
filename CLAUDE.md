@@ -307,10 +307,23 @@ Domain terms are defined in `CONTEXT.md`.
   `timeControlStatus` KVO arrives late, so `isPlaying` is the intent while
   resolving and pause during resolving is remembered.
 
+- **iPhone Google sign-in = youtube.com cookies, not OAuth**: Google's
+  page in a non-persistent WKWebView with a Safari UA (Google blocks
+  web views that don't look like Safari); once youtube.com has SAPISID +
+  SID the cookies go to the Keychain (`Keychain.swift`) and `Auth` signs
+  InnerTube requests (`SAPISIDHASH` / 1P / 3P, own ephemeral URLSession,
+  rotated cookies saved back). Anonymous clients first; signed-in ones
+  (`auth: true` in clients.json) only after LOGIN_REQUIRED. Which signed-in
+  client plays age-restricted songs is unverified (no account here):
+  yt-dlp marks only JS-player clients (web, tv, mweb) as cookie-capable, so
+  if none of ours works, the next step is solving the n / signature
+  challenge in JavaScriptCore (yt-dlp-ejs). The in-app "Test age-restricted
+  playback" prints per-client results for that decision.
+
 ## Open TODOs
 
-- iPhone: Google sign-in + library sync, offline downloads, memory
-  measurement on a real device.
+- iPhone: verify signed-in age-restricted playback on a real account,
+  offline downloads, memory measurement on a real device.
 
 - Windows media keys in the TUI (needs a hidden window for SMTC).
 - Chromecast verified only against the simulated receiver in

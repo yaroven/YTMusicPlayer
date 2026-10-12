@@ -3,8 +3,11 @@ import YTMKit
 
 struct HomeView: View {
     @State private var shelves: [Shelf] = []
+    /// Signed in or not when `shelves` were loaded.
+    @State private var loadedAs: Bool?
     @State private var error: String?
     @Environment(Library.self) private var library
+    @Environment(Account.self) private var account
 
     var body: some View {
         ScrollView {
@@ -32,13 +35,17 @@ struct HomeView: View {
             }
         }
         .navigationTitle("Home")
-        .task { if shelves.isEmpty { await load() } }
+        // Signed in, Home is the account's own.
+        .task(id: account.signedIn) {
+            if loadedAs != account.signedIn { await load() }
+        }
         .refreshable { await load() }
     }
 
     private func load() async {
         do {
             shelves = try await Services.catalog.home()
+            loadedAs = account.signedIn
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -218,8 +225,11 @@ struct PageView: View {
 struct LibraryView: View {
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
+    @Environment(Account.self) private var account
     @State private var naming = false
     @State private var newName = ""
+    @State private var signingIn = false
+    @State private var confirmSignOut = false
 
     var body: some View {
         @Bindable var player = player
@@ -266,6 +276,29 @@ struct LibraryView: View {
                     .onDelete { library.deleteSaved(at: $0) }
                 }
             }
+            Section {
+                if account.signedIn {
+                    NavigationLink { AccountLibraryView() } label: {
+                        Label("Your YouTube Music", systemImage: "music.note.house.fill")
+                    }
+                    Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                        confirmSignOut = true
+                    }
+                } else {
+                    Button("Sign in with Google", systemImage: "person.crop.circle.badge.plus") { signingIn = true }
+                }
+                NavigationLink { PlaybackTestView() } label: {
+                    Label("Test age-restricted playback", systemImage: "stethoscope")
+                }
+            } header: {
+                Text("Google account")
+            } footer: {
+                if account.signedIn {
+                    Text("Signed in\(account.name.map { " as \($0)" } ?? ""). Age-restricted songs play with this account.")
+                } else {
+                    Text("Needed for age-restricted songs and your YouTube Music library. The password goes only to Google.")
+                }
+            }
             Section("Playback") {
                 Toggle("Autoplay similar songs", isOn: $player.autoplay)
                 Toggle("Normalize volume", isOn: $player.normalize)
@@ -276,6 +309,10 @@ struct LibraryView: View {
             }
         }
         .navigationTitle("Library")
+        .sheet(isPresented: $signingIn) { SignInView() }
+        .confirmationDialog("Sign out of Google?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+            Button("Sign out", role: .destructive) { account.signOut() }
+        }
         .alert("New playlist", isPresented: $naming) {
             TextField("Name", text: $newName)
             Button("Create") { library.createPlaylist(newName) }

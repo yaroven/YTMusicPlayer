@@ -344,8 +344,8 @@ A separate native app (`ios/`, iOS 17+): home, search, album / artist /
 playlist pages, radio and autoplay, synced lyrics, editable queue, gapless
 playback that keeps going with the screen locked, lock screen and Control
 Center controls, AirPlay. Liked songs, playlists, saved pages and history
-are kept on the phone (no Google sign-in yet). It needs no yt-dlp: the app
-gets the audio URL from YouTube itself.
+are kept on the phone. It needs no yt-dlp: the app gets the audio URL from
+YouTube itself.
 
 It isn't on the App Store; install it with [SideStore](https://sidestore.io),
 which signs apps with your own free Apple ID and re-signs them every 7 days
@@ -362,8 +362,13 @@ Or download `ytm-player-<version>.ipa` from a release and open it with
 SideStore / AltStore. A free Apple ID allows 3 sideloaded apps at a time
 (SideStore counts as one).
 
-Age-restricted songs don't play on the phone (YouTube wants a signed-in
-account for them).
+**Google account (optional):** Library → Sign in with Google opens Google's
+own sign-in page inside the app (the password goes only to Google; the app
+keeps the youtube.com session in the iPhone Keychain). Signed in, Home is
+your own, Library → Your YouTube Music shows your liked music and
+playlists, and age-restricted songs are played with your account (YouTube
+requires it). If an age-restricted song still doesn't play, run Library →
+Test age-restricted playback and attach its result to an issue.
 
 ## Uninstall
 

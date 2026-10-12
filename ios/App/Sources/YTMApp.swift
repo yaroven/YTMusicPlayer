@@ -6,6 +6,7 @@ struct YTMApp: App {
     @State private var library: Library
     @State private var player: Player
     @State private var router = Router()
+    @State private var account = Account()
 
     init() {
         // Thumbnails: small memory cache, the rest on disk.
@@ -21,6 +22,7 @@ struct YTMApp: App {
                 .environment(library)
                 .environment(player)
                 .environment(router)
+                .environment(account)
                 .tint(.accentColor)
                 .preferredColorScheme(.dark)
         }
