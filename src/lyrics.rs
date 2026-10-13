@@ -521,6 +521,7 @@ mod live {
             title: "Bohemian Rhapsody".into(),
             artist: "Queen".into(),
             duration_secs: Some(359),
+            explicit: false,
         };
         let lyrics = find(&http, &catalog, &track, Some(Duration::from_secs(359)))
             .await
@@ -545,6 +546,7 @@ mod live {
                 title: title.into(),
                 artist: artist.into(),
                 duration_secs: Some(secs),
+                explicit: false,
             };
             let lyrics = lrclib(&http, &track, Some(Duration::from_secs(secs.into())))
                 .await

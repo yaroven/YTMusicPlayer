@@ -78,6 +78,18 @@ struct TrackMenu: ViewModifier {
     }
 }
 
+/// YouTube Music's "E": explicit lyrics (18+).
+struct ExplicitBadge: View {
+    var body: some View {
+        Text("E")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(.secondary)
+            .frame(width: 15, height: 15)
+            .background(.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+            .accessibilityLabel("Explicit")
+    }
+}
+
 struct TrackRow: View {
     let track: Track
     let list: [Track]
@@ -98,9 +110,12 @@ struct TrackRow: View {
                     Artwork(source: .video(track.videoId), size: 48)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(track.title)
-                        .lineLimit(1)
-                        .foregroundStyle(isCurrent ? Color.accentColor : Color.primary)
+                    HStack(spacing: 6) {
+                        Text(track.title)
+                            .lineLimit(1)
+                            .foregroundStyle(isCurrent ? Color.accentColor : Color.primary)
+                        if track.explicit { ExplicitBadge() }
+                    }
                     Text(track.artist)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -131,7 +146,10 @@ struct ItemRow: View {
             HStack(spacing: 12) {
                 Artwork(source: item.artwork, size: 56, round: item.kind == .artist)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title).lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(item.title).lineLimit(1)
+                        if item.explicit { ExplicitBadge() }
+                    }
                     Text(item.subtitle)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -151,6 +169,9 @@ struct CardView: View {
     var body: some View {
         let content = VStack(alignment: .leading, spacing: 6) {
             Artwork(source: item.artwork, size: 150, round: item.kind == .artist)
+                .overlay(alignment: .bottomLeading) {
+                    if item.explicit { ExplicitBadge().padding(6) }
+                }
             Text(item.title)
                 .font(.subheadline.weight(.medium))
                 .lineLimit(2)

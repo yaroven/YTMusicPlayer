@@ -4,13 +4,13 @@ expression: s
 ---
 ┌ Library ───────────────────┐┌ Liked music · 3 songs ─────────────────────────────────────────────┐
 │› Liked music 3             ││#      Title                           Artist                Time   │
-│  Road trip 0               ││    1  ♥ Bohemian Rhapsody             Queen                    5:59│
-│            ┌ Keys ──────────────────────────────────────────────────────────────────┐        4:23│
-│            │↑/↓  k/j, PgUp/PgDn  g move · page · top / bottom                       │        4:38│
-│            │Tab  h/l               switch pane                                      │            │
+│  Road trip ┌ Keys ──────────────────────────────────────────────────────────────────┐        5:59│
+│            │↑/↓  k/j, PgUp/PgDn  g move · page · top / bottom                       │        4:23│
+│            │Tab  h/l               switch pane                                      │        4:38│
 │            │Enter / click          open / play                                      │            │
 │            │b  Backspace           back                                             │            │
-│            │1 2 3 4 5              home · history · downloads · albums · artists    │            │
+│            │1 2 3                  home · history · downloads                       │            │
+│            │4 5 6                  albums · artists · explore                       │            │
 │            │Space   n / p          play / pause · next / previous                   │            │
 │            │← / →  click bar       seek                                             │            │
 │            │+ / -                  volume                                           │            │

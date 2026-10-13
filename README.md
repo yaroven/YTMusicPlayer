@@ -4,9 +4,9 @@ A lightweight player for YouTube Music — a desktop window styled after
 YouTube Music, a terminal UI, and a native iPhone app. macOS, Linux,
 Windows, iOS.
 
-- **Browse and play:** home feed, search (songs / albums / artists /
-  playlists), album, artist and playlist pages, song radio and autoplay,
-  karaoke-style synced lyrics, related music, history.
+- **Browse and play:** home feed, Explore (charts, new releases, moods and
+  genres), search with suggestions, album, artist and playlist pages, song
+  radio and autoplay, karaoke-style synced lyrics, related music, history.
 - **Your library:** liked music and playlists, synced through the official
   YouTube Data API with your own Google OAuth client — no third party sees
   your account. Likes and "save to playlist" go back to YouTube.

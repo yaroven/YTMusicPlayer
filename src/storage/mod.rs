@@ -16,7 +16,7 @@ use crate::{
     catalog::{Item, ItemKind},
 };
 
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 /// Plays kept in the history (older ones are dropped).
 const HISTORY_CAP: i64 = 500;
 
@@ -91,7 +91,7 @@ impl Library {
     pub fn tracks(&self, playlist_id: &str) -> Result<Arc<[Track]>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT t.video_id, t.title, t.artist, t.duration_secs
+            "SELECT t.video_id, t.title, t.artist, t.duration_secs, t.explicit
              FROM playlist_tracks pt JOIN tracks t ON t.video_id = pt.video_id
              WHERE pt.playlist_id = ?1 ORDER BY pt.position",
         )?;
@@ -101,6 +101,7 @@ impl Library {
                 title: r.get::<_, String>(1)?.into(),
                 artist: r.get::<_, String>(2)?.into(),
                 duration_secs: r.get(3)?,
+                explicit: r.get(4)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -219,14 +220,15 @@ impl Library {
     pub fn add_history(&self, track: &Track) -> Result<()> {
         let conn = self.conn();
         conn.execute(
-            "INSERT INTO history (video_id, title, artist, duration_secs, played_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO history (video_id, title, artist, duration_secs, played_at, explicit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 &*track.video_id,
                 &*track.title,
                 &*track.artist,
                 track.duration_secs,
-                chrono::Utc::now().timestamp()
+                chrono::Utc::now().timestamp(),
+                track.explicit
             ],
         )?;
         conn.execute(
@@ -240,7 +242,7 @@ impl Library {
     pub fn history(&self) -> Result<Arc<[Track]>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT video_id, title, artist, duration_secs FROM history
+            "SELECT video_id, title, artist, duration_secs, explicit FROM history
              WHERE id IN (SELECT MAX(id) FROM history GROUP BY video_id)
              ORDER BY id DESC",
         )?;
@@ -265,6 +267,7 @@ impl Library {
                 subtitle: r.get::<_, String>(2)?.into(),
                 thumbnail: r.get::<_, Option<String>>(3)?.map(Into::into),
                 track: None,
+                explicit: false,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -330,8 +333,8 @@ impl Library {
     pub fn add_download(&self, download: &Download) -> Result<()> {
         let t = &download.track;
         self.conn().execute(
-            "INSERT INTO downloads (video_id, title, artist, duration_secs, path, bytes, downloaded_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO downloads (video_id, title, artist, duration_secs, path, bytes, downloaded_at, explicit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(video_id) DO UPDATE SET path = excluded.path, bytes = excluded.bytes",
             params![
                 &*t.video_id,
@@ -340,7 +343,8 @@ impl Library {
                 t.duration_secs,
                 download.path.to_string_lossy(),
                 download.bytes as i64,
-                chrono::Utc::now().timestamp()
+                chrono::Utc::now().timestamp(),
+                t.explicit
             ],
         )?;
         Ok(())
@@ -356,12 +360,15 @@ impl Library {
     pub fn downloads(&self) -> Result<Vec<Download>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT video_id, title, artist, duration_secs, path, bytes FROM downloads
+            "SELECT video_id, title, artist, duration_secs, path, bytes, explicit FROM downloads
              ORDER BY downloaded_at DESC",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(Download {
-                track: track_row(r)?,
+                track: Track {
+                    explicit: r.get(6)?,
+                    ..track_row(r)?
+                },
                 path: PathBuf::from(r.get::<_, String>(4)?),
                 bytes: r.get::<_, i64>(5)? as u64,
             })
@@ -508,12 +515,15 @@ impl Library {
     }
 }
 
+/// Columns 0..=3 are the track; `explicit` is read when the query selects
+/// it as column 4 (`downloads` puts it elsewhere and sets it itself).
 fn track_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Track> {
     Ok(Track {
         video_id: r.get::<_, String>(0)?.into(),
         title: r.get::<_, String>(1)?.into(),
         artist: r.get::<_, String>(2)?.into(),
         duration_secs: r.get(3)?,
+        explicit: r.get(4).unwrap_or(false),
     })
 }
 
@@ -529,16 +539,18 @@ fn kind_name(kind: ItemKind) -> &'static str {
 /// Keeps a known duration if this listing lacks one.
 fn upsert_track(conn: &Connection, t: &Track) -> Result<()> {
     conn.prepare_cached(
-        "INSERT INTO tracks (video_id, title, artist, duration_secs) VALUES (?1, ?2, ?3, ?4)
+        "INSERT INTO tracks (video_id, title, artist, duration_secs, explicit) VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(video_id) DO UPDATE SET title = excluded.title,
            artist = excluded.artist,
-           duration_secs = COALESCE(excluded.duration_secs, tracks.duration_secs)",
+           duration_secs = COALESCE(excluded.duration_secs, tracks.duration_secs),
+           explicit = tracks.explicit | excluded.explicit",
     )?
     .execute(params![
         &*t.video_id,
         &*t.title,
         &*t.artist,
-        t.duration_secs
+        t.duration_secs,
+        t.explicit
     ])?;
     Ok(())
 }
@@ -592,6 +604,16 @@ fn migrate(conn: &Connection) -> Result<()> {
              COMMIT;",
         )?;
     }
+    if version < 4 {
+        // YouTube Music's "E" badge; unknown (0) for rows synced before.
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE tracks ADD COLUMN explicit INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE history ADD COLUMN explicit INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE downloads ADD COLUMN explicit INTEGER NOT NULL DEFAULT 0;
+             COMMIT;",
+        )?;
+    }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
 }
@@ -606,6 +628,7 @@ mod tests {
             title: id.into(),
             artist: "A".into(),
             duration_secs: dur,
+            explicit: false,
         }
     }
 
@@ -684,6 +707,7 @@ mod tests {
             subtitle: "".into(),
             thumbnail: None,
             track: None,
+            explicit: false,
         };
         lib.save(&item("MPREb_a", ItemKind::Album)).unwrap();
         lib.save(&item("UClocal", ItemKind::Artist)).unwrap();

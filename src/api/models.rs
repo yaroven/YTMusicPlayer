@@ -22,6 +22,27 @@ pub struct Track {
     pub title: Arc<str>,
     pub artist: Arc<str>,
     pub duration_secs: Option<u32>,
+    /// YouTube Music's "E" badge: explicit lyrics (18+). Only the catalog
+    /// knows it; tracks synced through the Data API stay `false`.
+    pub explicit: bool,
+}
+
+impl Track {
+    /// A track with just the fields the API gives everywhere.
+    pub fn new(
+        video_id: Arc<str>,
+        title: Arc<str>,
+        artist: Arc<str>,
+        duration_secs: Option<u32>,
+    ) -> Self {
+        Self {
+            video_id,
+            title,
+            artist,
+            duration_secs,
+            explicit: false,
+        }
+    }
 }
 
 /// "Artist - Topic" is how YouTube names auto-generated music channels.

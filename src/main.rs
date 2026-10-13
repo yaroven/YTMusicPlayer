@@ -471,6 +471,7 @@ async fn play(paths: &AppPaths, settings: &Settings, input: &str) -> Result<()> 
         title: "".into(),
         artist: "".into(),
         duration_secs: None,
+        explicit: false,
     };
     let opened = source.open(&track, false).await?;
     let (title, codec, bitrate) = match &opened.stream {

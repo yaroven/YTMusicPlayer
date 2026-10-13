@@ -6,14 +6,18 @@ public struct Track: Codable, Hashable, Identifiable, Sendable {
     public var title: String
     public var artist: String
     public var durationSecs: Int?
+    /// YouTube Music's "E" badge: explicit lyrics (18+).
+    public var explicit = false
 
     public var id: String { videoId }
 
-    public init(videoId: String, title: String, artist: String, durationSecs: Int? = nil) {
+    public init(videoId: String, title: String, artist: String, durationSecs: Int? = nil,
+                explicit: Bool = false) {
         self.videoId = videoId
         self.title = title
         self.artist = artist
         self.durationSecs = durationSecs
+        self.explicit = explicit
     }
 
     /// Square-cropped by the views; YouTube's 16:9 thumbnail of the video.
@@ -65,17 +69,20 @@ public struct Item: Hashable, Identifiable, Sendable {
     public var thumbnail: URL?
     /// Songs only.
     public var track: Track?
+    /// YouTube Music's "E" badge: explicit lyrics (18+).
+    public var explicit = false
 
     public var id: String { "\(kind.rawValue):\(browseId)" }
 
     public init(kind: ItemKind, browseId: String, title: String, subtitle: String,
-                thumbnail: URL? = nil, track: Track? = nil) {
+                thumbnail: URL? = nil, track: Track? = nil, explicit: Bool = false) {
         self.kind = kind
         self.browseId = browseId
         self.title = title
         self.subtitle = subtitle
         self.thumbnail = thumbnail
         self.track = track
+        self.explicit = explicit
     }
 }
 

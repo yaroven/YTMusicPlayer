@@ -92,6 +92,20 @@ impl Session {
                 }
                 Err(err) => self.set_error(format!("Home: {err:#}")),
             },
+            Background::Suggestions { query, result } => {
+                // Only the newest query's suggestions are shown.
+                if query == self.suggesting {
+                    self.suggestions = result.unwrap_or_default().into();
+                    changes.suggestions = true;
+                }
+            }
+            Background::Explore(result) => match result {
+                Ok(shelves) => {
+                    self.explore = Some(shelves.into());
+                    changes.explore = true;
+                }
+                Err(err) => self.set_error(format!("Explore: {err:#}")),
+            },
             Background::Related { video_id, result } => {
                 if self.queue.current().is_some_and(|t| t.video_id == video_id) {
                     match result {
@@ -233,6 +247,35 @@ impl Session {
         let (catalog, tx) = (self.deps.catalog.clone(), self.tx.clone());
         tokio::spawn(async move {
             let _ = tx.send(Background::Home(catalog.home().await));
+        });
+    }
+
+    /// Loads Explore (once; again with `refresh`).
+    pub fn load_explore(&mut self, refresh: bool) {
+        if self.explore.is_some() && !refresh {
+            return;
+        }
+        let (catalog, tx) = (self.deps.catalog.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            let _ = tx.send(Background::Explore(catalog.explore().await));
+        });
+    }
+
+    /// Asks YouTube Music what it suggests for `query` (quota-free).
+    pub fn suggest(&mut self, query: &str) {
+        let query = query.trim().to_owned();
+        if query == self.suggesting {
+            return;
+        }
+        self.suggesting = query.clone();
+        if query.is_empty() {
+            self.suggestions = Arc::from([]);
+            return;
+        }
+        let (catalog, tx) = (self.deps.catalog.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            let result = catalog.suggestions(&query).await;
+            let _ = tx.send(Background::Suggestions { query, result });
         });
     }
 

@@ -125,6 +125,10 @@ pub struct Changes {
     pub page: bool,
     /// The home feed arrived: [`Session::home`].
     pub home: bool,
+    /// Explore (charts, new releases, moods) arrived: [`Session::explore`].
+    pub explore: bool,
+    /// New search suggestions: [`Session::suggestions`].
+    pub suggestions: bool,
     /// Lyrics or related shelves for the playing track changed.
     pub lyrics: bool,
     pub related: bool,
@@ -243,6 +247,11 @@ enum Background {
         result: Result<Page>,
     },
     Home(Result<Vec<Shelf>>),
+    Explore(Result<Vec<Shelf>>),
+    Suggestions {
+        query: String,
+        result: Result<Vec<String>>,
+    },
     Related {
         video_id: Arc<str>,
         result: Result<Vec<Shelf>>,
@@ -288,6 +297,12 @@ pub struct Session {
     page_generation: u64,
     /// The home feed (YouTube Music's shelves).
     pub home: Option<Arc<[Shelf]>>,
+    /// Explore shelves (charts, new releases, moods), once asked for.
+    pub explore: Option<Arc<[Shelf]>>,
+    /// What YouTube Music suggests for the query being typed.
+    pub suggestions: Arc<[String]>,
+    /// The query those suggestions are for (a late answer is dropped).
+    suggesting: String,
     /// Lyrics of the playing track (when asked for with `want_lyrics`).
     pub lyrics: Option<(Arc<str>, Option<Arc<Lyrics>>)>,
     want_lyrics: bool,
@@ -403,6 +418,9 @@ impl Session {
             page_loading: false,
             page_generation: 0,
             home: None,
+            explore: None,
+            suggestions: Arc::from([]),
+            suggesting: String::new(),
             lyrics: None,
             want_lyrics: false,
             related: None,
@@ -642,6 +660,8 @@ impl Session {
             Background::Searched { .. }
             | Background::PageLoaded { .. }
             | Background::Home(_)
+            | Background::Explore(_)
+            | Background::Suggestions { .. }
             | Background::Related { .. }
             | Background::Lyrics { .. } => self.discover_event(event, &mut changes),
             Background::CastDevices(_) | Background::CastConnected { .. } => {

@@ -6,8 +6,10 @@ desktop player. It isn't on the App Store, so you install it yourself with
 them every 7 days on the phone, with no computer involved after the first
 setup.
 
-- Home, search (songs / albums / artists / playlists), album, artist and
-  playlist pages, song radio and autoplay.
+- Home, search (songs / albums / artists / playlists) with YouTube Music's
+  own suggestions, Explore (charts, new releases, moods and genres), album,
+  artist and playlist pages, song radio and autoplay.
+- Songs with explicit lyrics carry YouTube Music's **E** badge.
 - Playback that keeps going with the screen locked, gapless track changes,
   lock screen and Control Center controls, AirPlay.
 - Karaoke lyrics: the sung line lights up letter by letter, a tap on a line

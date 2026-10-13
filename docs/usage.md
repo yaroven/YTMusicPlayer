@@ -4,13 +4,14 @@
 
 Open **ytm-player** from your applications, or run `ytm gui`.
 
-- **Sidebar:** Home, your Library (History, Downloads, Albums, Artists),
+- **Sidebar:** Home, **Explore** (charts, new releases, moods and genres),
+  your Library (History, Downloads, Albums, Artists),
   Liked music and your playlists, **+** for a new playlist, sign-in, sync and
   **settings** at the bottom. Drag the sidebar's edge to resize it
   (double-click the edge to reset).
-- **Search box:** typing filters the list you're looking at; **Enter**
-  searches YouTube Music, with **Songs / Albums / Artists / Playlists** tabs
-  over the results.
+- **Search box:** typing filters the list you're looking at and shows what
+  YouTube Music suggests; **Enter** (or a suggestion) searches it, with
+  **Songs / Albums / Artists / Playlists** tabs over the results.
 - **Pages:** albums, artists and playlists open with their art, **Play**,
   **Shuffle**, **Radio**, **Save** / **Follow** and **download all**; artist
   pages add shelves of albums, singles and similar artists. **←** (or
@@ -18,7 +19,7 @@ Open **ytm-player** from your applications, or run `ytm gui`.
 - **Track rows:** click to play; click the artist's name for their page (also
   in the player bar and the queue); hover for like and save to playlist; **⋮**
   for start radio, play next, add to queue, download, dislike and remove from
-  playlist. ↓ marks downloaded songs.
+  playlist. ↓ marks downloaded songs, **E** explicit lyrics (18+).
 - **Player bar:** progress (click to seek), previous / play / next, the
   current track with dislike, like and ⋮, volume, repeat, shuffle, **Cast**,
   **sleep timer** and the full-screen view.
@@ -58,7 +59,7 @@ Run `ytm` in a terminal.
 | `Tab` `h/l` | switch pane |
 | `Enter`, click | open / play |
 | `b`, `Backspace` | back |
-| `1` … `5` | home, history, downloads, albums, artists |
+| `1` … `6` | home, history, downloads, albums, artists, explore |
 | `Space` | play / pause |
 | `n` / `p` | next / previous (restarts the track if > 3 s in) |
 | `←` / `→`, click the bar | seek |

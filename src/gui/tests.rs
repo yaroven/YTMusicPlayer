@@ -88,6 +88,8 @@ fn snapshot(view: SessionView, changes: Changes) -> Snapshot {
         search: None,
         page: None,
         home: None,
+        explore: None,
+        suggestions: None,
         lyrics: None,
         related: None,
         queue: None,
@@ -103,6 +105,7 @@ fn track(title: &str) -> Track {
         title: title.into(),
         artist: "Someone".into(),
         duration_secs: Some(180),
+        explicit: false,
     }
 }
 
@@ -248,6 +251,95 @@ fn youtube_sign_in_and_out() {
     assert!(h.ui.get_yt_signed_in());
     h.ui.invoke_yt_sign_out();
     assert!(matches!(&h.commands()[..], [Cmd::YouTubeSignOut]));
+}
+
+#[test]
+fn explore_loads_and_search_suggests() {
+    let mut h = harness();
+    h.ui.invoke_nav_to(7);
+    assert!(
+        matches!(&h.commands()[..], [Cmd::LoadExplore]),
+        "Explore asks the catalog for its shelves"
+    );
+    assert_eq!(h.ui.get_tracks_title(), "Explore");
+
+    let mut snap = snapshot(
+        session_view(),
+        Changes {
+            explore: true,
+            suggestions: true,
+            ..Changes::default()
+        },
+    );
+    snap.explore = Some(Arc::from([Shelf {
+        title: "Charts".into(),
+        items: vec![Item {
+            kind: ItemKind::Playlist,
+            id: "FEmusic_charts".into(),
+            title: "Top songs".into(),
+            subtitle: "".into(),
+            thumbnail: None,
+            track: None,
+            explicit: false,
+        }],
+    }]));
+    snap.suggestions = Some(Arc::from(["abba dancing queen".to_owned()]));
+    h.absorb(snap);
+    assert_eq!(h.ui.get_shelves().row_count(), 1);
+    assert_eq!(h.ui.get_search_suggestions().row_count(), 1);
+
+    // Typing asks for suggestions, once the typing stops.
+    h.ui.invoke_filter_changed("abba".into());
+    assert!(h.commands().is_empty(), "debounced");
+    i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(400));
+    assert!(matches!(&h.commands()[..], [Cmd::Suggest(q)] if q == "abba"));
+}
+
+#[test]
+fn explicit_songs_are_marked() {
+    let h = harness();
+    let mut view = session_view();
+    view.now = Some(track("Song"));
+    let mut snap = snapshot(
+        view,
+        Changes {
+            search: true,
+            ..Changes::default()
+        },
+    );
+    let mut explicit = track("Explicit song");
+    explicit.explicit = true;
+    let tracks: Arc<[Track]> = Arc::from([explicit.clone(), track("Clean song")]);
+    snap.search = Some(SearchResults {
+        query: "x".into(),
+        kind: SearchKind::Songs,
+        tracks,
+        items: Arc::from([
+            Item {
+                kind: ItemKind::Song,
+                id: explicit.video_id.clone(),
+                title: explicit.title.clone(),
+                subtitle: explicit.artist.clone(),
+                thumbnail: None,
+                track: Some(explicit),
+                explicit: true,
+            },
+            Item {
+                kind: ItemKind::Song,
+                id: "clean".into(),
+                title: "Clean song".into(),
+                subtitle: "Someone".into(),
+                thumbnail: None,
+                track: Some(track("Clean song")),
+                explicit: false,
+            },
+        ]),
+    });
+    h.absorb(snap);
+    let rows = h.ui.get_tracks();
+    assert_eq!(rows.row_count(), 2);
+    assert!(rows.row_data(0).unwrap().explicit, "the E badge shows");
+    assert!(!rows.row_data(1).unwrap().explicit);
 }
 
 #[test]

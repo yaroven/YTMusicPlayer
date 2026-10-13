@@ -385,6 +385,17 @@ Domain terms are defined in `CONTEXT.md`.
   playlist's segments are 403 for ~5 s: both wait/retry. An HLS result
   from a resolve without JS is useless (n unsolved): retried with JS.
 
+- **Explore, search suggestions, "E" badge** (2026-10-13): all three are
+  the same InnerTube we already use — `FEmusic_explore` (its chips are
+  `musicNavigationButtonRenderer`, laid out in `gridRenderer`s, so both are
+  parsed into shelves now), `music/get_search_suggestions`, and
+  `MUSIC_EXPLICIT_BADGE` in a row's badges. Mood categories need `params`
+  as well as a browse id: kept after a `#` in the item id (browse ids have
+  none), split again in `Catalog::page`, so nothing else in the pipeline
+  had to learn about it. `Track.explicit` is stored (schema v4); rows
+  synced through the Data API stay `false` — it only knows age restriction,
+  not explicit lyrics. Suggestions are debounced 250 ms in both UIs.
+
 ## Open TODOs
 
 - iPhone: verify signed-in age-restricted playback on a real account,

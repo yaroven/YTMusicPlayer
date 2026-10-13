@@ -78,6 +78,8 @@ pub struct Item {
     pub thumbnail: Option<Arc<str>>,
     /// Songs only: playable.
     pub track: Option<Track>,
+    /// YouTube Music's "E" badge: explicit lyrics (18+).
+    pub explicit: bool,
 }
 
 /// A titled row of cards (home page, artist page sections).
@@ -179,13 +181,22 @@ impl Catalog {
 
     /// Album (`MPREb_…`), artist (`UC…`) or playlist (`VL…` / `PL…`) page.
     pub async fn page(&self, browse_id: &str) -> Result<Page> {
+        // Explore chips carry their params after a `#` (see `nav_button`).
+        let (browse_id, params) = match browse_id.split_once('#') {
+            Some((id, params)) => (id, Some(params)),
+            None => (browse_id, None),
+        };
         let id = match browse_id {
             id if id.starts_with("PL") || id.starts_with("OLAK") || id.starts_with("RD") => {
                 format!("VL{id}")
             }
             id => id.to_owned(),
         };
-        let data = self.call("browse", json!({ "browseId": id })).await?;
+        let mut body = json!({ "browseId": id });
+        if let Some(params) = params {
+            body["params"] = json!(params);
+        }
+        let data = self.call("browse", body).await?;
         let mut page = parse_page(&id, &data);
         // Long playlists come in pages.
         let mut token = continuation(&data);
@@ -218,6 +229,27 @@ impl Catalog {
     }
 
     /// The home page's shelves (not personalised: no sign-in here).
+    /// Explore: charts, new releases, moods and genres. Its chips open as
+    /// pages like any other ([`Catalog::page`]).
+    pub async fn explore(&self) -> Result<Vec<Shelf>> {
+        let data = self
+            .call("browse", json!({ "browseId": "FEmusic_explore" }))
+            .await?;
+        Ok(parse_shelves(&data))
+    }
+
+    /// What YouTube Music suggests while you type (no quota, ~100 ms).
+    pub async fn suggestions(&self, query: &str) -> Result<Vec<String>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let data = self
+            .call("music/get_search_suggestions", json!({ "input": query }))
+            .await?;
+        Ok(parse_suggestions(&data))
+    }
+
     pub async fn home(&self) -> Result<Vec<Shelf>> {
         let data = self
             .call("browse", json!({ "browseId": "FEmusic_home" }))
@@ -392,6 +424,37 @@ fn thumbnail(v: &Value) -> Option<Arc<str>> {
     pick.get("url").and_then(Value::as_str).map(Arc::from)
 }
 
+/// YouTube Music's "E" badge anywhere below `v`.
+fn explicit_badge(v: &Value) -> bool {
+    find_all(v, "iconType")
+        .into_iter()
+        .filter_map(Value::as_str)
+        .any(|icon| icon == "MUSIC_EXPLICIT_BADGE")
+}
+
+/// `musicNavigationButtonRenderer`: an Explore chip ("Charts", "Chill"),
+/// which opens a browse page. Mood categories need `params`, kept after a
+/// `#` in the id — browse ids never contain one ([`Catalog::page`] splits
+/// it off again).
+fn nav_button(r: &Value) -> Option<Item> {
+    let title = text(r.get("buttonText"));
+    let endpoint = r.get("clickCommand")?.get("browseEndpoint")?;
+    let id = endpoint.get("browseId")?.as_str()?;
+    let id = match endpoint.get("params").and_then(Value::as_str) {
+        Some(params) => format!("{id}#{params}"),
+        None => id.to_owned(),
+    };
+    Some(Item {
+        kind: ItemKind::Playlist,
+        id: id.into(),
+        title: title.into(),
+        subtitle: "".into(),
+        thumbnail: None,
+        track: None,
+        explicit: false,
+    })
+}
+
 /// `musicResponsiveListItemRenderer`: a row in search results, shelves and
 /// track lists. `album_artist` fills in album pages' artist-less rows.
 fn list_item(r: &Value, album_artist: Option<&str>) -> Option<Item> {
@@ -427,6 +490,7 @@ fn list_item(r: &Value, album_artist: Option<&str>) -> Option<Item> {
                 subtitle: subtitle.into(),
                 thumbnail,
                 track: None,
+                explicit: explicit_badge(r),
             })
         }
         (Some(video_id), None) => {
@@ -464,11 +528,13 @@ fn list_item(r: &Value, album_artist: Option<&str>) -> Option<Item> {
                         .filter_map(|run| run.get("text").and_then(Value::as_str))
                         .find_map(parse_duration)
                 });
+            let explicit = explicit_badge(r);
             let track = Track {
                 video_id: video_id.into(),
                 title: title.as_str().into(),
                 artist: clean_artist(&artist),
                 duration_secs: duration,
+                explicit,
             };
             Some(Item {
                 kind: ItemKind::Song,
@@ -477,6 +543,7 @@ fn list_item(r: &Value, album_artist: Option<&str>) -> Option<Item> {
                 subtitle: subtitle.into(),
                 thumbnail,
                 track: Some(track),
+                explicit,
             })
         }
         (None, None) => None,
@@ -507,10 +574,12 @@ fn card(r: &Value) -> Option<Item> {
                 title: title.as_str().into(),
                 artist: clean_artist(artist),
                 duration_secs: None,
+                explicit: explicit_badge(r),
             }),
             title: title.into(),
             subtitle: subtitle.into(),
             thumbnail,
+            explicit: explicit_badge(r),
         });
     }
     let kind = page_type(endpoint).and_then(kind_of)?;
@@ -522,7 +591,17 @@ fn card(r: &Value) -> Option<Item> {
         subtitle: subtitle.into(),
         thumbnail,
         track: None,
+        explicit: explicit_badge(r),
     })
+}
+
+/// Plain query strings from `music/get_search_suggestions`.
+fn parse_suggestions(data: &Value) -> Vec<String> {
+    find_all(data, "searchSuggestionRenderer")
+        .into_iter()
+        .map(|s| text(s.get("suggestion")))
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 fn parse_search(data: &Value, kind: SearchKind) -> Vec<Item> {
@@ -549,22 +628,36 @@ fn songs_in(data: &Value, album_artist: Option<&str>) -> Vec<Track> {
 
 /// Carousels of cards (and of song rows) with their titles.
 fn parse_shelves(data: &Value) -> Vec<Shelf> {
-    find_all(data, "musicCarouselShelfRenderer")
+    let carousels = find_all(data, "musicCarouselShelfRenderer")
         .into_iter()
         .filter_map(|shelf| {
             let title = text(shelf.pointer("/header/musicCarouselShelfBasicHeaderRenderer/title"));
-            let items: Vec<Item> = shelf
-                .get("contents")?
-                .as_array()?
-                .iter()
-                .filter_map(|c| {
-                    c.get("musicTwoRowItemRenderer").and_then(card).or_else(|| {
-                        c.get("musicResponsiveListItemRenderer")
-                            .and_then(|r| list_item(r, None))
-                    })
-                })
-                .collect();
+            let items = shelf_items(shelf.get("contents")?.as_array()?);
             (!items.is_empty()).then_some(Shelf { title, items })
+        });
+    // Explore and "moods & genres" lay their cards out in grids instead.
+    let grids = find_all(data, "gridRenderer")
+        .into_iter()
+        .filter_map(|grid| {
+            let title = text(grid.pointer("/header/gridHeaderRenderer/title"));
+            let items = shelf_items(grid.get("items")?.as_array()?);
+            (!items.is_empty()).then_some(Shelf { title, items })
+        });
+    carousels.chain(grids).collect()
+}
+
+/// The cards of a carousel or grid, whichever renderer they use.
+fn shelf_items(contents: &[Value]) -> Vec<Item> {
+    contents
+        .iter()
+        .filter_map(|c| {
+            c.get("musicTwoRowItemRenderer")
+                .and_then(card)
+                .or_else(|| {
+                    c.get("musicResponsiveListItemRenderer")
+                        .and_then(|r| list_item(r, None))
+                })
+                .or_else(|| c.get("musicNavigationButtonRenderer").and_then(nav_button))
         })
         .collect()
 }
@@ -663,6 +756,7 @@ fn parse_radio(data: &Value) -> Vec<Track> {
                 title: title.as_str().into(),
                 artist: clean_artist(artist),
                 duration_secs: parse_duration(&text(r.get("lengthText"))),
+                explicit: false,
             })
         })
         .collect()
@@ -836,6 +930,54 @@ mod tests {
     }
 
     #[test]
+    fn explicit_badge_and_explore_chips() {
+        // A song row with YouTube Music's "E" badge.
+        let mut row = song_row();
+        row["musicResponsiveListItemRenderer"]["badges"] = json!([
+            { "musicInlineBadgeRenderer": { "icon": { "iconType": "MUSIC_EXPLICIT_BADGE" } } }
+        ]);
+        let items = parse_search(&json!({ "contents": [row] }), SearchKind::Songs);
+        assert!(items[0].explicit);
+        assert!(
+            items[0].track.as_ref().unwrap().explicit,
+            "the queue shows it too"
+        );
+        let plain = parse_search(&json!({ "contents": [song_row()] }), SearchKind::Songs);
+        assert!(!plain[0].explicit);
+
+        // Explore: chips in a grid, and a mood chip's params kept in the id.
+        let data = json!({ "contents": { "gridRenderer": {
+            "header": { "gridHeaderRenderer": { "title": { "runs": [{ "text": "Browse" }] } } },
+            "items": [
+                { "musicNavigationButtonRenderer": {
+                    "buttonText": { "runs": [{ "text": "Charts" }] },
+                    "clickCommand": { "browseEndpoint": { "browseId": "FEmusic_charts" } } } },
+                { "musicNavigationButtonRenderer": {
+                    "buttonText": { "runs": [{ "text": "Chill" }] },
+                    "clickCommand": { "browseEndpoint": {
+                        "browseId": "FEmusic_moods_and_genres_category", "params": "ggMPOg1u" } } } }
+            ] } } });
+        let shelves = parse_shelves(&data);
+        assert_eq!(shelves.len(), 1);
+        assert_eq!(shelves[0].title, "Browse");
+        assert_eq!(&*shelves[0].items[0].id, "FEmusic_charts");
+        assert_eq!(
+            &*shelves[0].items[1].id,
+            "FEmusic_moods_and_genres_category#ggMPOg1u"
+        );
+    }
+
+    #[test]
+    fn suggestions_are_plain_queries() {
+        let data = json!({ "contents": [
+            { "searchSuggestionRenderer": { "suggestion": { "runs": [
+                { "text": "abba " }, { "text": "dancing queen", "bold": true } ] } } },
+            { "searchSuggestionRenderer": { "suggestion": { "runs": [{ "text": "" }] } } }
+        ] });
+        assert_eq!(parse_suggestions(&data), ["abba dancing queen"]);
+    }
+
+    #[test]
     fn radio_and_tabs() {
         let data = json!({
             "contents": [
@@ -912,6 +1054,29 @@ mod tests {
         assert!(radio.len() > 10);
         assert!(catalog.lyrics("YkLLcIKhJ64").await.unwrap().is_some());
         assert!(!catalog.home().await.unwrap().is_empty());
+
+        // Explore: shelves, and a chip that opens as a page of its own.
+        let explore = catalog.explore().await.unwrap();
+        assert!(explore.len() > 2, "{explore:?}");
+        let chip = explore
+            .iter()
+            .flat_map(|shelf| &shelf.items)
+            .find(|item| item.id.starts_with("FEmusic_"))
+            .expect("an Explore chip");
+        let page = catalog.page(&chip.id).await.unwrap();
+        assert!(!page.shelves.is_empty(), "{}: {page:?}", chip.id);
+
+        let suggestions = catalog.suggestions("abba danc").await.unwrap();
+        assert!(
+            suggestions.iter().any(|s| s.contains("dancing")),
+            "{suggestions:?}"
+        );
+        assert!(catalog.suggestions("  ").await.unwrap().is_empty());
+
+        // "E" badges: explicit songs are marked, clean ones aren't.
+        let explicit = catalog.search("eminem", SearchKind::Songs).await.unwrap();
+        assert!(explicit.iter().any(|s| s.explicit), "{explicit:?}");
+        assert!(songs.iter().all(|s| !s.explicit), "ABBA isn't explicit");
     }
 
     /// Separate from `live_catalog`: the player endpoint challenges

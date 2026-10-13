@@ -72,10 +72,17 @@ fn track_row(marker: String, t: &Track, playing: bool, liked: bool) -> Row<'_> {
         .unwrap_or_default();
     let row = Row::new([
         Cell::from(Line::from(marker).right_aligned()),
-        Cell::from(if liked {
-            Line::from(vec![Span::raw("♥ ").fg(ACCENT), Span::raw(&*t.title)])
-        } else {
-            Line::from(&*t.title)
+        Cell::from({
+            // "♥" liked, "E" explicit lyrics (YouTube Music's badge).
+            let mut spans = Vec::new();
+            if liked {
+                spans.push(Span::raw("♥ ").fg(ACCENT));
+            }
+            spans.push(Span::raw(&*t.title));
+            if t.explicit {
+                spans.push(Span::raw(" E").dim());
+            }
+            Line::from(spans)
         }),
         Cell::from(&*t.artist),
         Cell::from(Line::from(time).right_aligned()),

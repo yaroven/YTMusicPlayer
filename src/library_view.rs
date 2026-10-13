@@ -39,6 +39,8 @@ pub enum Source {
     /// An album, artist or playlist page (by browse id).
     Page(String),
     Home,
+    /// Explore: charts, new releases, moods and genres.
+    Explore,
     History,
     Downloads,
     /// Saved albums or followed artists.
@@ -85,6 +87,7 @@ pub struct SessionData<'a> {
     pub search: Option<&'a SearchResults>,
     pub page: Option<&'a Page>,
     pub home: Option<&'a [Shelf]>,
+    pub explore: Option<&'a [Shelf]>,
 }
 
 pub struct LibraryView {
@@ -189,6 +192,7 @@ impl LibraryView {
             subtitle: self.shown.subtitle.as_str().into(),
             thumbnail: self.shown.thumbnail.as_deref().map(Into::into),
             track: None,
+            explicit: false,
         };
         Some((item, self.shown.channel_id.clone()))
     }
@@ -415,6 +419,21 @@ impl LibraryView {
         Ok(())
     }
 
+    /// Explore, as shelves of cards (empty until the catalog answers).
+    pub fn show_explore(&mut self, explore: Option<&[Shelf]>) {
+        let shown = Shown {
+            source: Source::Explore,
+            title: "Explore".into(),
+            shelves: explore.unwrap_or_default().to_vec().into(),
+            ..Shown::empty()
+        };
+        if self.shown.source == Source::Explore {
+            self.replace(shown);
+        } else {
+            self.navigate(shown);
+        }
+    }
+
     pub fn show_history(&mut self) -> Result<()> {
         let tracks = self.library.history()?;
         self.navigate(Shown {
@@ -526,6 +545,10 @@ impl LibraryView {
         }
         if changes.home && self.shown.source == Source::Home {
             self.show_home(data.home)?;
+            replaced = true;
+        }
+        if changes.explore && self.shown.source == Source::Explore {
+            self.show_explore(data.explore);
             replaced = true;
         }
         let refresh = match &self.shown.source {
@@ -676,6 +699,7 @@ mod tests {
             title: title.into(),
             artist: "Artist".into(),
             duration_secs: None,
+            explicit: false,
         }
     }
 

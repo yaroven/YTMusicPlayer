@@ -644,6 +644,7 @@ mod tests {
                 title: "Song".into(),
                 artist: "Band".into(),
                 duration_secs: Some(100),
+                explicit: false,
             }),
             duration: Some(Duration::from_secs(100)),
             gain: 1.0,

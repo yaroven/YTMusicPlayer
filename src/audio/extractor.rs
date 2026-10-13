@@ -859,6 +859,7 @@ fn parse_search(stdout: &str) -> Vec<Track> {
                 title: title.into(),
                 artist: clean_artist(if channel == "NA" { "" } else { channel }),
                 duration_secs: duration.parse::<f64>().ok().map(|d| d as u32),
+                explicit: false,
             })
         })
         .collect()

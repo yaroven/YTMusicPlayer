@@ -93,6 +93,9 @@ enum Cmd {
     Search(String, SearchKind),
     OpenPage(String),
     LoadHome,
+    LoadExplore,
+    /// What is being typed in the search box (for suggestions).
+    Suggest(String),
     QueueRemove(usize),
     QueueMove(usize, usize),
     ClearQueue,
@@ -133,6 +136,10 @@ struct Snapshot {
     page: Option<Arc<Page>>,
     /// The home feed, when `changes.home`.
     home: Option<Arc<[Shelf]>>,
+    /// Explore shelves, when `changes.explore`.
+    explore: Option<Arc<[Shelf]>>,
+    /// Search suggestions, when `changes.suggestions`.
+    suggestions: Option<Arc<[String]>>,
     /// The playing track's lyrics, when `changes.lyrics`.
     lyrics: Option<Arc<Lyrics>>,
     /// Related shelves, when `changes.related`.
@@ -153,6 +160,8 @@ impl Snapshot {
             search: session.search.clone().filter(|_| changes.search),
             page: session.page.clone().filter(|_| changes.page),
             home: session.home.clone().filter(|_| changes.home),
+            explore: session.explore.clone().filter(|_| changes.explore),
+            suggestions: changes.suggestions.then(|| session.suggestions.clone()),
             lyrics: session
                 .lyrics
                 .as_ref()
@@ -364,6 +373,7 @@ impl Model for TracksModel {
         Some(TrackRow {
             liked,
             downloaded,
+            explicit: t.explicit,
             initial: initial(&t.title),
             hue: hue(&t.artist),
             title: SharedString::from(&*t.title),
@@ -426,6 +436,7 @@ impl Cards {
                     art: image.unwrap_or_default(),
                     round: item.kind == ItemKind::Artist,
                     saved: false,
+                    explicit: item.explicit,
                 }
             })
             .collect();
@@ -479,7 +490,15 @@ impl Shelves {
     }
 }
 
+/// Suggestions the dropdown shows.
+const SUGGESTIONS_SHOWN: usize = 8;
+
+/// How long typing pauses before suggestions are asked for.
+const SUGGEST_DELAY: Duration = Duration::from_millis(250);
+
 thread_local! {
+    /// Debounces search suggestions (see `on_filter_changed`).
+    static SUGGEST_TIMER: slint::Timer = slint::Timer::default();
     /// The row last played by a click, and when (see `on_play_track`).
     static LAST_PLAY: std::cell::Cell<Option<(i32, std::time::Instant)>> = const { std::cell::Cell::new(None) };
 }
@@ -755,6 +774,10 @@ struct View {
     lyrics: LyricsView,
     /// The home feed (last received).
     home: Option<Arc<[Shelf]>>,
+    /// Explore shelves (last received).
+    explore: Option<Arc<[Shelf]>>,
+    /// What YouTube Music suggests for the query being typed.
+    suggestion_rows: Rc<VecModel<SharedString>>,
     /// Art URL of the page header.
     header_art: Option<Arc<str>>,
     /// Track for "New playlist…" from the save-to menu.
@@ -980,6 +1003,7 @@ impl View {
         ui.set_shelves(ModelRc::from(self.shelves.model.clone()));
         ui.set_related(ModelRc::from(self.related.model.clone()));
         ui.set_lyrics(ModelRc::from(self.lyrics.model.clone()));
+        ui.set_search_suggestions(ModelRc::from(self.suggestion_rows.clone()));
         ui.set_cast_devices(ModelRc::from(self.cast_names.clone()));
         ui.set_set_normalize(self.prefs.normalize);
         ui.set_set_notifications(self.prefs.notifications);
@@ -1128,12 +1152,25 @@ impl View {
         if let Some(home) = &snap.home {
             self.home = Some(home.clone());
         }
+        if let Some(explore) = &snap.explore {
+            self.explore = Some(explore.clone());
+        }
+        if let Some(suggestions) = &snap.suggestions {
+            self.suggestion_rows.set_vec(
+                suggestions
+                    .iter()
+                    .take(SUGGESTIONS_SHOWN)
+                    .map(|s| SharedString::from(s.as_str()))
+                    .collect::<Vec<_>>(),
+            );
+        }
         let applied = self.library.borrow_mut().apply(
             &snap.changes,
             SessionData {
                 search: snap.search.as_ref(),
                 page: snap.page.as_deref(),
                 home: self.home.as_deref(),
+                explore: self.explore.as_deref(),
             },
         );
         let replaced = applied.unwrap_or_else(|err| {
@@ -1378,6 +1415,8 @@ fn new_view(
         related_data: Arc::from([]),
         lyrics: LyricsView::new(),
         home: None,
+        explore: None,
+        suggestion_rows: Rc::new(VecModel::default()),
         header_art: None,
         pending_add: None,
         art,
@@ -1550,8 +1589,15 @@ fn wire_callbacks(
         if nav == 1 {
             send(Cmd::LoadHome, tx);
         }
+        if nav == 7 {
+            send(Cmd::LoadExplore, tx);
+        }
         navigate(ui, view, &|lib, v| match nav {
             1 => lib.show_home(v.home.as_deref()),
+            7 => {
+                lib.show_explore(v.explore.as_deref());
+                Ok(())
+            }
             2 => lib.show_history(),
             3 => lib.show_downloads(),
             4 => lib.show_saved(ItemKind::Album),
@@ -1644,6 +1690,13 @@ fn wire_callbacks(
         v.library.borrow_mut().set_filter(text.as_str());
         ui.set_selected_track(-1);
         v.tracks.reset();
+        // One request after the typing stops, not one per keystroke.
+        let (query, tx) = (text.to_string(), tx.clone());
+        SUGGEST_TIMER.with(|timer| {
+            timer.start(slint::TimerMode::SingleShot, SUGGEST_DELAY, move || {
+                send(Cmd::Suggest(query.clone()), &tx)
+            });
+        });
     });
     on!(on_toggle_pause, [tx, view, ui], || send(
         Cmd::TogglePause,
@@ -2104,6 +2157,8 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::Search(query, kind) => session.search(&query, kind),
         Cmd::OpenPage(id) => session.open_page(&id),
         Cmd::LoadHome => session.load_home(false),
+        Cmd::LoadExplore => session.load_explore(false),
+        Cmd::Suggest(query) => session.suggest(&query),
         Cmd::QueueRemove(n) => session.remove_from_queue(n),
         Cmd::QueueMove(from, to) => session.move_in_queue(from, to),
         Cmd::ClearQueue => session.clear_queue(),

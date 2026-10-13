@@ -64,8 +64,13 @@ public final class Catalog: Sendable {
 
     /// Album (`MPREb_…`), artist (`UC…`) or playlist (`VL…` / `PL…`) page.
     public func page(_ browseId: String) async throws -> Page {
+        // Explore chips carry their params after a `#` (see `navButton`).
+        let parts = browseId.split(separator: "#", maxSplits: 1)
+        let browseId = String(parts[0])
         let id = ["PL", "OLAK", "RD"].contains { browseId.hasPrefix($0) } ? "VL" + browseId : browseId
-        let data = try await call("browse", ["browseId": id])
+        var body: [String: Any] = ["browseId": id]
+        if parts.count > 1 { body["params"] = String(parts[1]) }
+        let data = try await call("browse", body)
         var page = parsePage(id: id, data)
         // Long playlists come in pages.
         var token = page.kind == .playlist ? continuation(data) : nil
@@ -84,6 +89,19 @@ public final class Catalog: Sendable {
             page.tracks = list.tracks
         }
         return page
+    }
+
+    /// Explore: charts, new releases, moods and genres. Its chips open as
+    /// pages like any other (`page`).
+    public func explore() async throws -> [Shelf] {
+        parseShelves(try await call("browse", ["browseId": "FEmusic_explore"]))
+    }
+
+    /// What YouTube Music suggests while you type (quota-free, ~100 ms).
+    public func suggestions(_ query: String) async throws -> [String] {
+        let query = query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return [] }
+        return parseSuggestions(try await call("music/get_search_suggestions", ["input": query]))
     }
 
     /// Home page shelves (not personalised).

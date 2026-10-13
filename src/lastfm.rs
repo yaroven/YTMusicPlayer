@@ -272,6 +272,7 @@ mod tests {
             title: "t".into(),
             artist: "ABBA - Topic".into(),
             duration_secs: None,
+            explicit: false,
         };
         assert_eq!(artist(&t), "ABBA");
     }

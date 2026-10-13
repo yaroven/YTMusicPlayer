@@ -208,6 +208,7 @@ pub(crate) fn tracks(prefix: &str, n: usize) -> Arc<[Track]> {
             title: format!("{prefix}{i}").into(),
             artist: "a".into(),
             duration_secs: Some(100),
+            explicit: false,
         })
         .collect()
 }
@@ -238,6 +239,7 @@ pub(crate) fn seeded_library() -> Arc<Library> {
         title: title.into(),
         artist: artist.into(),
         duration_secs: Some(secs),
+        explicit: false,
     };
     let liked: Arc<[Track]> = Arc::from([
         song("fJ9rUzIMcZQ", "Bohemian Rhapsody", "Queen", 359),
@@ -282,6 +284,7 @@ pub(crate) fn artist_page(songs: usize) -> crate::catalog::Page {
                 title: format!("Hit number {i}").into(),
                 artist: "Test Artist".into(),
                 duration_secs: Some(200 + i as u32),
+                explicit: false,
             })
             .collect(),
         shelves: vec![Shelf {
@@ -293,6 +296,7 @@ pub(crate) fn artist_page(songs: usize) -> crate::catalog::Page {
                 subtitle: "Album • 2020".into(),
                 thumbnail: None,
                 track: None,
+                explicit: false,
             }],
         }],
         channel_id: Some("UCchannel".into()),

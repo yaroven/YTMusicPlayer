@@ -264,6 +264,7 @@ mod tests {
                 title: (*id).into(),
                 artist: "".into(),
                 duration_secs: None,
+                explicit: false,
             })
             .collect()
     }

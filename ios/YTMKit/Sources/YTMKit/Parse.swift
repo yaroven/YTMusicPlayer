@@ -35,6 +35,22 @@ func thumbnail(_ value: Any?) -> URL? {
     return (pick?["url"] as? String).flatMap(URL.init(string:))
 }
 
+/// YouTube Music's "E" badge anywhere below `value`.
+func explicitBadge(_ value: Any) -> Bool {
+    findAll(value, "iconType").contains { ($0 as? String) == "MUSIC_EXPLICIT_BADGE" }
+}
+
+/// `musicNavigationButtonRenderer`: an Explore chip ("Charts", "Chill"),
+/// which opens a browse page. Mood categories need `params`, kept after a
+/// `#` in the id — browse ids never contain one (`Catalog.page` splits it).
+func navButton(_ r: JSON) -> Item? {
+    let title = text(r["buttonText"])
+    guard let endpoint = pointer(r, "clickCommand/browseEndpoint") as? JSON,
+          let id = endpoint["browseId"] as? String, !title.isEmpty else { return nil }
+    let full = (endpoint["params"] as? String).map { "\(id)#\($0)" } ?? id
+    return Item(kind: .playlist, browseId: full, title: title, subtitle: "")
+}
+
 /// `musicResponsiveListItemRenderer`: a row in search results, shelves and
 /// track lists. `albumArtist` fills in album pages' artist-less rows.
 func listItem(_ r: JSON, albumArtist: String? = nil) -> Item? {
@@ -53,7 +69,8 @@ func listItem(_ r: JSON, albumArtist: String? = nil) -> Item? {
     if let endpoint = r["navigationEndpoint"] as? JSON, endpoint["browseEndpoint"] != nil {
         guard let kind = kindOf(pageType(endpoint)),
               let id = string(endpoint, "browseEndpoint/browseId") else { return nil }
-        return Item(kind: kind, browseId: id, title: title, subtitle: subtitle, thumbnail: art)
+        return Item(kind: kind, browseId: id, title: title, subtitle: subtitle, thumbnail: art,
+                    explicit: explicitBadge(r))
     }
     guard let videoId else { return nil }
     // Artists are the runs linking to artist pages; else the first run.
@@ -65,8 +82,11 @@ func listItem(_ r: JSON, albumArtist: String? = nil) -> Item? {
     let fixed = (r["fixedColumns"] as? [Any])?.first
     let duration = parseDuration(text(pointer(fixed, "musicResponsiveListItemFixedColumnRenderer/text")))
         ?? second.reversed().compactMap { ($0["text"] as? String).flatMap(parseDuration) }.first
-    let track = Track(videoId: videoId, title: title, artist: cleanArtist(artist), durationSecs: duration)
-    return Item(kind: .song, browseId: videoId, title: title, subtitle: subtitle, thumbnail: art, track: track)
+    let explicit = explicitBadge(r)
+    let track = Track(videoId: videoId, title: title, artist: cleanArtist(artist),
+                      durationSecs: duration, explicit: explicit)
+    return Item(kind: .song, browseId: videoId, title: title, subtitle: subtitle, thumbnail: art,
+                track: track, explicit: explicit)
 }
 
 /// `musicTwoRowItemRenderer`: a card (album, playlist, artist, song).
@@ -75,15 +95,18 @@ func card(_ r: JSON) -> Item? {
     let subtitle = text(r["subtitle"])
     guard let endpoint = r["navigationEndpoint"] as? JSON else { return nil }
     let art = thumbnail(r["thumbnailRenderer"])
+    let explicit = explicitBadge(r)
     if let videoId = string(endpoint, "watchEndpoint/videoId") {
         let artist = runs(r["subtitle"]).first { $0["navigationEndpoint"] != nil }?["text"] as? String ?? ""
-        let track = Track(videoId: videoId, title: title, artist: cleanArtist(artist))
-        return Item(kind: .song, browseId: videoId, title: title, subtitle: subtitle, thumbnail: art, track: track)
+        let track = Track(videoId: videoId, title: title, artist: cleanArtist(artist), explicit: explicit)
+        return Item(kind: .song, browseId: videoId, title: title, subtitle: subtitle, thumbnail: art,
+                    track: track, explicit: explicit)
     }
     guard let kind = kindOf(pageType(endpoint)), let id = string(endpoint, "browseEndpoint/browseId") else {
         return nil
     }
-    return Item(kind: kind, browseId: id, title: title, subtitle: subtitle, thumbnail: art)
+    return Item(kind: kind, browseId: id, title: title, subtitle: subtitle, thumbnail: art,
+                explicit: explicit)
 }
 
 func parseSearch(_ data: Any, kind: SearchKind) -> [Item] {
@@ -104,16 +127,28 @@ func songsIn(_ data: Any, albumArtist: String? = nil) -> [Track] {
         .compactMap { ($0 as? JSON).flatMap { listItem($0, albumArtist: albumArtist)?.track } }
 }
 
-/// Carousels of cards (and of song rows) with their titles.
+/// Carousels of cards (and of song rows) with their titles, then the grids
+/// Explore and "moods & genres" use instead.
 func parseShelves(_ data: Any) -> [Shelf] {
-    findAll(data, "musicCarouselShelfRenderer").compactMap { shelf in
+    let carousels = findAll(data, "musicCarouselShelfRenderer").compactMap { shelf -> Shelf? in
         let title = text(pointer(shelf, "header/musicCarouselShelfBasicHeaderRenderer/title"))
-        let contents = (shelf as? JSON)?["contents"] as? [JSON] ?? []
-        let items = contents.compactMap { c in
-            (c["musicTwoRowItemRenderer"] as? JSON).flatMap(card)
-                ?? (c["musicResponsiveListItemRenderer"] as? JSON).flatMap { listItem($0) }
-        }
+        let items = shelfItems((shelf as? JSON)?["contents"] as? [JSON] ?? [])
         return items.isEmpty ? nil : Shelf(title: title, items: items)
+    }
+    let grids = findAll(data, "gridRenderer").compactMap { grid -> Shelf? in
+        let title = text(pointer(grid, "header/gridHeaderRenderer/title"))
+        let items = shelfItems((grid as? JSON)?["items"] as? [JSON] ?? [])
+        return items.isEmpty ? nil : Shelf(title: title, items: items)
+    }
+    return carousels + grids
+}
+
+/// The cards of a carousel or grid, whichever renderer they use.
+func shelfItems(_ contents: [JSON]) -> [Item] {
+    contents.compactMap { c in
+        (c["musicTwoRowItemRenderer"] as? JSON).flatMap(card)
+            ?? (c["musicResponsiveListItemRenderer"] as? JSON).flatMap { listItem($0) }
+            ?? (c["musicNavigationButtonRenderer"] as? JSON).flatMap(navButton)
     }
 }
 
@@ -158,6 +193,13 @@ func parseRadio(_ data: Any) -> [Track] {
 func tabBrowseId(_ next: Any, title: String) -> String? {
     let tab = findAll(next, "tabRenderer").first { ($0 as? JSON)?["title"] as? String == title }
     return string(tab, "endpoint/browseEndpoint/browseId")
+}
+
+/// Plain query strings from `music/get_search_suggestions`.
+func parseSuggestions(_ data: Any) -> [String] {
+    findAll(data, "searchSuggestionRenderer")
+        .map { text(($0 as? JSON)?["suggestion"]) }
+        .filter { !$0.isEmpty }
 }
 
 func parseLyricsText(_ data: Any) -> (text: String, source: String)? {

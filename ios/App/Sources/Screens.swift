@@ -59,6 +59,8 @@ extension Track {
     }
 }
 
+/// Search, with Explore (charts, new releases, moods) when nothing is typed
+/// and YouTube Music's suggestions while typing.
 struct SearchView: View {
     @State private var query = ""
     @State private var kind: SearchKind = .songs
@@ -67,8 +69,45 @@ struct SearchView: View {
     @State private var searching = false
     @State private var error: String?
     @State private var task: Task<Void, Never>?
+    @State private var explore: [Shelf] = []
+    @State private var suggestions: [String] = []
+    @State private var suggestTask: Task<Void, Never>?
+    @Environment(\.isSearching) private var isSearching
 
     var body: some View {
+        Group {
+            if !suggestions.isEmpty, searched != query.trimmingCharacters(in: .whitespaces) {
+                List(suggestions, id: \.self) { suggestion in
+                    Button {
+                        query = suggestion
+                        run()
+                    } label: {
+                        Label(suggestion, systemImage: "magnifyingglass")
+                            .foregroundStyle(.primary)
+                    }
+                }
+                .listStyle(.plain)
+            } else if searched.isEmpty && results.isEmpty {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 28) {
+                        ForEach(explore) { ShelfView(shelf: $0) }
+                    }
+                    .padding(.vertical)
+                }
+                .overlay { if explore.isEmpty { ProgressView() } }
+            } else {
+                resultsList
+            }
+        }
+        .navigationTitle("Search")
+        .searchable(text: $query, prompt: "Songs, albums, artists")
+        .onSubmit(of: .search) { run() }
+        .onChange(of: kind) { run() }
+        .onChange(of: query) { _, text in suggest(text) }
+        .task { if explore.isEmpty { explore = (try? await Services.catalog.explore()) ?? [] } }
+    }
+
+    private var resultsList: some View {
         List {
             Picker("Kind", selection: $kind) {
                 ForEach(SearchKind.allCases) { Text($0.rawValue).tag($0) }
@@ -95,16 +134,31 @@ struct SearchView: View {
                 ContentUnavailableView.search(text: searched)
             }
         }
-        .navigationTitle("Search")
-        .searchable(text: $query, prompt: "Songs, albums, artists")
-        .onSubmit(of: .search) { run() }
-        .onChange(of: kind) { run() }
+    }
+
+    /// One request after the typing stops, not one per keystroke.
+    private func suggest(_ text: String) {
+        suggestTask?.cancel()
+        let text = text.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else {
+            suggestions = []
+            return
+        }
+        suggestTask = Task {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            let found = (try? await Services.catalog.suggestions(text)) ?? []
+            guard !Task.isCancelled else { return }
+            suggestions = Array(found.prefix(8))
+        }
     }
 
     private func run() {
         let text = query.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
         task?.cancel()
+        suggestTask?.cancel()
+        suggestions = []
         searched = text
         searching = true
         let kind = kind

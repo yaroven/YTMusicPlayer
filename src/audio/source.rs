@@ -568,6 +568,7 @@ mod tests {
             title: "t".into(),
             artist: "a".into(),
             duration_secs,
+            explicit: false,
         }
     }
 

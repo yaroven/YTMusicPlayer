@@ -29,6 +29,8 @@ slint::slint! {
         has-art: bool,
         liked: bool,
         downloaded: bool,
+        // YouTube Music's "E" badge: explicit lyrics.
+        explicit: bool,
     }
 
     // An album, artist, playlist or song card.
@@ -42,6 +44,7 @@ slint::slint! {
         // Artists: round art.
         round: bool,
         saved: bool,
+        explicit: bool,
     }
 
     export struct ShelfRow {
@@ -105,6 +108,8 @@ slint::slint! {
             : name == "close" ? "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
             : name == "open" ? "M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"
             : name == "home" ? "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"
+            // Compass: a ring with a kite-shaped needle.
+            : name == "explore" ? "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm3.6 4.4l-5.1 2.1-2.1 5.1 5.1-2.1z"
             : name == "history" ? "M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"
             : name == "download" ? "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"
             : name == "downloaded" ? "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
@@ -151,6 +156,24 @@ slint::slint! {
     }
 
     // Pill button ("Play", "Shuffle"); icon-only when `compact`.
+    // YouTube Music's "E": explicit lyrics (18+).
+    component ExplicitBadge inherits Rectangle {
+        width: 16px;
+        height: 16px;
+        border-radius: 3px;
+        background: #ffffff26;
+        Text {
+            text: "E";
+            color: Yt.secondary;
+            font-size: 11px;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: 100%;
+            height: 100%;
+        }
+    }
+
     component Pill inherits Rectangle {
         in property <string> text;
         in property <string> icon;
@@ -350,7 +373,11 @@ slint::slint! {
                 alignment: center;
                 spacing: 2px;
                 horizontal-stretch: 1;
-                Text { text: root.track.title; overflow: elide; color: root.track.playing ? Yt.red : Yt.text; font-weight: 500; font-size: 15px; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Text { text: root.track.title; overflow: elide; color: root.track.playing ? Yt.red : Yt.text; font-weight: 500; font-size: 15px; horizontal-stretch: 1; }
+                    if root.track.explicit: ExplicitBadge { y: (parent.height - self.height) / 2; }
+                }
                 // Only the name itself is a link, not the rest of the row.
                 HorizontalLayout {
                     alignment: start;
@@ -433,7 +460,11 @@ slint::slint! {
                 alignment: center;
                 spacing: 2px;
                 horizontal-stretch: 1;
-                Text { text: root.card.title; overflow: elide; color: Yt.text; font-weight: 500; font-size: 15px; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Text { text: root.card.title; overflow: elide; color: Yt.text; font-weight: 500; font-size: 15px; horizontal-stretch: 1; }
+                    if root.card.explicit: ExplicitBadge { y: (parent.height - self.height) / 2; }
+                }
                 Text { text: root.card.subtitle; overflow: elide; color: Yt.secondary; }
             }
             if root.card.saved: Icon { name: "check"; color: Yt.secondary; width: 20px; height: 20px; y: (parent.height - self.height) / 2; }
@@ -462,6 +493,11 @@ slint::slint! {
                 opacity: touch.has-hover ? 1 : 0;
                 animate opacity { duration: 160ms; }
             }
+        }
+        if root.card.explicit: ExplicitBadge {
+            x: 6px;
+            y: root.size - self.height - 6px;
+            background: #000000b3;
         }
         Text {
             y: root.size + 6px;
@@ -947,6 +983,8 @@ slint::slint! {
         in property <bool> can-back;
         in property <bool> searching;
         in property <string> search-query;
+        // What YouTube Music suggests for what's being typed.
+        in property <[string]> search-suggestions;
         // 0 songs, 1 albums, 2 artists, 3 playlists (when showing results).
         in property <int> search-kind;
         // Bumped to empty the search field.
@@ -1139,6 +1177,7 @@ slint::slint! {
                                 padding-top: 16px;
                                 spacing: 2px;
                                 NavItem { icon: "home"; text: "Home"; selected: root.nav == 1; clicked => { root.nav-to(1); keys.focus(); } }
+                                NavItem { icon: "explore"; text: "Explore"; selected: root.nav == 7; clicked => { root.nav-to(7); keys.focus(); } }
                                 if root.search-query != "": NavItem {
                                     icon: "search";
                                     text: "Search: " + root.search-query;
@@ -1275,6 +1314,37 @@ slint::slint! {
                                             vertical-alignment: center;
                                         }
                                         Rectangle { width: 8px; }
+                                    }
+                                    // Suggestions, while the box has focus and text.
+                                    if search.has-focus && search.text != "" && root.search-suggestions.length > 0: Rectangle {
+                                        y: parent.height + 4px;
+                                        height: root.search-suggestions.length * 34px + 8px;
+                                        border-radius: Yt.radius;
+                                        background: Yt.raised;
+                                        drop-shadow-blur: 16px;
+                                        drop-shadow-color: #00000099;
+                                        opacity: 0;
+                                        init => { self.opacity = 1; }
+                                        animate opacity { duration: 120ms; }
+                                        VerticalLayout {
+                                            padding: 4px;
+                                            for s in root.search-suggestions: Rectangle {
+                                                height: 34px;
+                                                border-radius: 6px;
+                                                background: hover.has-hover ? Yt.hover : transparent;
+                                                hover := TouchArea {
+                                                    mouse-cursor: pointer;
+                                                    clicked => { root.search-online(s); keys.focus(); }
+                                                }
+                                                HorizontalLayout {
+                                                    padding-left: 10px;
+                                                    padding-right: 10px;
+                                                    spacing: 8px;
+                                                    Icon { name: "search"; color: Yt.secondary; width: 16px; height: 16px; y: (parent.height - self.height) / 2; }
+                                                    Text { text: s; color: Yt.text; overflow: elide; vertical-alignment: center; }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 Rectangle { horizontal-stretch: 0.0001; }
@@ -2079,6 +2149,7 @@ slint::slint! {
                 VerticalLayout {
                     padding: 6px;
                     MenuItem { icon: "home"; text: "Home"; clicked => { root.nav-to(1); playlists-popup.close(); } }
+                    MenuItem { icon: "explore"; text: "Explore"; clicked => { root.nav-to(7); playlists-popup.close(); } }
                     if root.search-query != "": MenuItem { icon: "search"; text: "Search: " + root.search-query; clicked => { root.nav-to(6); playlists-popup.close(); } }
                     MenuItem { icon: "history"; text: "History"; clicked => { root.nav-to(2); playlists-popup.close(); } }
                     MenuItem { icon: "download"; text: "Downloads"; clicked => { root.nav-to(3); playlists-popup.close(); } }

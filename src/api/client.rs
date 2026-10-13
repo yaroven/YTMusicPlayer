@@ -201,6 +201,7 @@ impl YouTubeClient {
                     title: i.snippet.title.into(),
                     artist: clean_artist(&artist),
                     duration_secs: None,
+                    explicit: false,
                 };
                 Some((track, i.id))
             })
@@ -243,6 +244,7 @@ impl YouTubeClient {
                     .content_details
                     .and_then(|c| c.duration)
                     .and_then(|d| parse_iso_duration(&d)),
+                explicit: false,
             })
             .collect();
         Ok(Liked {
@@ -319,6 +321,7 @@ impl YouTubeClient {
                     title: unescape_html(&i.snippet.title).into(),
                     artist: clean_artist(&unescape_html(&i.snippet.channel_title)),
                     duration_secs: None,
+                    explicit: false,
                 })
             })
             .collect();
@@ -492,6 +495,7 @@ impl YouTubeClient {
                     .and_then(|t| t.medium.or(t.default))
                     .map(|t| t.url.into()),
                 track: None,
+                explicit: false,
             })
             .collect())
     }

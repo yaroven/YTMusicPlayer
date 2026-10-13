@@ -148,6 +148,35 @@ let albumRow = #"""
         .appendingPathComponent("../../../clients.json")
     let remote = (try? Data(contentsOf: clients)).flatMap { try? JSONDecoder().decode([ClientProfile].self, from: $0) }
     check(remote == ClientProfile.builtIn, "ios/clients.json decodes to the built-in clients")
+    // The "E" badge and Explore chips.
+    var badged = json(#"{"contents":[\#(songRow)]}"#) as! JSON
+    var rows = badged["contents"] as! [JSON]
+    var row = rows[0]["musicResponsiveListItemRenderer"] as! JSON
+    row["badges"] = [["musicInlineBadgeRenderer": ["icon": ["iconType": "MUSIC_EXPLICIT_BADGE"]]]]
+    rows[0] = ["musicResponsiveListItemRenderer": row]
+    badged["contents"] = rows
+    let marked = parseSearch(badged, kind: .songs)
+    check(marked.first?.explicit == true && marked.first?.track?.explicit == true, "E badge")
+    check(parseSearch(json(#"{"contents":[\#(songRow)]}"#), kind: .songs).first?.explicit == false, "no badge")
+
+    let chips = json(#"""
+    {"contents":{"gridRenderer":{"header":{"gridHeaderRenderer":{"title":{"runs":[{"text":"Browse"}]}}},
+      "items":[
+        {"musicNavigationButtonRenderer":{"buttonText":{"runs":[{"text":"Charts"}]},
+          "clickCommand":{"browseEndpoint":{"browseId":"FEmusic_charts"}}}},
+        {"musicNavigationButtonRenderer":{"buttonText":{"runs":[{"text":"Chill"}]},
+          "clickCommand":{"browseEndpoint":{"browseId":"FEmusic_moods_and_genres_category","params":"ggMPOg1u"}}}}]}}}
+    """#)
+    let exploreShelves = parseShelves(chips)
+    check(exploreShelves.count == 1 && exploreShelves[0].title == "Browse", "explore grid")
+    check(exploreShelves[0].items.map(\.browseId) == ["FEmusic_charts", "FEmusic_moods_and_genres_category#ggMPOg1u"],
+          "chips keep their params")
+
+    check(parseSuggestions(json(#"""
+    {"contents":[{"searchSuggestionRenderer":{"suggestion":{"runs":[{"text":"abba "},{"text":"dancing queen"}]}}},
+                 {"searchSuggestionRenderer":{"suggestion":{"runs":[{"text":""}]}}}]}
+    """#)) == ["abba dancing queen"], "suggestions")
+
     // Signed-in requests.
     let cookies = ["SAPISID": "abc", "__Secure-3PAPISID": "abc", "SID": "s", "YSC": "y"]
     check(Auth.isSignedIn(cookies) && !Auth.isSignedIn(["YSC": "y"]), "signed-in cookies")
@@ -223,6 +252,22 @@ let albumRow = #"""
         .find(Track(videoId: "fJ9rUzIMcZQ", title: "Bohemian Rhapsody", artist: "Queen"), duration: 359)
     print("lyrics: \(lyrics?.lines.count ?? 0) lines from \(lyrics?.source ?? "-"), synced \(lyrics?.synced ?? false)")
     check(lyrics?.synced == true, "live synced lyrics")
+
+    let explore = try await catalog.explore()
+    print("explore: \(explore.count) shelves, first \(explore.first?.title ?? "-")")
+    check(explore.count > 2, "live explore")
+    if let chip = explore.flatMap(\.items).first(where: { $0.browseId.hasPrefix("FEmusic_") }) {
+        let page = try await catalog.page(chip.browseId)
+        print("chip \(chip.title): \(page.shelves.count) shelves")
+        check(!page.shelves.isEmpty, "chip opens as a page")
+    } else {
+        check(false, "an Explore chip")
+    }
+    let suggested = try await catalog.suggestions("abba danc")
+    print("suggestions: \(suggested.prefix(3))")
+    check(suggested.contains { $0.contains("dancing") }, "live suggestions")
+    let explicitSongs = try await catalog.search("eminem", kind: .songs)
+    check(explicitSongs.contains(where: \.explicit), "live E badges")
 
     let resolver = Resolver()
     let start = Date()

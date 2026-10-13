@@ -240,6 +240,7 @@ impl App {
             search: self.session.search.as_ref(),
             page: self.session.page.as_deref(),
             home: self.session.home.as_deref(),
+            explore: self.session.explore.as_deref(),
         };
         match self.library.apply(&changes, data) {
             Ok(true) => {
@@ -587,6 +588,14 @@ impl App {
                 self.session.load_home(false);
                 let home = self.session.home.clone();
                 self.navigate(|lib| lib.show_home(home.as_deref()));
+            }
+            Action::Explore => {
+                self.session.load_explore(false);
+                let explore = self.session.explore.clone();
+                self.navigate(|lib| {
+                    lib.show_explore(explore.as_deref());
+                    Ok(())
+                });
             }
             Action::History => self.navigate(LibraryView::show_history),
             Action::Downloads => self.navigate(LibraryView::show_downloads),
