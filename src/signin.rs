@@ -60,7 +60,7 @@ mod window {
         event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
         window::{Window, WindowId},
     };
-    use wry::{PageLoadEvent, WebContext, WebView, WebViewBuilder};
+    use wry::{PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder};
 
     use crate::youtube_session::{Cookies, is_signed_in};
 
@@ -102,6 +102,7 @@ mod window {
             };
             let proxy = self.proxy.clone();
             let mut builder = WebViewBuilder::new_with_web_context(&mut self.context)
+                .with_bounds(fill(&window))
                 .with_url(START)
                 .with_incognito(true)
                 .with_on_page_load_handler(move |event, url| {
@@ -118,7 +119,10 @@ mod window {
             if let Some(agent) = USER_AGENT {
                 builder = builder.with_user_agent(agent);
             }
-            match builder.build(&window) {
+            // A child of winit's view, not the window's content view:
+            // winit reads its own view on focus changes (a replaced one
+            // crashed when the window lost focus, macOS, 0.9.1).
+            match builder.build_as_child(&window) {
                 Ok(webview) => self.webview = Some(webview),
                 Err(err) => {
                     self.error = Some(err.to_string());
@@ -150,9 +154,24 @@ mod window {
         }
 
         fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-            if let WindowEvent::CloseRequested = event {
-                event_loop.exit();
+            match event {
+                WindowEvent::CloseRequested => event_loop.exit(),
+                WindowEvent::Resized(_) => {
+                    if let (Some(window), Some(webview)) = (&self.window, &self.webview) {
+                        let _ = webview.set_bounds(fill(window));
+                    }
+                }
+                _ => {}
             }
+        }
+    }
+
+    /// The whole inside of the window.
+    fn fill(window: &Window) -> Rect {
+        let size = window.inner_size().to_logical::<f64>(window.scale_factor());
+        Rect {
+            position: winit::dpi::LogicalPosition::new(0.0, 0.0).into(),
+            size: size.into(),
         }
     }
 

@@ -229,6 +229,16 @@ pub async fn install(http: &reqwest::Client, update: &Update) -> Result<Installe
             let binary = tokio::task::spawn_blocking(move || unpack_binary(&archive)).await??;
             replace(&exe, &binary)?;
             if let Some(bundle) = &bundle {
+                // The bundle's version, for Finder and crash reports (it
+                // still said 0.8.0 after updating to 0.9.1).
+                let plist = bundle.join("Contents/Info.plist");
+                let version = update.version.trim_start_matches('v');
+                for key in ["CFBundleShortVersionString", "CFBundleVersion"] {
+                    let _ = std::process::Command::new("plutil")
+                        .args(["-replace", key, "-string", version])
+                        .arg(&plist)
+                        .status();
+                }
                 // A changed binary breaks the app's ad-hoc signature, and
                 // Apple Silicon won't run it unsigned.
                 let _ = std::process::Command::new("codesign")
