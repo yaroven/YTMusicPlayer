@@ -380,6 +380,8 @@ pub enum Media {
     File {
         file: io::BufReader<std::fs::File>,
         len: u64,
+        /// ADTS AAC (from HLS, `audio::hls`) rather than MP4.
+        adts: bool,
     },
 }
 
@@ -392,7 +394,16 @@ impl Media {
         Ok(Self::File {
             file: io::BufReader::with_capacity(16 * 1024, file),
             len,
+            adts: path.extension().is_some_and(|e| e == "aac"),
         })
+    }
+
+    /// The decoder's hint: extension and MIME type.
+    pub fn hint(&self) -> (&'static str, &'static str) {
+        match self {
+            Self::File { adts: true, .. } => ("aac", "audio/aac"),
+            _ => ("m4a", "audio/mp4"),
+        }
     }
 
     pub fn len(&self) -> u64 {

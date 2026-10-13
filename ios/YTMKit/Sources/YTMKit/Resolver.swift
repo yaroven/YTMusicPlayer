@@ -49,17 +49,21 @@ public struct ClientProfile: Codable, Sendable, Hashable {
             userAgent: "com.google.ios.youtube/21.26.4 (iPhone16,2; U; CPU iOS 18_5_0 like Mac OS X;)",
             deviceMake: "Apple", deviceModel: "iPhone16,2", osName: "iPhone", osVersion: "18.5.0.22F76",
             visitor: true, auth: true, hls: true)
-        // Measured 2026-10-12 with a real account: signed in, VISIONOS and
-        // IOS answer HTTP 400; MWEB returns OK with every format ciphered,
-        // and yt-dlp plays its itag 18 (other itags want a PO token).
+        // Measured 2026-10-12/13 with a real account: signed in, VISIONOS
+        // and IOS answer HTTP 400; the web clients answer OK with every
+        // format ciphered, and itag 140 403s past the first MB (PO token).
+        // WEB with yt-dlp's Safari user agent also gets HLS: MPEG-TS with
+        // itag 140's audio inside, playable once "n" is solved. Last MWEB's
+        // itag 18 (muxed 360p, its audio only 22 kHz).
+        let safari = ClientProfile(
+            name: "WEB", version: "2.20260708.00.00", id: "1",
+            userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)",
+            visitor: true, auth: true, hls: true, cipher: true, itags: [])
         let mweb = ClientProfile(
             name: "MWEB", version: "2.20260708.05.00", id: "2",
             userAgent: "Mozilla/5.0 (iPad; CPU OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-            visitor: true, auth: true, cipher: true, itags: [140, 18])
-        let safari = ClientProfile(
-            name: "WEB", version: "2.20260708.00.00", id: "1", userAgent: visionOS.userAgent,
-            visitor: true, auth: true, hls: true, cipher: true, itags: [140, 18])
-        return [mweb, safari]
+            visitor: true, auth: true, cipher: true, itags: [18])
+        return [safari, mweb]
     }()
 
     public static let builtIn = [visionOS] + signedIn
@@ -263,13 +267,53 @@ public actor Resolver {
         }
         var stream = try parsePlayer(json, hls: profile.hls == true, itags: profile.itags ?? [140])
         if stream.hls {
-            // The master lists video too; play only its audio playlist.
-            let (master, _) = try await session.data(from: stream.url)
-            if let audio = audioPlaylist(String(decoding: master, as: UTF8.self), base: stream.url) {
-                stream.url = audio
+            if profile.cipher == true, let player = playerURL {
+                stream.url = try await solveN(stream.url, player: player)
             }
+            // The master lists several variants; take the smallest with
+            // AAC-LC audio (or an audio-only rendition).
+            var request = URLRequest(url: stream.url)
+            request.setValue(profile.userAgent, forHTTPHeaderField: "User-Agent")
+            let (master, _) = try await session.data(for: request)
+            let text = String(decoding: master, as: UTF8.self)
+            if let audio = audioPlaylist(text, base: stream.url) {
+                stream.url = audio
+            } else if let variant = aacVariant(text, base: stream.url) {
+                stream.url = variant
+                stream.hasVideo = true
+            }
+            // The variants carry the master's solved "n" already.
+            try await waitForSegments(stream.url)
         }
         return stream
+    }
+
+    /// googlevideo HLS URLs carry "n" as a path part (`/n/<value>/`).
+    func solveN(_ url: URL, player: URL) async throws -> URL {
+        let text = url.absoluteString
+        guard let range = text.range(of: #"/n/[^/]+/"#, options: .regularExpression) else { return url }
+        let value = String(text[range].dropFirst(3).dropLast())
+        guard let solved = try await solver.solve(player: player, sig: [], n: [value]).n[value] else { return url }
+        return URL(string: text.replacingCharacters(in: range, with: "/n/\(solved)/")) ?? url
+    }
+
+    /// A fresh playlist's segments answer 403 for the first seconds
+    /// (measured 2026-10-13: 403 at once, 200 after 5 s); AVPlayer would
+    /// give up, so wait here until the first one is ready.
+    func waitForSegments(_ playlist: URL) async throws {
+        let (data, _) = try await session.data(from: playlist)
+        guard let first = String(decoding: data, as: UTF8.self).split(separator: "\n")
+            .first(where: { !$0.hasPrefix("#") && !$0.isEmpty })
+            .flatMap({ URL(string: String($0), relativeTo: playlist)?.absoluteURL }) else { return }
+        var wait: UInt64 = 500_000_000
+        for _ in 0..<5 {
+            var request = URLRequest(url: first)
+            request.setValue("bytes=0-1023", forHTTPHeaderField: "Range")
+            let status = ((try? await session.data(for: request))?.1 as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 200 || status == 206 { return }
+            try await Task.sleep(nanoseconds: wait)
+            wait *= 2
+        }
     }
 }
 
@@ -301,6 +345,19 @@ func audioPlaylist(_ master: String, base: URL) -> URL? {
         }
     let pick = uris.first { $0.contains("/itag/140/") } ?? uris.first
     return pick.flatMap { URL(string: $0, relativeTo: base)?.absoluteURL }
+}
+
+/// The smallest HLS variant with AAC-LC audio (`mp4a.40.2`).
+func aacVariant(_ master: String, base: URL) -> URL? {
+    let lines = master.split(separator: "\n").map(String.init)
+    var best: (bandwidth: Int, url: URL)?
+    for (i, line) in lines.enumerated() where line.hasPrefix("#EXT-X-STREAM-INF") && line.contains("mp4a.40.2") {
+        guard i + 1 < lines.count, let url = URL(string: lines[i + 1], relativeTo: base)?.absoluteURL else { continue }
+        let bandwidth = line.range(of: #"BANDWIDTH=\d+"#, options: .regularExpression)
+            .flatMap { Int(line[$0].dropFirst(10)) } ?? .max
+        if best == nil || bandwidth < best!.bandwidth { best = (bandwidth, url) }
+    }
+    return best?.url
 }
 
 /// The AAC (itag 140) stream of a player response; with `hls`, the HLS

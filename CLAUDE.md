@@ -372,6 +372,19 @@ Domain terms are defined in `CONTEXT.md`.
   `/api/get` with the duration first, then the search, 3 attempts on
   5xx / 429 / network errors.
 
+- **Age-restricted audio quality** (2026-10-13, real account): itag 18's
+  audio is 22 kHz (sounds dull); signed-in itag 140 403s past the first
+  MB (PO token, any web client). HLS (web_safari: yt-dlp needs
+  `player_client=default,web_safari`; iPhone: WEB with yt-dlp's Safari UA)
+  gives itag 93+: MPEG-TS segments whose audio IS itag 140. Desktop:
+  format `…/93/18`, `audio::hls` fetches the segments and keeps the ADTS
+  AAC (tiny TS demuxer, no ffmpeg) in `$TMPDIR/ytm-player-hls/<id>.aac`
+  (3 kept), played/seeked as a file: ~2.6 s, 2.9 MB for 3 min. iPhone:
+  solve "n" in the master URL only (variants carry it; solving twice =
+  403), smallest `mp4a.40.2` variant, AVPlayer plays it. A fresh
+  playlist's segments are 403 for ~5 s: both wait/retry. An HLS result
+  from a resolve without JS is useless (n unsolved): retried with JS.
+
 ## Open TODOs
 
 - iPhone: verify signed-in age-restricted playback on a real account,

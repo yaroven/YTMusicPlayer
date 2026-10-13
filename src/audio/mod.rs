@@ -2,6 +2,7 @@
 //! streaming), rodio playback and the play queue.
 
 pub mod extractor;
+pub mod hls;
 pub mod install;
 pub mod js_runtime;
 pub mod player;

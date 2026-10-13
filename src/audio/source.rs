@@ -186,6 +186,24 @@ pub struct TrackSource {
     options: SourceOptions,
 }
 
+/// HLS audio files kept in the temp dir (each ~3 MB).
+const HLS_KEEP: usize = 3;
+
+/// Deletes all but the `keep` newest files in `dir`.
+fn prune_hls(dir: &std::path::Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    files.sort_by_key(|f| std::cmp::Reverse(f.0));
+    for (_, path) in files.into_iter().skip(keep) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 /// How long normalization may delay the start of a track.
 const LOUDNESS_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -242,16 +260,16 @@ impl TrackSource {
             });
         }
         let (opened, gain) = tokio::join!(self.stream(track), self.gain(&track.video_id));
-        let (body, stream) = opened?;
+        let (media, stream) = opened?;
         Ok(Opened {
-            media: Some(Media::Http(body)),
+            media: Some(media),
             duration: stream.duration.or(listed),
             gain,
             stream: Some(stream),
         })
     }
 
-    async fn stream(&self, track: &Track) -> Result<(HttpStream, AudioStream)> {
+    async fn stream(&self, track: &Track) -> Result<(Media, AudioStream)> {
         let video_id = &*track.video_id;
         let stream = self.resolver.resolve(video_id).await?;
         if !stream.is_decodable() {
@@ -261,18 +279,44 @@ impl TrackSource {
                 stream.codec.as_deref().unwrap_or("?")
             );
         }
+        if stream.hls {
+            return Ok((self.hls_audio(&stream).await?, stream));
+        }
         match HttpStream::open(&self.http, &stream, Some(self.refresher(video_id))).await {
-            Ok(body) => Ok((body, stream)),
+            Ok(body) => Ok((Media::Http(body), stream)),
             Err(err) if err.is_forbidden() => {
                 tracing::info!(video_id, %err, "media URL rejected, re-resolving");
                 self.resolver.report_playback_failure(video_id);
                 let stream = self.resolver.resolve(video_id).await?;
                 let body =
                     HttpStream::open(&self.http, &stream, Some(self.refresher(video_id))).await?;
-                Ok((body, stream))
+                Ok((Media::Http(body), stream))
             }
             Err(err) => Err(err.into()),
         }
+    }
+
+    /// An HLS track (age-restricted, signed in): its audio fetched into a
+    /// temp file first (~1 s), then played and seeked like a download. The
+    /// last few stay, for replays and the preloaded next track.
+    async fn hls_audio(&self, stream: &AudioStream) -> Result<Media> {
+        let dir = std::env::temp_dir().join("ytm-player-hls");
+        tokio::fs::create_dir_all(&dir).await?;
+        let path = dir.join(format!("{}.aac", stream.video_id));
+        if !path.is_file() {
+            let started = std::time::Instant::now();
+            let headers: Vec<(String, String)> = stream
+                .http_headers
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            let bytes = super::hls::download_audio(&self.http, &stream.url, &headers, &path)
+                .await
+                .map_err(|err| anyhow::anyhow!("age-restricted song (HLS): {err:#}"))?;
+            tracing::info!(video_id = %stream.video_id, bytes, elapsed = ?started.elapsed(), "HLS audio");
+            prune_hls(&dir, HLS_KEEP);
+        }
+        Ok(Media::file(&path)?)
     }
 
     /// Normalization factor: YouTube's own, which only turns loud tracks
@@ -454,6 +498,7 @@ mod tests {
             http_headers: HashMap::new(),
             // Fresh for hours, like a googlevideo URL: cacheable.
             expires_at: Some(std::time::SystemTime::now() + Duration::from_secs(6 * 3600)),
+            hls: false,
         }
     }
 

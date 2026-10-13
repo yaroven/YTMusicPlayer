@@ -301,12 +301,13 @@ impl Engine {
     fn decode(load: Load) -> Result<(Decoded, Option<Duration>), String> {
         let media = load.media.ok_or("nothing to play (no audio data)")?;
         let len = media.len();
+        let (hint, mime) = media.hint();
         let decoder = Decoder::builder()
             .with_data(media)
             .with_byte_len(len)
             .with_seekable(true)
-            .with_hint("m4a")
-            .with_mime_type("audio/mp4")
+            .with_hint(hint)
+            .with_mime_type(mime)
             .build()
             .map_err(|err| format!("cannot decode audio: {err}"))?;
         // yt-dlp's length first: in a muxed MP4 (itag 18) symphonia's is the

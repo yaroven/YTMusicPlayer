@@ -238,7 +238,13 @@ impl StreamResolver {
         // Signed in, age-restricted songs come only from clients whose URLs
         // need YouTube's JS challenges solved: retry with the JS runtime
         // whatever the policy (without it there is nothing to play).
-        if !use_js && matches!(result, Err(ExtractorError::AgeRestrictedSignedOut { .. })) {
+        // An HLS playlist from a resolve without JS has its "n" unsolved:
+        // every segment would be 403.
+        let unsolved_hls = matches!(&result, Ok(stream) if stream.hls);
+        if !use_js
+            && (unsolved_hls
+                || matches!(result, Err(ExtractorError::AgeRestrictedSignedOut { .. })))
+        {
             tracing::info!(
                 video_id,
                 "age-restricted with a sign-in; retrying with JS runtime"

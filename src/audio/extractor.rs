@@ -44,8 +44,7 @@ const UPDATE_TIMEOUT: Duration = Duration::from_secs(120);
 pub const DEFAULT_FORMAT: &str = "bestaudio[ext=m4a][protocol^=http]/bestaudio[acodec^=mp4a][protocol^=http]/bestaudio[protocol^=http]";
 
 /// yt-dlp output template selecting just the [`RawInfo`] fields as JSON.
-const PRINT_TEMPLATE: &str =
-    "%(.{title,duration,url,format_id,ext,acodec,abr,asr,filesize,filesize_approx,http_headers})j";
+const PRINT_TEMPLATE: &str = "%(.{title,duration,url,format_id,ext,acodec,abr,asr,filesize,filesize_approx,http_headers,protocol})j";
 
 pub type Result<T, E = ExtractorError> = std::result::Result<T, E>;
 
@@ -134,6 +133,10 @@ pub struct AudioStream {
     pub http_headers: HashMap<String, String>,
     /// From the URL's `expire` param; googlevideo URLs live ~6h.
     pub expires_at: Option<SystemTime>,
+    /// `url` is an HLS media playlist (age-restricted songs, signed in:
+    /// see `audio::hls`).
+    #[serde(default)]
+    pub hls: bool,
 }
 
 impl AudioStream {
@@ -289,13 +292,16 @@ impl Cookies {
 }
 
 /// Signed in, YouTube serves age-restricted songs to the web clients only,
-/// and without a PO token there is no audio-only HTTPS format: then the
-/// muxed 360p MP4 (itag 18, AAC inside; the player decodes just the audio).
-/// Measured 2026-10-12: mweb itag 18 URL, every range 206; needs a JS runtime.
-fn signed_in_format(format: &str, cookies: Option<&str>) -> String {
-    match cookies {
-        Some(_) => format!("{format}/18"),
-        None => format.to_owned(),
+/// and without a PO token there is no audio-only HTTPS format (itag 140
+/// 403s past the first MB). Then the HLS variant 93: MPEG-TS segments with
+/// itag 140's audio inside (AAC 128 kbps, 44.1 kHz; `audio::hls` takes the
+/// audio out). Last the muxed MP4 itag 18, whose audio is 22 kHz (dull).
+/// Measured 2026-10-13 with a real account; all need a JS runtime.
+fn signed_in_format(format: &str, cookies: Option<&str>, hls: bool) -> String {
+    match (cookies, hls) {
+        (Some(_), true) => format!("{format}/93/18"),
+        (Some(_), false) => format!("{format}/18"),
+        (None, _) => format.to_owned(),
     }
 }
 
@@ -643,7 +649,7 @@ impl YtDlp {
     ) -> Result<AudioStream> {
         validate_video_id(video_id)?;
         let page_url = format!("https://www.youtube.com/watch?v={video_id}");
-        let format = signed_in_format(&self.format, cookies);
+        let format = signed_in_format(&self.format, cookies, true);
 
         let mut args: Vec<&str> = vec![
             "--ignore-config", // user's config could change output/format
@@ -663,7 +669,14 @@ impl YtDlp {
             args.extend(["--js-runtimes", arg]);
         }
         if let Some(source) = cookies {
-            args.extend([cookie_flag(source), source]);
+            // web_safari is the client with the HLS variants (see
+            // `signed_in_format`); it isn't among yt-dlp's signed-in defaults.
+            args.extend([
+                cookie_flag(source),
+                source,
+                "--extractor-args",
+                "youtube:player_client=default,web_safari",
+            ]);
         }
         args.extend(self.extra_args.iter().map(String::as_str));
         args.push("--"); // nothing after this is parsed as a flag
@@ -694,7 +707,8 @@ impl YtDlp {
         validate_video_id(video_id)?;
         let url = format!("https://www.youtube.com/watch?v={video_id}");
         let dest = dest.to_string_lossy();
-        let format = signed_in_format(&self.format, cookies);
+        // yt-dlp can't take HLS apart without ffmpeg: downloads keep itag 18.
+        let format = signed_in_format(&self.format, cookies, false);
         let mut args: Vec<&str> = vec![
             "--ignore-config",
             "--no-playlist",
@@ -967,6 +981,7 @@ struct RawInfo {
     filesize_approx: Option<f64>,
     #[serde(default)]
     http_headers: HashMap<String, String>,
+    protocol: Option<String>,
 }
 
 fn parse_stream(video_id: &str, json: &str) -> Result<AudioStream> {
@@ -992,6 +1007,7 @@ fn parse_stream(video_id: &str, json: &str) -> Result<AudioStream> {
             .map(Duration::from_secs_f64),
         content_length: info.filesize.or(info.filesize_approx.map(|s| s as u64)),
         http_headers: info.http_headers,
+        hls: info.protocol.is_some_and(|p| p.starts_with("m3u8")),
     })
 }
 
