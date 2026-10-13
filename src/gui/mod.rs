@@ -605,7 +605,7 @@ impl LyricsView {
         } else {
             lyrics
                 .progress(position)
-                .map(|p| (p.line + self.offset, p.words))
+                .map(|p| (p.line + self.offset, p.chars))
         };
         if progress == self.progress {
             return false;
@@ -638,12 +638,12 @@ impl LyricsView {
             if line.instrumental {
                 line.dots = lit as i32;
             } else {
-                let words = row
+                let text = row
                     .checked_sub(self.offset)
                     .and_then(|i| lyrics.lines.get(i))
-                    .map(|l| l.split_words())
+                    .map(|l| l.text.as_str())
                     .unwrap_or_default();
-                line.styled = karaoke_markup(&words, lit);
+                line.styled = karaoke_markup(text, lit);
             }
             self.model.set_row_data(row, line);
         }
@@ -685,9 +685,9 @@ impl LyricsView {
     }
 }
 
-/// The sung line: its sung words bright, the rest dimmed (StyledText
-/// markup; the words are escaped).
-fn karaoke_markup(words: &[&str], sung: usize) -> slint::StyledText {
+/// The sung line: its first `lit` characters bright, the rest dimmed
+/// (StyledText markup; the text is escaped).
+fn karaoke_markup(text: &str, lit: usize) -> slint::StyledText {
     fn escape(text: &str) -> String {
         let mut out = String::with_capacity(text.len() + 8);
         for c in text.chars() {
@@ -698,19 +698,24 @@ fn karaoke_markup(words: &[&str], sung: usize) -> slint::StyledText {
         }
         out
     }
-    let sung = sung.min(words.len());
-    let done = escape(words[..sung].concat().trim_end());
-    let rest = escape(words[sung..].concat().trim_end());
-    let space = if sung > 0 && sung < words.len() {
+    let split = text
+        .char_indices()
+        .nth(lit)
+        .map_or(text.len(), |(at, _)| at);
+    let (done, rest) = text.split_at(split);
+    // Markdown drops spaces at the edges of the spans: keep one between
+    // them as plain text.
+    let space = if done.ends_with(' ') || rest.starts_with(' ') {
         " "
     } else {
         ""
     };
+    let (done, rest) = (escape(done.trim_end()), escape(rest.trim()));
     let markup = format!(
         "**<font color=\"#ffffff\">{done}</font>{space}<font color=\"#ffffff66\">{rest}</font>**"
     );
     slint::StyledText::from_markdown(&markup)
-        .unwrap_or_else(|_| slint::StyledText::from_plain_text(&words.concat()))
+        .unwrap_or_else(|_| slint::StyledText::from_plain_text(text))
 }
 
 /// Settings the window shows and changes.

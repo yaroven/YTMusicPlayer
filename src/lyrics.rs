@@ -12,6 +12,8 @@ use serde::Deserialize;
 use crate::{api::models::Track, catalog::Catalog};
 
 const LRCLIB: &str = "https://lrclib.net/api/search";
+const LRCLIB_GET: &str = "https://lrclib.net/api/get";
+const LRCLIB_ATTEMPTS: u32 = 3;
 /// A lyrics entry this far off the track's length is another recording.
 const DURATION_SLACK: f64 = 4.0;
 
@@ -71,6 +73,9 @@ pub struct Progress {
     pub line: usize,
     /// Words sung so far (instrumental lines: dots lit, 0..=3).
     pub words: usize,
+    /// Characters of the line lit so far: the sung words and a share of
+    /// the word being sung, so it fills letter by letter.
+    pub chars: usize,
 }
 
 /// Estimated singing pace when the lyrics only time lines.
@@ -144,14 +149,39 @@ impl Lyrics {
             return Some(Progress {
                 line,
                 words: lit.min(3),
+                chars: lit.min(3),
             });
         }
-        let words = self
-            .word_times(line)
+        let times = self.word_times(line);
+        let words = current.split_words();
+        let sung = times.iter().filter(|at| **at <= position).count();
+        let mut chars: usize = words[..sung.saturating_sub(1)]
             .iter()
-            .filter(|at| **at <= position)
-            .count();
-        Some(Progress { line, words })
+            .map(|w| w.chars().count())
+            .sum();
+        if let Some(word) = sung.checked_sub(1).and_then(|i| words.get(i)) {
+            // The word being sung fills over its time (to the next word's
+            // start, or as long as its letters take).
+            let i = sung - 1;
+            let letters = word.trim_end().chars().count();
+            let start = times[i];
+            let end = times
+                .get(i + 1)
+                .copied()
+                .unwrap_or(start + PER_CHAR * letters.max(1) as u32 + LINE_EXTRA);
+            let span = end.saturating_sub(start).as_secs_f64().max(0.05);
+            let share = (position.saturating_sub(start).as_secs_f64() / span).min(1.0);
+            chars += if share >= 1.0 {
+                word.chars().count()
+            } else {
+                ((letters as f64 * share).ceil() as usize).max(1)
+            };
+        }
+        Some(Progress {
+            line,
+            words: sung,
+            chars,
+        })
     }
 
     /// Index of the line being sung at `position` (synced lyrics).
@@ -199,23 +229,70 @@ pub async fn find(
     }))
 }
 
+/// One LRCLIB request; `None` when it has nothing (404). It answers 503
+/// now and then: retried a few times, so a busy moment doesn't leave the
+/// song with untimed lyrics.
+async fn lrclib_get<T: serde::de::DeserializeOwned>(
+    http: &reqwest::Client,
+    url: &str,
+    query: &[(&str, &str)],
+) -> Result<Option<T>> {
+    let mut wait = Duration::from_millis(400);
+    for attempt in 1..=LRCLIB_ATTEMPTS {
+        let result = http
+            .get(url)
+            .query(query)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await;
+        match result {
+            Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => return Ok(None),
+            Ok(r) if r.status().is_success() => return Ok(Some(r.json().await?)),
+            Ok(r)
+                if attempt < LRCLIB_ATTEMPTS
+                    && (r.status().is_server_error() || r.status() == 429) => {}
+            Err(err)
+                if attempt < LRCLIB_ATTEMPTS
+                    && (err.is_timeout() || err.is_connect() || err.is_request()) => {}
+            Ok(r) => return Err(r.error_for_status().unwrap_err().into()),
+            Err(err) => return Err(err.into()),
+        }
+        tokio::time::sleep(wait).await;
+        wait *= 2;
+    }
+    Ok(None)
+}
+
 async fn lrclib(
     http: &reqwest::Client,
     track: &Track,
     duration: Option<Duration>,
 ) -> Result<Option<Lyrics>> {
     let (artist, title) = clean_title(&track.artist, &track.title);
-    let entries: Vec<LrclibEntry> = http
-        .get(LRCLIB)
-        .query(&[
-            ("track_name", title.as_str()),
-            ("artist_name", artist.as_str()),
-        ])
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
+    let query = [
+        ("track_name", title.as_str()),
+        ("artist_name", artist.as_str()),
+    ];
+    // The exact match first (LRCLIB caches it), then a search.
+    let mut entries = Vec::new();
+    if let Some(d) = duration {
+        let secs = d.as_secs().to_string();
+        let mut exact = query.to_vec();
+        exact.push(("duration", secs.as_str()));
+        if let Some(entry) = lrclib_get::<LrclibEntry>(http, LRCLIB_GET, &exact).await? {
+            entries.push(entry);
+        }
+    }
+    if !entries
+        .iter()
+        .any(|e| e.synced_lyrics.as_deref().is_some_and(|s| !s.is_empty()))
+    {
+        entries.extend(
+            lrclib_get::<Vec<LrclibEntry>>(http, LRCLIB, &query)
+                .await?
+                .unwrap_or_default(),
+        );
+    }
     let length = duration.map(|d| d.as_secs_f64());
     let fits = |e: &LrclibEntry| match (length, e.duration) {
         (Some(want), Some(have)) => (want - have).abs() <= DURATION_SLACK,
@@ -379,24 +456,18 @@ mod tests {
         assert_eq!(times.len(), 3);
         assert_eq!(times[0], at(10.0));
         assert!(times[2] > times[1] && times[2] < at(12.0), "{times:?}");
-        assert_eq!(
-            lyrics.progress(at(10.1)),
-            Some(Progress { line: 0, words: 1 })
-        );
-        assert_eq!(
-            lyrics.progress(at(15.0)),
-            Some(Progress { line: 0, words: 3 })
-        );
+        let p = lyrics.progress(at(10.1)).unwrap();
+        assert_eq!((p.line, p.words), (0, 1));
+        // "One" fills letter by letter.
+        assert!((1..=3).contains(&p.chars), "{p:?}");
+        let p = lyrics.progress(at(15.0)).unwrap();
+        assert_eq!((p.words, p.chars), (3, 13), "the whole line");
         // The empty line is an instrumental break: dots light up over it.
         assert!(lyrics.lines[1].instrumental());
-        assert_eq!(
-            lyrics.progress(at(20.5)),
-            Some(Progress { line: 1, words: 0 })
-        );
-        assert_eq!(
-            lyrics.progress(at(28.0)),
-            Some(Progress { line: 1, words: 3 })
-        );
+        let p = lyrics.progress(at(20.5)).unwrap();
+        assert_eq!((p.line, p.words), (1, 0));
+        let p = lyrics.progress(at(28.0)).unwrap();
+        assert_eq!((p.line, p.words), (1, 3));
 
         // Enhanced LRC: the lyrics' own word times.
         let enhanced = Lyrics {
@@ -412,10 +483,8 @@ mod tests {
             source: "LRCLIB".into(),
         };
         assert_eq!(exact.word_times(0), [at(5.0), at(7.0)]);
-        assert_eq!(
-            exact.progress(at(6.0)),
-            Some(Progress { line: 0, words: 1 })
-        );
+        let p = exact.progress(at(6.0)).unwrap();
+        assert_eq!((p.words, p.chars), (1, 3), "half of \"Hello\"");
     }
 
     #[test]
@@ -460,5 +529,28 @@ mod live {
         println!("{} lines from {}", lyrics.lines.len(), lyrics.source);
         assert!(lyrics.synced());
         assert!(lyrics.current_line(Duration::from_secs(60)).is_some());
+
+        // Songs a user played whose lyrics came out untimed.
+        for (title, artist, secs) in [
+            ("Still Swingin'", "Papa Roach", 204),
+            ("Movie Blood", "Powerman 5000", 194),
+            (
+                "Aviators - Sweet Dreams (Five Nights At Freddy's 4 Song)",
+                "Aviators",
+                322,
+            ),
+        ] {
+            let track = Track {
+                video_id: "dQw4w9WgXcQ".into(),
+                title: title.into(),
+                artist: artist.into(),
+                duration_secs: Some(secs),
+            };
+            let lyrics = lrclib(&http, &track, Some(Duration::from_secs(secs.into())))
+                .await
+                .unwrap()
+                .expect(title);
+            assert!(lyrics.synced(), "{title}");
+        }
     }
 }

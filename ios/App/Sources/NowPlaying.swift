@@ -276,12 +276,10 @@ private struct SyncedLyrics: View {
             if line.instrumental {
                 Dots(lit: current ? progress?.words ?? 0 : 0, active: current)
             } else if current {
-                // Sung words bright, the rest dim; Text concatenation wraps.
-                let words = line.words
-                let lit = min(progress?.words ?? 0, words.count)
-                (Text(words[..<lit].joined()).foregroundColor(.white)
-                    + Text(words[lit...].joined()).foregroundColor(.white.opacity(0.38)))
-                    .animation(.easeOut(duration: 0.2), value: lit)
+                // Sung letters bright, the rest dim; Text concatenation wraps.
+                let lit = min(progress?.chars ?? 0, line.text.count)
+                (Text(line.text.prefix(lit)).foregroundColor(.white)
+                    + Text(line.text.dropFirst(lit)).foregroundColor(.white.opacity(0.38)))
             } else {
                 Text(line.text)
                     .foregroundColor(.white.opacity(sung ? 0.22 : 0.38))

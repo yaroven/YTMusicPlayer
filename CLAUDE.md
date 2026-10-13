@@ -335,6 +335,10 @@ Domain terms are defined in `CONTEXT.md`.
   The OAuth client stays as optional "Library sync (YouTube Data API)"
   until the library moves to InnerTube.
   Sandbox-HOME runs log "A default keychain could not be found" — fine.
+  The web view must be a **child** of winit's view (`build_as_child` +
+  `set_bounds` on resize): `build` replaced the content view and winit
+  crashed reading its own view when the window lost focus (0.9.1,
+  `window_did_resign_key`, "uninitialized instance variable").
   Measured 2026-10-12 (M1, release, GUI idle 25 s, `footprint`): 46 MB
   before and after (WebKit linked but unused); binary +0.36 MB.
 
@@ -362,6 +366,11 @@ Domain terms are defined in `CONTEXT.md`.
   real renderer, headless). Blurred cover = a 12 px copy stretched with
   smooth scaling (no blur filter in the renderer). iPhone: TimelineView at
   10 Hz while on screen, `Player.exactPosition`.
+  The sung word fills letter by letter (`Progress::chars`), like
+  better-lyrics' wipe. LRCLIB answers 503 at times, and an error fell back
+  to YouTube's untimed text (what the user saw as "no progress"): now
+  `/api/get` with the duration first, then the search, 3 attempts on
+  5xx / 429 / network errors.
 
 ## Open TODOs
 

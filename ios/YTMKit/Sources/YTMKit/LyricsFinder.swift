@@ -20,6 +20,31 @@ public struct LyricsFinder: Sendable {
         return try await catalog.lyrics(track.videoId)
     }
 
+    static let lrclibGet = "https://lrclib.net/api/get"
+
+    /// One LRCLIB request; nil when it has nothing (404). It answers 503 now
+    /// and then: retried, so a busy moment doesn't leave the song untimed.
+    func get(_ base: String, _ query: [URLQueryItem]) async throws -> Data? {
+        var url = URLComponents(string: base)!
+        url.queryItems = query
+        var request = URLRequest(url: url.url!, timeoutInterval: 10)
+        request.setValue("ytm-player (https://github.com/yaroven/YTMusicPlayer)", forHTTPHeaderField: "User-Agent")
+        var wait: UInt64 = 400_000_000
+        for attempt in 1...3 {
+            do {
+                let (data, response) = try await session.data(for: request)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                if status == 404 { return nil }
+                if status == 200 { return data }
+                if attempt == 3 || !(status >= 500 || status == 429) { throw YTMError.http("LRCLIB", status) }
+            } catch let error as URLError where attempt < 3 && [.timedOut, .networkConnectionLost, .cannotConnectToHost].contains(error.code) {
+            }
+            try await Task.sleep(nanoseconds: wait)
+            wait *= 2
+        }
+        return nil
+    }
+
     struct Entry: Decodable {
         var duration: Double?
         var syncedLyrics: String?
@@ -28,15 +53,17 @@ public struct LyricsFinder: Sendable {
 
     func lrclib(_ track: Track, duration: TimeInterval?) async throws -> Lyrics? {
         let (artist, title) = cleanTitle(artist: track.artist, title: track.title)
-        var url = URLComponents(string: Self.lrclib)!
-        url.queryItems = [URLQueryItem(name: "track_name", value: title),
-                          URLQueryItem(name: "artist_name", value: artist)]
-        var request = URLRequest(url: url.url!)
-        request.setValue("ytm-player (https://github.com/yaroven/YTMusicPlayer)", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await session.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else { throw YTMError.http("LRCLIB", status) }
-        let entries = try JSONDecoder().decode([Entry].self, from: data)
+        let query = [URLQueryItem(name: "track_name", value: title),
+                     URLQueryItem(name: "artist_name", value: artist)]
+        // The exact match first (LRCLIB caches it), then a search.
+        var entries: [Entry] = []
+        if let duration, let data = try await get(Self.lrclibGet, query + [URLQueryItem(name: "duration", value: String(Int(duration)))]),
+           let entry = try? JSONDecoder().decode(Entry.self, from: data) {
+            entries.append(entry)
+        }
+        if !entries.contains(where: { !($0.syncedLyrics ?? "").isEmpty }), let data = try await get(Self.lrclib, query) {
+            entries += try JSONDecoder().decode([Entry].self, from: data)
+        }
         let fits = entries.filter { e in
             guard let duration, let have = e.duration else { return true }
             return abs(duration - have) <= Self.durationSlack

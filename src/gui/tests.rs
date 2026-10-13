@@ -302,6 +302,49 @@ fn synced_lyrics_follow_the_song() {
 }
 
 #[test]
+fn playing_lyrics_light_up_word_by_word() {
+    let h = harness();
+    let mut view = session_view();
+    view.now = Some(track("Song"));
+    view.state = PlayState::Playing;
+    view.position = Duration::from_millis(100);
+    let mut snap = snapshot(
+        view,
+        Changes {
+            lyrics: true,
+            ..Changes::default()
+        },
+    );
+    snap.lyrics = Some(Arc::new(Lyrics {
+        lines: vec![
+            Line {
+                at: Some(Duration::ZERO),
+                text: "Caught in a landslide no escape from reality".into(),
+                ..Line::default()
+            },
+            Line {
+                at: Some(Duration::from_secs(8)),
+                text: "Open your eyes".into(),
+                ..Line::default()
+            },
+        ],
+        source: "LRCLIB".into(),
+    }));
+    h.absorb(snap);
+    let words = || h.view.borrow().lyrics.progress.map(|(_, w)| w);
+    let start = words().unwrap();
+    assert!((1..=6).contains(&start), "letters of \"Caught\": {start}");
+    // No new snapshot: the window's own timer moves on with the song.
+    std::thread::sleep(Duration::from_millis(1500));
+    i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(1500));
+    assert!(
+        words().unwrap() >= 12,
+        "letters lit after 1.6 s: {:?}",
+        words()
+    );
+}
+
+#[test]
 fn closing_to_the_tray_frees_the_window_and_keeps_the_state() {
     let mut h = harness();
     let mut snap = snapshot(
