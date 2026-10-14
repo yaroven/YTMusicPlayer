@@ -373,7 +373,24 @@ slint::slint! {
                 alignment: center;
                 spacing: 2px;
                 horizontal-stretch: 1;
-                Text { text: root.track.title; overflow: elide; color: root.track.playing ? Yt.red : Yt.text; font-weight: 500; font-size: 15px; }
+                // The "E" sits right behind the title, as on YouTube Music;
+                // the spacer keeps it there instead of at the column's edge.
+                HorizontalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: root.track.title;
+                        overflow: elide;
+                        color: root.track.playing ? Yt.red : Yt.text;
+                        font-weight: 500;
+                        font-size: 15px;
+                        horizontal-stretch: 0;
+                    }
+                    if root.track.explicit: ExplicitBadge {
+                        y: (parent.height - self.height) / 2;
+                        horizontal-stretch: 0;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
                 // Only the name itself is a link, not the rest of the row.
                 HorizontalLayout {
                     alignment: start;
@@ -409,7 +426,6 @@ slint::slint! {
                 y: (parent.height - self.height) / 2;
                 clicked => { root.like(); }
             }
-            if root.track.explicit: ExplicitBadge { y: (parent.height - self.height) / 2; }
             if root.track.downloaded: Icon {
                 name: "downloaded";
                 color: Yt.secondary;
@@ -457,10 +473,24 @@ slint::slint! {
                 alignment: center;
                 spacing: 2px;
                 horizontal-stretch: 1;
-                Text { text: root.card.title; overflow: elide; color: Yt.text; font-weight: 500; font-size: 15px; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: root.card.title;
+                        overflow: elide;
+                        color: Yt.text;
+                        font-weight: 500;
+                        font-size: 15px;
+                        horizontal-stretch: 0;
+                    }
+                    if root.card.explicit: ExplicitBadge {
+                        y: (parent.height - self.height) / 2;
+                        horizontal-stretch: 0;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
                 Text { text: root.card.subtitle; overflow: elide; color: Yt.secondary; }
             }
-            if root.card.explicit: ExplicitBadge { y: (parent.height - self.height) / 2; }
             if root.card.saved: Icon { name: "check"; color: Yt.secondary; width: 20px; height: 20px; y: (parent.height - self.height) / 2; }
         }
     }
