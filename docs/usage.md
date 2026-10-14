@@ -88,12 +88,12 @@ Volume, shuffle, repeat and the selected playlist are remembered.
 ```bash
 ytm                         # open the player (terminal UI, or the window with ui = "gui")
 ytm gui | ytm tui           # open the window / the terminal UI
-ytm sign-in [--from <browser>]        # sign in to YouTube (window, or a browser's sign-in)
+ytm sign-in [--from <browser>]        # sign in to YouTube: library, age-restricted songs
 ytm sign-out                # forget the YouTube sign-in
 ytm sync                    # refresh the library (unchanged playlists are skipped)
 ytm play <url|id>           # play a single track without the UI
 ytm import-client <json> [--device]   # OAuth client for library sync, from Google's JSON
-ytm login [--device] | ytm logout     # the Data API sign-in that library sync uses
+ytm login [--device] | ytm logout     # the optional Data API sign-in (legacy library sync)
 ytm update                  # install the latest release
 ytm status                  # config, sign-in and library state
 ytm devices                 # audio outputs (for `audio_device`)

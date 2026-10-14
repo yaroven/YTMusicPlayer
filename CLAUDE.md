@@ -109,7 +109,7 @@ main services the CFRunLoop for media keys).
 | `audio::{extractor, js_runtime, install}` | yt-dlp lookup/download (onedir), search; QuickJS fallback |
 | `api::{auth, token_store, client, models}` | OAuth PKCE loopback + device flow, token stores, Data API v3 (list, search, rate, insert), `Track` with `Arc<str>` fields |
 | `storage` | SQLite (schema v3): library (+ playlist item ids), playlist ETags, stream URL cache, history (500), saved albums / followed artists, downloads, `meta` (UI state) |
-| `sync` | API -> storage; skips playlists with unchanged ETag; `SyncReport::summary` |
+| `sync` | YouTube -> storage. `sync_with_session` (InnerTube, the signed-in session: liked music, playlists with their `setVideoId`s, saved albums, followed artists); `sync_library` (legacy Data API, skips playlists with unchanged ETag); `SyncReport::summary` |
 | `instance` | single player instance over a Unix socket in the runtime/temp dir (data dir paths exceed SUN_LEN); 2nd launch raises the window and exits |
 | `sysmem` | own + child (yt-dlp) memory for the status bar: macOS `proc_pid_rusage` phys_footprint, Linux `smaps_rollup` Pss |
 | `media` | souvlaki: media keys + Now Playing (macOS, Linux/MPRIS, Windows SMTC with the GUI's HWND via `set_window_handle`) |
@@ -259,9 +259,9 @@ Domain terms are defined in `CONTEXT.md`.
   license requires a visible "Made with Slint" attribution.
 
 - **YouTube Music catalog via InnerTube, not the Data API** for search /
-  pages / home / radio / lyrics: quota-free and has albums/artists. The
-  Data API stays for the user's library and writes. WEB_REMIX `player`
-  returns UNPLAYABLE, so loudness (`loudnessDb`) comes from the IOS client.
+  pages / home / radio / lyrics: quota-free and has albums/artists.
+  WEB_REMIX `player` returns UNPLAYABLE, so loudness (`loudnessDb`) comes
+  from the IOS client.
 - **Cast and mDNS hand-rolled** instead of `rust_cast` (+protobuf codegen,
   native certs) and `mdns-sd` (daemon thread): ~600 lines, zero new crates
   (rustls/tokio-rustls already came with reqwest).
@@ -411,6 +411,28 @@ Domain terms are defined in `CONTEXT.md`.
   heap with 60 rows. SQLite already runs with a 256 KB page cache, the
   runtime is single-threaded, art decoding is capped at 4 at a time.
 
+- **Library through the sign-in, not the Data API** (user's choice
+  2026-10-14, after a week-old OAuth token showed "Sync failed: sign-in
+  expired"): reads and writes go to the same InnerTube endpoints as the
+  YouTube Music site, signed with the youtube.com session
+  (`sync::sync_with_session`, `Catalog`'s `library_*` / write methods,
+  `session::library::Writer` picks session over Data API). No quota, no
+  OAuth client, nothing expiring after 7 days. Verified live 2026-10-14
+  against the user's account (read-only, `sync::tests::live_session_sync`
+  with `YTM_COOKIES=<data_dir>/youtube-cookies.txt`):
+  `FEmusic_liked_videos` / `VLLM` (liked), `FEmusic_liked_playlists`
+  (skip the "New playlist" card and Liked Music), `FEmusic_liked_albums`,
+  `FEmusic_library_corpus_track_artists` (rows are
+  `MUSIC_PAGE_TYPE_LIBRARY_ARTIST` with browse id `MPLA<channel id>` —
+  strip `MPLA`). Removing a playlist entry needs its `playlistSetVideoId`,
+  stored in the existing `playlist_tracks.item_id` column, so a sync must
+  run before a removal works (same as the Data API path). Writes:
+  `like/like|dislike|removelike`, `playlist/create|delete`,
+  `browse/edit_playlist` (`ACTION_ADD_VIDEO` /`ACTION_REMOVE_VIDEO` /
+  `ACTION_SET_PLAYLIST_NAME`), `subscription/subscribe|unsubscribe`;
+  failures come back as `status != STATUS_SUCCEEDED` with HTTP 200.
+  The Data API path stays for accounts that already set up an OAuth client.
+
 ## Open TODOs
 
 - iPhone: verify signed-in age-restricted playback on a real account,
@@ -421,4 +443,3 @@ Domain terms are defined in `CONTEXT.md`.
   `cast::tests`; try a real device (googlevideo URLs are IP-bound: same
   public IP needed).
 - `souvlaki` pulls `block 0.1.6` (future-incompat warning on macOS).
-- Test `playlistItems.list?playlistId=LM|LL` for exact YT Music likes.

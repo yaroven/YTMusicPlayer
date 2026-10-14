@@ -7,9 +7,10 @@ Windows, iOS.
 - **Browse and play:** home feed, Explore (charts, new releases, moods and
   genres), search with suggestions, album, artist and playlist pages, song
   radio and autoplay, karaoke-style synced lyrics, related music, history.
-- **Your library:** liked music and playlists, synced through the official
-  YouTube Data API with your own Google OAuth client — no third party sees
-  your account. Likes and "save to playlist" go back to YouTube.
+- **Your library:** liked music, playlists, saved albums and followed artists,
+  synced with one **Sign in with Google** — no quota, no setup, nothing
+  expiring after a week. Likes, playlist changes and follows go back to
+  YouTube.
 - **Playback:** gapless or crossfade, loudness normalization like YouTube
   Music, editable queue, sleep timer, offline downloads, Chromecast, media
   keys and the system "Now Playing" widget.
@@ -38,10 +39,8 @@ Windows, iOS.
    [latest release](https://github.com/yaroven/YTMusicPlayer/releases/latest)
    (table below).
 2. **Open ytm-player.** Search and playback work right away. The **Google
-   account** dialog offers **Sign in with Google**, which also lets
-   age-restricted songs play.
-3. **Optional:** to get your liked music and playlists in the sidebar, set up
-   library sync once (~5 minutes, free) —
+   account** dialog offers **Sign in with Google**, which brings in your
+   library and lets age-restricted songs play —
    [docs/google-account.md](docs/google-account.md).
 
 | System | File | Install |
@@ -63,16 +62,17 @@ each ask once — that, the install scripts and building from source are in
 |---|---|
 | [install.md](docs/install.md) | installers, install scripts, building, updates, uninstall |
 | [usage.md](docs/usage.md) | the window, the terminal UI and its keys, `ytm` commands |
-| [google-account.md](docs/google-account.md) | signing in, library sync, API quota |
+| [google-account.md](docs/google-account.md) | signing in, library sync, the optional Data API |
 | [configuration.md](docs/configuration.md) | `config.toml`, Chromecast, Last.fm, Discord, offline |
 | [iphone.md](docs/iphone.md) | the iPhone app: install, sign in, limits |
 | [troubleshooting.md](docs/troubleshooting.md) | age-restricted songs, sound, sign-in, playback |
 
 ## Notes and limits
 
-- "Liked music" comes from YouTube Music's own liked list (`LM`) when the API
-  returns it; otherwise from your liked YouTube videos, filtered to the Music
-  category unless `liked_music_only = false`. The sync message says which.
+- "Liked music" is YouTube Music's own liked list. Without the Google
+  sign-in, the optional Data API path shows your liked YouTube videos instead,
+  filtered to the Music category unless `liked_music_only = false`; the sync
+  message says which.
 - Audio is AAC ~128 kbps. Opus would need a C library on every platform for no
   audible gain, so it isn't used.
 - yt-dlp runs as a short-lived child process, one at a time (~90 MB for a

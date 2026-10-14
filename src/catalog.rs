@@ -13,7 +13,10 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
-use crate::api::models::{Track, clean_artist};
+use crate::api::{
+    client::Rating,
+    models::{Track, clean_artist},
+};
 
 const BASE: &str = "https://music.youtube.com/youtubei/v1";
 const CLIENT_NAME: &str = "WEB_REMIX";
@@ -22,6 +25,9 @@ const CLIENT_VERSION: &str = "1.20260901.01.00";
 /// The player endpoint's loudness data is only given to this client.
 const IOS_CLIENT: &str = "IOS";
 const IOS_VERSION: &str = "20.10.4";
+/// YouTube Music's own "Liked Music" playlist.
+pub const LIKED_MUSIC: &str = "VLLM";
+
 /// Continuation pages fetched for long playlists (~100 tracks each).
 const MAX_PAGES: usize = 10;
 
@@ -228,7 +234,204 @@ impl Catalog {
         Ok(page)
     }
 
-    /// The home page's shelves (not personalised: no sign-in here).
+    /// A playlist's songs with each entry's `setVideoId`, which removing
+    /// that entry again needs. Paged like [`Catalog::page`].
+    pub async fn playlist_entries(&self, playlist_id: &str) -> Result<(Vec<Track>, Vec<String>)> {
+        let data = self
+            .call(
+                "browse",
+                json!({ "browseId": format!("VL{}", bare(playlist_id)) }),
+            )
+            .await?;
+        let mut entries = playlist_entries_in(&data);
+        let mut token = continuation(&data);
+        let mut pages = 1;
+        while let Some(t) = token.take() {
+            if pages >= MAX_PAGES {
+                break;
+            }
+            pages += 1;
+            let more = self.call("browse", json!({ "continuation": t })).await?;
+            let before = entries.len();
+            entries.extend(playlist_entries_in(&more));
+            if entries.len() == before {
+                break;
+            }
+            token = continuation(&more);
+        }
+        Ok(entries.into_iter().unzip())
+    }
+
+    /// The signed-in account's liked songs ("Liked Music"), newest first.
+    /// Without a sign-in this is empty.
+    pub async fn library_liked(&self) -> Result<Vec<Track>> {
+        Ok(self.page(LIKED_MUSIC).await?.tracks)
+    }
+
+    /// The account's playlists (not Liked Music, not the "New playlist"
+    /// button, which has no page of its own).
+    pub async fn library_playlists(&self) -> Result<Vec<Item>> {
+        let data = self
+            .call("browse", json!({ "browseId": "FEmusic_liked_playlists" }))
+            .await?;
+        Ok(own_playlists(&data))
+    }
+
+    /// Albums the account saved to its library.
+    pub async fn library_albums(&self) -> Result<Vec<Item>> {
+        let data = self
+            .call("browse", json!({ "browseId": "FEmusic_liked_albums" }))
+            .await?;
+        Ok(library_cards(&data)
+            .into_iter()
+            .filter(|item| item.kind == ItemKind::Album)
+            .collect())
+    }
+
+    /// Artists the account follows (its "corpus" artists: everyone it has
+    /// songs or albums from, which is what the app's Artists list shows).
+    pub async fn library_artists(&self) -> Result<Vec<Item>> {
+        let data = self
+            .call(
+                "browse",
+                json!({ "browseId": "FEmusic_library_corpus_track_artists" }),
+            )
+            .await?;
+        Ok(find_all(&data, "musicResponsiveListItemRenderer")
+            .into_iter()
+            .filter_map(|r| list_item(r, None))
+            .filter(|item| item.kind == ItemKind::Artist)
+            .map(|mut item| {
+                // Library rows point at "MPLA<channel id>"; the channel id
+                // is what a page and a subscription need.
+                if let Some(channel) = item.id.strip_prefix("MPLA") {
+                    item.id = channel.into();
+                }
+                item
+            })
+            .collect())
+    }
+
+    // --- writes (signed in) ---------------------------------------------------
+    //
+    // The same endpoints the YouTube Music site uses, so the account's
+    // library changes for real — and without the Data API's quota or its
+    // weekly token expiry.
+
+    /// Likes, dislikes or un-rates a song.
+    pub async fn rate(&self, video_id: &str, rating: Rating) -> Result<()> {
+        let endpoint = match rating {
+            Rating::Like => "like/like",
+            Rating::Dislike => "like/dislike",
+            Rating::None => "like/removelike",
+        };
+        self.write(endpoint, json!({ "target": { "videoId": video_id } }))
+            .await?;
+        Ok(())
+    }
+
+    /// Subscribes to a channel (following an artist) or undoes it.
+    pub async fn subscribe(&self, channel_id: &str, on: bool) -> Result<()> {
+        let endpoint = if on {
+            "subscription/subscribe"
+        } else {
+            "subscription/unsubscribe"
+        };
+        self.write(endpoint, json!({ "channelIds": [channel_id] }))
+            .await?;
+        Ok(())
+    }
+
+    /// Creates a private playlist; returns its id (`PL…`).
+    pub async fn create_playlist(&self, title: &str) -> Result<String> {
+        let data = self
+            .write(
+                "playlist/create",
+                json!({ "title": title, "privacyStatus": "PRIVATE" }),
+            )
+            .await?;
+        let id = data
+            .get("playlistId")
+            .or_else(|| find_first(&data, "playlistId"))
+            .and_then(Value::as_str)
+            .context("YouTube Music didn't return the new playlist's id")?;
+        Ok(id.trim_start_matches("VL").to_owned())
+    }
+
+    pub async fn delete_playlist(&self, playlist_id: &str) -> Result<()> {
+        self.write(
+            "playlist/delete",
+            json!({ "playlistId": bare(playlist_id) }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn rename_playlist(&self, playlist_id: &str, title: &str) -> Result<()> {
+        self.edit_playlist(
+            playlist_id,
+            json!({ "action": "ACTION_SET_PLAYLIST_NAME", "playlistName": title }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Adds a song to a playlist; returns its `setVideoId`, which a later
+    /// removal needs.
+    pub async fn add_to_playlist(&self, playlist_id: &str, video_id: &str) -> Result<String> {
+        let data = self
+            .edit_playlist(
+                playlist_id,
+                json!({ "action": "ACTION_ADD_VIDEO", "addedVideoId": video_id }),
+            )
+            .await?;
+        Ok(find_first(&data, "setVideoId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned())
+    }
+
+    /// Removes a song from a playlist. `set_video_id` is the id of that
+    /// entry (one song can sit in a playlist more than once).
+    pub async fn remove_from_playlist(
+        &self,
+        playlist_id: &str,
+        video_id: &str,
+        set_video_id: &str,
+    ) -> Result<()> {
+        self.edit_playlist(
+            playlist_id,
+            json!({
+                "action": "ACTION_REMOVE_VIDEO",
+                "removedVideoId": video_id,
+                "setVideoId": set_video_id,
+            }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn edit_playlist(&self, playlist_id: &str, action: Value) -> Result<Value> {
+        self.write(
+            "browse/edit_playlist",
+            json!({ "playlistId": bare(playlist_id), "actions": [action] }),
+        )
+        .await
+    }
+
+    /// A write needs the sign-in, and YouTube reports failures in the body
+    /// rather than the status code.
+    async fn write(&self, endpoint: &str, body: Value) -> Result<Value> {
+        if self.session.is_none() {
+            bail!("sign in to YouTube first (Sign in with Google)");
+        }
+        let data = self.call(endpoint, body).await?;
+        match data.get("status").and_then(Value::as_str) {
+            None | Some("STATUS_SUCCEEDED") => Ok(data),
+            Some(status) => bail!("YouTube Music {endpoint}: {status}"),
+        }
+    }
+
     /// Explore: charts, new releases, moods and genres. Its chips open as
     /// pages like any other ([`Catalog::page`]).
     pub async fn explore(&self) -> Result<Vec<Shelf>> {
@@ -250,6 +453,7 @@ impl Catalog {
         Ok(parse_suggestions(&data))
     }
 
+    /// The home page's shelves (personalised once signed in).
     pub async fn home(&self) -> Result<Vec<Shelf>> {
         let data = self
             .call("browse", json!({ "browseId": "FEmusic_home" }))
@@ -397,7 +601,10 @@ fn page_type(endpoint: &Value) -> Option<&str> {
 fn kind_of(page_type: &str) -> Option<ItemKind> {
     Some(match page_type {
         "MUSIC_PAGE_TYPE_ALBUM" | "MUSIC_PAGE_TYPE_AUDIOBOOK" => ItemKind::Album,
-        "MUSIC_PAGE_TYPE_ARTIST" | "MUSIC_PAGE_TYPE_USER_CHANNEL" => ItemKind::Artist,
+        // The library's own rows link to "MPLA<channel id>" pages.
+        "MUSIC_PAGE_TYPE_ARTIST"
+        | "MUSIC_PAGE_TYPE_USER_CHANNEL"
+        | "MUSIC_PAGE_TYPE_LIBRARY_ARTIST" => ItemKind::Artist,
         "MUSIC_PAGE_TYPE_PLAYLIST" => ItemKind::Playlist,
         _ => return None,
     })
@@ -595,6 +802,34 @@ fn card(r: &Value) -> Option<Item> {
     })
 }
 
+/// True for YouTube Music's own liked list, however it is spelled.
+/// Playlist ids travel as `PL…` here; browse ids carry a `VL` prefix.
+fn bare(playlist_id: &str) -> &str {
+    playlist_id.trim_start_matches("VL")
+}
+
+fn is_liked_music(id: &str) -> bool {
+    matches!(id, "LM" | "VLLM")
+}
+
+/// Cards in a library grid (its playlists, saved albums).
+/// The account's own playlists: the library's playlist cards without
+/// "Liked Music" (shown as Liked music) and without the "New playlist"
+/// button, which has no page.
+fn own_playlists(data: &Value) -> Vec<Item> {
+    library_cards(data)
+        .into_iter()
+        .filter(|item| item.kind == ItemKind::Playlist && !is_liked_music(&item.id))
+        .collect()
+}
+
+fn library_cards(data: &Value) -> Vec<Item> {
+    find_all(data, "musicTwoRowItemRenderer")
+        .into_iter()
+        .filter_map(card)
+        .collect()
+}
+
 /// Plain query strings from `music/get_search_suggestions`.
 fn parse_suggestions(data: &Value) -> Vec<String> {
     find_all(data, "searchSuggestionRenderer")
@@ -618,6 +853,22 @@ fn parse_search(data: &Value, kind: SearchKind) -> Vec<Item> {
 }
 
 /// Songs in list rows (album tracks, top songs, playlist items).
+/// Playlist rows as `(song, setVideoId)`; the set id is empty when the
+/// list isn't the account's own (search results, other people's playlists).
+fn playlist_entries_in(data: &Value) -> Vec<(Track, String)> {
+    find_all(data, "musicResponsiveListItemRenderer")
+        .into_iter()
+        .filter_map(|r| {
+            let set_id = r
+                .pointer("/playlistItemData/playlistSetVideoId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            Some((list_item(r, None)?.track?, set_id))
+        })
+        .collect()
+}
+
 fn songs_in(data: &Value, album_artist: Option<&str>) -> Vec<Track> {
     find_all(data, "musicResponsiveListItemRenderer")
         .into_iter()
@@ -1023,6 +1274,47 @@ mod tests {
         assert_eq!(parse_duration("1:02:03"), Some(3723));
         assert_eq!(parse_duration("1.7B plays"), None);
         assert_eq!(parse_duration("42"), None);
+    }
+
+    /// The library's playlist rows carry the ids a removal needs, and the
+    /// account's playlist list skips Liked Music and the "New playlist"
+    /// button (which has no page of its own).
+    #[test]
+    fn library_rows_and_cards() {
+        let mut row = song_row();
+        row["musicResponsiveListItemRenderer"]["playlistItemData"]["playlistSetVideoId"] =
+            json!("set-1");
+        let data = json!({ "contents": [ row, song_row() ] });
+        let (tracks, set_ids) = playlist_entries_in(&data)
+            .into_iter()
+            .unzip::<_, _, Vec<_>, Vec<_>>();
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(&*tracks[0].video_id, "YkLLcIKhJ64");
+        assert_eq!(set_ids, ["set-1", ""], "unknown set ids stay empty");
+
+        let card = |title: &str, id: &str, page_type: &str| {
+            json!({ "musicTwoRowItemRenderer": {
+                "title": { "runs": [ { "text": title } ] },
+                "subtitle": { "runs": [ { "text": "Playlist" } ] },
+                "navigationEndpoint": browse(id, page_type)
+            } })
+        };
+        let library = json!({ "contents": [
+            // The "New playlist" button: no browse endpoint at all.
+            json!({ "musicTwoRowItemRenderer": {
+                "title": { "runs": [ { "text": "New playlist" } ] } } }),
+            card("Liked Music", "VLLM", "MUSIC_PAGE_TYPE_PLAYLIST"),
+            card("Road trip", "VLPLroad", "MUSIC_PAGE_TYPE_PLAYLIST"),
+            card("ABBA Gold", "MPREb_gold", "MUSIC_PAGE_TYPE_ALBUM"),
+        ] });
+        let playlists = own_playlists(&library);
+        assert_eq!(playlists.len(), 1, "{playlists:?}");
+        assert_eq!(
+            (&*playlists[0].title, &*playlists[0].id),
+            ("Road trip", "VLPLroad")
+        );
+        assert_eq!(bare("VLPLroad"), "PLroad");
+        assert_eq!(bare("PLroad"), "PLroad");
     }
 
     /// Network: the real endpoints still parse.

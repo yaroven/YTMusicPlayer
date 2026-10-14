@@ -1,7 +1,11 @@
-//! Account sync: YouTube Data API -> local library. Runs on first start (empty
-//! library) and on demand, never on a timer, to keep quota use minimal.
-//! Playlists whose ETag hasn't changed reuse their stored tracks instead of
-//! re-fetching items (1 unit per 50 tracks saved each).
+//! Account sync: YouTube -> local library. Runs on first start (empty
+//! library) and on demand, never on a timer.
+//!
+//! Two paths. [`sync_with_session`] uses the youtube.com sign-in ("Sign in
+//! with Google") and YouTube Music's own InnerTube endpoints: no quota, no
+//! OAuth client, and no weekly expiry. [`sync_library`] is the older Data
+//! API path, kept for accounts that only set up the OAuth client; it skips
+//! playlists whose ETag hasn't changed (1 unit per 50 tracks saved each).
 
 use std::sync::Arc;
 
@@ -12,6 +16,7 @@ use crate::{
         client::{LikedSource, YouTubeClient},
         models::{LIKED_PLAYLIST_ID, Playlist},
     },
+    catalog::{Catalog, ItemKind},
     storage::{Library, SyncedPlaylist},
 };
 
@@ -24,17 +29,25 @@ pub struct SyncReport {
     pub quota_units: u32,
     pub liked: usize,
     pub liked_source: LikedSource,
+    /// Synced through the youtube.com session instead of the Data API.
+    pub via_session: bool,
 }
 
 impl SyncReport {
     /// "Synced 5 playlists, 812 tracks (3 unchanged, 21 API units) · …".
     pub fn summary(&self) -> String {
+        let cost = if self.via_session {
+            "no API quota".to_owned()
+        } else {
+            format!(
+                "{} unchanged, {} API units",
+                self.unchanged, self.quota_units
+            )
+        };
         format!(
-            "Synced {} playlists, {} tracks ({} unchanged, {} API units) · {}",
+            "Synced {} playlists, {} tracks ({cost}) · {}",
             self.playlists,
             self.tracks,
-            self.unchanged,
-            self.quota_units,
             self.liked_note()
         )
     }
@@ -53,6 +66,67 @@ impl SyncReport {
             LikedSource::LikedVideos { .. } => format!("{} liked videos", self.liked),
         }
     }
+}
+
+/// Syncs the library through the signed-in YouTube Music session: liked
+/// music, playlists, saved albums and followed artists, exactly as the web
+/// app sees them. Costs no API quota.
+pub async fn sync_with_session(catalog: &Catalog, library: Arc<Library>) -> Result<SyncReport> {
+    let liked = catalog.library_liked().await?;
+    let liked_count = liked.len();
+    let mut all = vec![SyncedPlaylist {
+        playlist: Playlist {
+            id: LIKED_PLAYLIST_ID.into(),
+            title: "Liked music".into(),
+            item_count: liked_count as u32,
+            etag: None,
+        },
+        tracks: liked.into(),
+        item_ids: Vec::new(),
+    }];
+    for item in catalog.library_playlists().await? {
+        let (tracks, item_ids) = match catalog.playlist_entries(&item.id).await {
+            Ok(entries) => entries,
+            // One unreadable playlist shouldn't fail the whole sync.
+            Err(err) => {
+                tracing::warn!(%err, playlist = %item.id, "syncing playlist");
+                continue;
+            }
+        };
+        all.push(SyncedPlaylist {
+            playlist: Playlist {
+                // Stored without the browse prefix, like the Data API's ids.
+                id: item.id.trim_start_matches("VL").into(),
+                title: item.title.to_string(),
+                item_count: tracks.len() as u32,
+                etag: None,
+            },
+            tracks: tracks.into(),
+            item_ids,
+        });
+    }
+    // Saved albums and followed artists; a failure keeps the old list.
+    for (kind, items) in [
+        (ItemKind::Album, catalog.library_albums().await),
+        (ItemKind::Artist, catalog.library_artists().await),
+    ] {
+        match items {
+            Ok(items) => library.replace_saved_synced(kind, &items)?,
+            Err(err) => tracing::warn!(%err, ?kind, "syncing saved items"),
+        }
+    }
+
+    let report = SyncReport {
+        playlists: all.len(),
+        tracks: all.iter().map(|p| p.tracks.len()).sum(),
+        unchanged: 0,
+        quota_units: 0,
+        liked: liked_count,
+        liked_source: LikedSource::YouTubeMusic,
+        via_session: true,
+    };
+    tokio::task::spawn_blocking(move || library.replace_synced(&all)).await??;
+    Ok(report)
 }
 
 pub async fn sync_library(
@@ -117,7 +191,88 @@ pub async fn sync_library(
         quota_units: client.units_used() - start_units,
         liked: liked_count,
         liked_source,
+        via_session: false,
     };
     tokio::task::spawn_blocking(move || library.replace_synced(&all)).await??;
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report(via_session: bool) -> SyncReport {
+        SyncReport {
+            playlists: 5,
+            tracks: 812,
+            unchanged: 3,
+            quota_units: 21,
+            liked: 120,
+            liked_source: LikedSource::YouTubeMusic,
+            via_session,
+        }
+    }
+
+    #[test]
+    fn summaries_say_what_the_sync_cost() {
+        assert_eq!(
+            report(true).summary(),
+            "Synced 5 playlists, 812 tracks (no API quota) · 120 liked (YouTube Music)"
+        );
+        assert_eq!(
+            report(false).summary(),
+            "Synced 5 playlists, 812 tracks (3 unchanged, 21 API units) · 120 liked (YouTube Music)"
+        );
+    }
+    /// The signed-in library, read-only on the account. Needs the user's own
+    /// sign-in, so it's opt-in:
+    /// `YTM_COOKIES=<data_dir>/youtube-cookies.txt cargo test -- --ignored live_session_sync`
+    #[tokio::test]
+    #[ignore]
+    async fn live_session_sync() {
+        use crate::{
+            catalog::ItemKind,
+            youtube_session::{InMemory, YouTubeSession, parse_cookies_txt},
+        };
+
+        let Ok(path) = std::env::var("YTM_COOKIES") else {
+            return;
+        };
+        let cookies = parse_cookies_txt(&std::fs::read_to_string(path).unwrap());
+        let file = std::env::temp_dir().join(format!("ytm-live-sync-{}.txt", std::process::id()));
+        let session = YouTubeSession::load(InMemory::default(), file.clone());
+        session.sign_in(cookies).unwrap();
+        let catalog = Catalog::new(reqwest::Client::new()).with_session(session);
+        let library = Arc::new(Library::open_in_memory().unwrap());
+
+        let report = sync_with_session(&catalog, library.clone()).await.unwrap();
+        std::fs::remove_file(&file).ok();
+        assert!(
+            report.liked > 0 && report.playlists > 1 && report.quota_units == 0,
+            "{}",
+            report.summary()
+        );
+        assert_eq!(
+            library.tracks(LIKED_PLAYLIST_ID).unwrap().len(),
+            report.liked
+        );
+        assert!(!library.saved(ItemKind::Artist).unwrap().is_empty());
+        // A playlist entry knows its id, so it can be removed again.
+        let playlist = library
+            .playlists()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.id != LIKED_PLAYLIST_ID && p.item_count > 0)
+            .expect("a playlist of the account's own");
+        let track = library.tracks(&playlist.id).unwrap()[0].clone();
+        assert!(
+            library
+                .item_id(&playlist.id, &track.video_id)
+                .unwrap()
+                .is_some(),
+            "{}: {}",
+            playlist.title,
+            track.title
+        );
+    }
 }

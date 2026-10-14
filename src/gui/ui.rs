@@ -1768,10 +1768,10 @@ slint::slint! {
                 spacing: 10px;
                 Text {
                     text: root.yt-signed-in
-                        ? "✓ Signed in to YouTube. Age-restricted songs and your YouTube Music use this account."
+                        ? "✓ Signed in to YouTube. Your library, age-restricted songs and your YouTube Music use this account."
                         : root.yt-window
-                            ? "Sign in to play age-restricted songs and see your YouTube Music. Google's own page opens in a window; the password goes only to Google."
-                            : "Sign in at youtube.com in a browser on this computer, pick that browser and Import its sign-in (age-restricted songs, your YouTube Music).";
+                            ? "Sign in for your library (liked music, playlists), age-restricted songs and your own YouTube Music. Google's own page opens in a window; the password goes only to Google."
+                            : "Sign in at youtube.com in a browser on this computer, pick that browser and Import its sign-in (your library, age-restricted songs, your YouTube Music).";
                     color: Yt.text;
                     wrap: word-wrap;
                 }
@@ -1797,7 +1797,8 @@ slint::slint! {
                 }
             }
             Rectangle { height: 1px; background: Yt.divider; }
-            // Optional: syncing the library through the YouTube Data API.
+            // Legacy: syncing the library through the YouTube Data API, for
+            // accounts that set up an OAuth client before the sign-in existed.
             HorizontalLayout {
                 spacing: 12px;
                 VerticalLayout {
@@ -1805,13 +1806,17 @@ slint::slint! {
                     alignment: center;
                     Text { text: "Library sync (YouTube Data API)"; color: Yt.text; font-weight: 600; }
                     Text {
-                        text: root.signed-in ? "Connected." : "Optional: liked music and playlists through your own Google OAuth client.";
+                        text: root.signed-in
+                            ? "Connected."
+                            : root.yt-signed-in
+                                ? "Not needed: your library syncs through the sign-in above."
+                                : "Optional: liked music and playlists through your own Google OAuth client. The sign-in above does it without one.";
                         color: Yt.secondary;
                         font-size: 12px;
                         wrap: word-wrap;
                     }
                 }
-                if !root.signed-in: Pill {
+                if !root.signed-in && !root.yt-signed-in: Pill {
                     text: root.oauth-expanded ? "Hide" : "Set up";
                     icon: root.oauth-expanded ? "up" : "down";
                     y: (parent.height - self.height) / 2;

@@ -58,8 +58,10 @@ impl Session {
                     Ok(()) => {
                         self.use_youtube_cookies();
                         self.set_info("Signed in to YouTube");
-                        // Home becomes the account's own.
+                        // Home becomes the account's own, and the library
+                        // can now be read through the session.
                         self.load_home(true);
+                        self.start_sync();
                     }
                     Err(err) => self.set_error(format!("YouTube sign-in: {err:#}")),
                 }

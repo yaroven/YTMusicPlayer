@@ -136,3 +136,26 @@ async fn plays_are_recorded_in_history() {
     let history = s.library().history().unwrap();
     assert_eq!(history[0].title.as_ref(), "t1");
 }
+
+/// The youtube.com sign-in alone is enough for likes and playlist edits:
+/// they go through YouTube Music's own endpoints, no OAuth client needed.
+#[tokio::test]
+async fn the_youtube_sign_in_can_edit_the_library() {
+    use crate::youtube_session::{Cookies, InMemory, YouTubeSession};
+
+    let (mut s, _, _) = session(Resolves::Fail).await;
+    assert!(!s.can_edit(), "no account at all");
+    assert!(s.status.as_ref().is_some_and(|st| st.is_error));
+
+    let cookies_file = std::env::temp_dir().join(format!("ytm-edit-test-{}", std::process::id()));
+    let youtube = YouTubeSession::load(InMemory::default(), cookies_file.clone());
+    youtube
+        .sign_in(Cookies::from([
+            ("SAPISID".to_owned(), "secret".to_owned()),
+            ("SID".to_owned(), "secret".to_owned()),
+        ]))
+        .unwrap();
+    s.deps.youtube = youtube;
+    assert!(s.can_edit());
+    std::fs::remove_file(cookies_file).ok();
+}

@@ -304,19 +304,29 @@ impl Library {
         Ok(())
     }
 
-    /// Replaces the followed artists (from YouTube subscriptions), keeping
-    /// ones followed only here.
+    /// Replaces the followed artists (from the account), keeping ones
+    /// followed only here.
     pub fn replace_subscriptions(&self, artists: &[Item]) -> Result<()> {
+        self.replace_saved_synced(ItemKind::Artist, artists)
+    }
+
+    /// Replaces the account's items of one kind (followed artists, saved
+    /// albums), keeping the ones saved only here.
+    pub fn replace_saved_synced(&self, kind: ItemKind, items: &[Item]) -> Result<()> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        tx.execute("DELETE FROM saved WHERE kind = 'artist' AND synced = 1", [])?;
-        for (i, a) in artists.iter().enumerate().rev() {
+        tx.execute(
+            "DELETE FROM saved WHERE kind = ?1 AND synced = 1",
+            [kind_name(kind)],
+        )?;
+        for (i, a) in items.iter().enumerate().rev() {
             tx.execute(
                 "INSERT INTO saved (id, kind, title, subtitle, thumbnail, position, synced)
-                 VALUES (?1, 'artist', ?2, ?3, ?4, ?5, 1)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)
                  ON CONFLICT(id) DO UPDATE SET synced = 1",
                 params![
                     &*a.id,
+                    kind_name(kind),
                     &*a.title,
                     &*a.subtitle,
                     a.thumbnail.as_deref(),

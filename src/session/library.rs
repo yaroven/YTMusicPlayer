@@ -13,9 +13,79 @@ use crate::{
         client::{Rating, YouTubeClient},
         models::{LIKED_PLAYLIST_ID, Playlist, Track},
     },
-    catalog::{Item, ItemKind},
-    sync::sync_library,
+    catalog::{Catalog, Item, ItemKind},
+    sync::{sync_library, sync_with_session},
 };
+
+/// Where a library write goes: the youtube.com session (InnerTube, the
+/// endpoints the YouTube Music site itself uses) when there is one, else the
+/// Data API client.
+enum Writer {
+    Session(Catalog),
+    Api(Arc<YouTubeClient>),
+}
+
+impl Writer {
+    async fn set_rating(&self, video_id: &str, rating: Rating) -> Result<()> {
+        match self {
+            Self::Session(catalog) => catalog.rate(video_id, rating).await,
+            Self::Api(yt) => yt.set_rating(video_id, rating).await,
+        }
+    }
+
+    /// Returns the new entry's id (`setVideoId` / playlist item id).
+    async fn add_to_playlist(&self, playlist_id: &str, video_id: &str) -> Result<String> {
+        match self {
+            Self::Session(catalog) => catalog.add_to_playlist(playlist_id, video_id).await,
+            Self::Api(yt) => yt.add_to_playlist(playlist_id, video_id).await,
+        }
+    }
+
+    async fn remove_from_playlist(
+        &self,
+        playlist_id: &str,
+        video_id: &str,
+        item_id: &str,
+    ) -> Result<()> {
+        match self {
+            Self::Session(catalog) => {
+                catalog
+                    .remove_from_playlist(playlist_id, video_id, item_id)
+                    .await
+            }
+            Self::Api(yt) => yt.remove_from_playlist(item_id).await,
+        }
+    }
+
+    async fn create_playlist(&self, title: &str) -> Result<String> {
+        match self {
+            Self::Session(catalog) => catalog.create_playlist(title).await,
+            Self::Api(yt) => yt.create_playlist(title).await,
+        }
+    }
+
+    async fn rename_playlist(&self, playlist_id: &str, title: &str) -> Result<()> {
+        match self {
+            Self::Session(catalog) => catalog.rename_playlist(playlist_id, title).await,
+            Self::Api(yt) => yt.rename_playlist(playlist_id, title).await,
+        }
+    }
+
+    async fn delete_playlist(&self, playlist_id: &str) -> Result<()> {
+        match self {
+            Self::Session(catalog) => catalog.delete_playlist(playlist_id).await,
+            Self::Api(yt) => yt.delete_playlist(playlist_id).await,
+        }
+    }
+
+    async fn subscribe(&self, channel_id: &str, on: bool) -> Result<()> {
+        match self {
+            Self::Session(catalog) => catalog.subscribe(channel_id, on).await,
+            Self::Api(yt) if on => yt.subscribe(channel_id).await,
+            Self::Api(yt) => yt.unsubscribe(channel_id).await,
+        }
+    }
+}
 
 impl Session {
     pub(super) fn library_event(&mut self, event: Background, changes: &mut Changes) {
@@ -216,19 +286,30 @@ impl Session {
         self.deps.account.youtube()
     }
 
-    /// Runs `work` against the API in the background and reports through
-    /// `done`; shows `busy` meanwhile. Nothing happens when signed out.
+    /// The sign-in library writes go through: the session when there is one,
+    /// else the Data API client. Quiet: callers report being signed out.
+    fn writer(&self) -> Option<Writer> {
+        if self.deps.youtube.signed_in() {
+            return Some(Writer::Session(self.deps.catalog.clone()));
+        }
+        self.deps.account.youtube().map(Writer::Api)
+    }
+
+    /// Runs `work` against the account in the background and reports its
+    /// `Background` event; shows `busy` meanwhile. Nothing happens when
+    /// signed out.
     fn with_youtube<F, Fut>(&mut self, busy: impl Into<String>, work: F)
     where
-        F: FnOnce(Arc<YouTubeClient>) -> Fut,
+        F: FnOnce(Writer) -> Fut,
         Fut: std::future::Future<Output = Background> + Send + 'static,
     {
-        let Some(youtube) = self.youtube() else {
+        let Some(writer) = self.writer() else {
+            self.set_error(NOT_SIGNED_IN);
             return;
         };
         self.set_info(busy);
         let tx = self.tx.clone();
-        let task = work(youtube);
+        let task = work(writer);
         tokio::spawn(async move {
             let _ = tx.send(task.await);
         });
@@ -238,16 +319,25 @@ impl Session {
         if self.syncing {
             return;
         }
+        let (library, tx) = (self.deps.library.clone(), self.tx.clone());
+        // The youtube.com sign-in reads the library for free and never
+        // expires; the Data API is only for accounts that have no session.
+        if self.deps.youtube.signed_in() {
+            let catalog = self.deps.catalog.clone();
+            self.syncing = true;
+            self.set_info("Syncing library…");
+            tokio::spawn(async move {
+                let result = sync_with_session(&catalog, library).await;
+                let _ = tx.send(Background::Synced(result));
+            });
+            return;
+        }
         let Some(youtube) = self.youtube() else {
             return;
         };
         self.syncing = true;
         self.set_info("Syncing library…");
-        let (library, music_only, tx) = (
-            self.deps.library.clone(),
-            self.deps.liked_music_only,
-            self.tx.clone(),
-        );
+        let music_only = self.deps.liked_music_only;
         tokio::spawn(async move {
             let result = sync_library(&youtube, library, music_only).await;
             let _ = tx.send(Background::Synced(result));
@@ -297,7 +387,11 @@ impl Session {
 
     /// Whether like / add-to-playlist are possible (shows why not).
     pub fn can_edit(&mut self) -> bool {
-        self.youtube().is_some()
+        if self.writer().is_none() {
+            self.set_error(NOT_SIGNED_IN);
+            return false;
+        }
+        true
     }
 
     // --- playlists ------------------------------------------------------------------
@@ -331,7 +425,9 @@ impl Session {
         };
         let busy = format!("Removing from {}…", playlist.title);
         self.with_youtube(busy, move |yt| async move {
-            let result = yt.remove_from_playlist(&item_id).await;
+            let result = yt
+                .remove_from_playlist(&playlist.id, &track.video_id, &item_id)
+                .await;
             Background::Removed {
                 playlist,
                 track,
@@ -394,15 +490,14 @@ impl Session {
     /// playlist in the library.
     pub fn toggle_saved(&mut self, item: Item, channel_id: Option<String>) {
         let follow = !self.is_saved(&item.id);
-        let youtube = (item.kind == ItemKind::Artist)
-            .then(|| self.deps.account.youtube())
+        let writer = (item.kind == ItemKind::Artist)
+            .then(|| self.writer())
             .flatten();
         let channel = channel_id.unwrap_or_else(|| item.id.to_string());
         let tx = self.tx.clone();
         tokio::spawn(async move {
-            let result = match youtube {
-                Some(yt) if follow => yt.subscribe(&channel).await,
-                Some(yt) => yt.unsubscribe(&channel).await,
+            let result = match writer {
+                Some(writer) => writer.subscribe(&channel, follow).await,
                 None => Ok(()),
             };
             let _ = tx.send(Background::Followed {

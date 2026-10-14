@@ -9,7 +9,8 @@ more).
 
 YouTube plays such songs to signed-in adults only. **Sign in → Sign in with
 Google** (or `ytm sign-in`) — see [google-account.md](google-account.md). The
-session is kept in the OS credential store and used only for those songs.
+session is kept in the OS credential store and is what the library and those
+songs use.
 
 They also start a few seconds slower than other songs: YouTube hands them over
 in a form the player has to convert before playing.
@@ -31,9 +32,11 @@ the config.
 
 ## Other
 
-- **"Sign-in expired" after a week:** that is the library-sync sign-in, normal
-  for Google apps in *Testing* status — sign in again
-  ([google-account.md](google-account.md)). Playback is unaffected.
+- **"Sign-in expired" after a week:** that is the optional Data API sign-in,
+  which Google expires for apps in *Testing* status. **Sign in → Sign in with
+  Google** instead: the library then comes through the youtube.com session,
+  which doesn't expire ([google-account.md](google-account.md)). Playback is
+  unaffected either way.
 - **No sound on Linux:** install your sound server's ALSA plugin
   (`pipewire-alsa` on PipeWire systems, `libasound2-plugins` /
   `alsa-plugins-pulseaudio` on PulseAudio), or pick an output from

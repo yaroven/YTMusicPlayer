@@ -493,14 +493,12 @@ impl Session {
         if self.deps.check_updates {
             self.check_for_update(false);
         }
-        match (self.signed_in(), library_empty) {
+        // Either sign-in can sync: the session through InnerTube, the OAuth
+        // client through the Data API.
+        let can_sync = self.signed_in() || self.deps.youtube.signed_in();
+        match (can_sync, library_empty) {
             (true, true) => self.start_sync(),
-            // Signed in to YouTube only: nothing to sync yet, not an error.
-            (false, true) => {
-                if !self.deps.youtube.signed_in() {
-                    self.set_error(NOT_SIGNED_IN);
-                }
-            }
+            (false, true) => self.set_error(NOT_SIGNED_IN),
             (false, false) => self.set_info("Offline library (not signed in) — sign in to sync"),
             (true, false) => {}
         }

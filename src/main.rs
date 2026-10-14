@@ -16,10 +16,11 @@ use ytm_player::{
         player::{PlayState, Playback, PlayerEvent, PlayerHandle},
     },
     bootstrap,
+    catalog::Catalog,
     config::{paths::AppPaths, settings::Settings},
     instance::{self, Acquired, Instance},
     storage::Library,
-    sync::sync_library,
+    sync::{sync_library, sync_with_session},
 };
 
 const USAGE: &str = "\
@@ -395,7 +396,16 @@ async fn status(paths: &AppPaths, settings: &Settings) -> Result<()> {
         },
         Err(err) => format!("unknown ({err:#})"),
     };
-    println!("signed in:  {signed_in}");
+    let session = bootstrap::youtube_session(paths).await;
+    println!(
+        "youtube:    {}",
+        if session.signed_in() {
+            "signed in (library, age-restricted songs)"
+        } else {
+            "not signed in"
+        }
+    );
+    println!("data api:   {signed_in} (optional, legacy library sync)");
     let library = Library::open(&paths.database())?;
     let playlists = library.playlists()?;
     let tracks: u32 = playlists.iter().map(|p| p.item_count).sum();
@@ -418,13 +428,21 @@ async fn status(paths: &AppPaths, settings: &Settings) -> Result<()> {
 }
 
 async fn sync(paths: &AppPaths, settings: &Settings) -> Result<()> {
-    let youtube = account(paths, settings)
-        .await?
-        .youtube()
-        .context("not signed in — run `ytm login`")?;
+    let http = bootstrap::http_client()?;
+    let session = bootstrap::youtube_session(paths).await;
     let library = Arc::new(Library::open(&paths.database())?);
     println!("Syncing…");
-    let report = sync_library(&youtube, library, settings.liked_music_only).await?;
+    // The YouTube sign-in reads the library for free; the Data API is the
+    // fallback for accounts that only have the OAuth client.
+    let report = if session.signed_in() {
+        sync_with_session(&Catalog::new(http).with_session(session), library).await?
+    } else {
+        let youtube = bootstrap::account(paths, settings, &http)
+            .await?
+            .youtube()
+            .context("not signed in — run `ytm sign-in`")?;
+        sync_library(&youtube, library, settings.liked_music_only).await?
+    };
     println!("{}", report.summary());
     Ok(())
 }
