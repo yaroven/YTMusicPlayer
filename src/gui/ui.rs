@@ -373,11 +373,7 @@ slint::slint! {
                 alignment: center;
                 spacing: 2px;
                 horizontal-stretch: 1;
-                HorizontalLayout {
-                    spacing: 6px;
-                    Text { text: root.track.title; overflow: elide; color: root.track.playing ? Yt.red : Yt.text; font-weight: 500; font-size: 15px; horizontal-stretch: 1; }
-                    if root.track.explicit: ExplicitBadge { y: (parent.height - self.height) / 2; }
-                }
+                Text { text: root.track.title; overflow: elide; color: root.track.playing ? Yt.red : Yt.text; font-weight: 500; font-size: 15px; }
                 // Only the name itself is a link, not the rest of the row.
                 HorizontalLayout {
                     alignment: start;
@@ -413,6 +409,7 @@ slint::slint! {
                 y: (parent.height - self.height) / 2;
                 clicked => { root.like(); }
             }
+            if root.track.explicit: ExplicitBadge { y: (parent.height - self.height) / 2; }
             if root.track.downloaded: Icon {
                 name: "downloaded";
                 color: Yt.secondary;
@@ -460,13 +457,10 @@ slint::slint! {
                 alignment: center;
                 spacing: 2px;
                 horizontal-stretch: 1;
-                HorizontalLayout {
-                    spacing: 6px;
-                    Text { text: root.card.title; overflow: elide; color: Yt.text; font-weight: 500; font-size: 15px; horizontal-stretch: 1; }
-                    if root.card.explicit: ExplicitBadge { y: (parent.height - self.height) / 2; }
-                }
+                Text { text: root.card.title; overflow: elide; color: Yt.text; font-weight: 500; font-size: 15px; }
                 Text { text: root.card.subtitle; overflow: elide; color: Yt.secondary; }
             }
+            if root.card.explicit: ExplicitBadge { y: (parent.height - self.height) / 2; }
             if root.card.saved: Icon { name: "check"; color: Yt.secondary; width: 20px; height: 20px; y: (parent.height - self.height) / 2; }
         }
     }
@@ -983,6 +977,13 @@ slint::slint! {
         in property <bool> can-back;
         in property <bool> searching;
         in property <string> search-query;
+        // Where the suggestions drop down (the search box, in window
+        // coordinates) and whether it is showing.
+        property <length> suggest-x;
+        property <length> suggest-y;
+        property <length> suggest-w;
+        // in-out so the window tests can see it.
+        in-out property <bool> suggest-open;
         // What YouTube Music suggests for what's being typed.
         in property <[string]> search-suggestions;
         // 0 songs, 1 albums, 2 artists, 3 playlists (when showing results).
@@ -1274,12 +1275,23 @@ slint::slint! {
                             HorizontalLayout {
                                 spacing: 8px;
                                 if root.can-back: IconButton { icon: "back"; active: true; y: (parent.height - self.height) / 2; clicked => { root.go-back(); keys.focus(); } }
-                                Rectangle {
+                                search-box := Rectangle {
                                     height: 40px;
                                     max-width: 520px;
                                     horizontal-stretch: 1;
                                     border-radius: Yt.radius;
                                     background: Yt.raised;
+                                    property <length> below-y: self.absolute-position.y + self.height + 4px;
+                                    changed below-y => {
+                                        root.suggest-x = self.absolute-position.x;
+                                        root.suggest-y = self.below-y;
+                                        root.suggest-w = self.width;
+                                    }
+                                    changed width => {
+                                        root.suggest-x = self.absolute-position.x;
+                                        root.suggest-y = self.below-y;
+                                        root.suggest-w = self.width;
+                                    }
                                     HorizontalLayout {
                                         padding-left: 12px;
                                         spacing: 4px;
@@ -1303,8 +1315,12 @@ slint::slint! {
                                                 color: Yt.text;
                                                 vertical-alignment: center;
                                                 single-line: true;
-                                                edited => { root.filter-changed(self.text); }
-                                                accepted => { root.search-online(self.text); keys.focus(); }
+                                                edited => {
+                                                    root.filter-changed(self.text);
+                                                    root.suggest-open = self.text != "";
+                                                }
+                                                changed has-focus => { root.suggest-open = self.has-focus && self.text != ""; }
+                                                accepted => { root.search-online(self.text); root.suggest-open = false; keys.focus(); }
                                             }
                                         }
                                         if (search.text != "" && !root.tiny) || root.searching: Text {
@@ -1314,37 +1330,6 @@ slint::slint! {
                                             vertical-alignment: center;
                                         }
                                         Rectangle { width: 8px; }
-                                    }
-                                    // Suggestions, while the box has focus and text.
-                                    if search.has-focus && search.text != "" && root.search-suggestions.length > 0: Rectangle {
-                                        y: parent.height + 4px;
-                                        height: root.search-suggestions.length * 34px + 8px;
-                                        border-radius: Yt.radius;
-                                        background: Yt.raised;
-                                        drop-shadow-blur: 16px;
-                                        drop-shadow-color: #00000099;
-                                        opacity: 0;
-                                        init => { self.opacity = 1; }
-                                        animate opacity { duration: 120ms; }
-                                        VerticalLayout {
-                                            padding: 4px;
-                                            for s in root.search-suggestions: Rectangle {
-                                                height: 34px;
-                                                border-radius: 6px;
-                                                background: hover.has-hover ? Yt.hover : transparent;
-                                                hover := TouchArea {
-                                                    mouse-cursor: pointer;
-                                                    clicked => { root.search-online(s); keys.focus(); }
-                                                }
-                                                HorizontalLayout {
-                                                    padding-left: 10px;
-                                                    padding-right: 10px;
-                                                    spacing: 8px;
-                                                    Icon { name: "search"; color: Yt.secondary; width: 16px; height: 16px; y: (parent.height - self.height) / 2; }
-                                                    Text { text: s; color: Yt.text; overflow: elide; vertical-alignment: center; }
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                                 Rectangle { horizontal-stretch: 0.0001; }
@@ -1731,6 +1716,43 @@ slint::slint! {
                                 clicked => { root.expanded = !root.expanded; keys.focus(); }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // --- search suggestions (over everything, under the dialogs) ---
+        // (not over the full-screen view, which hides the search box)
+        if root.suggest-open && !root.expanded && root.search-suggestions.length > 0: Rectangle {
+            x: root.suggest-x;
+            y: root.suggest-y;
+            width: root.suggest-w;
+            height: root.search-suggestions.length * 34px + 8px;
+            border-radius: Yt.radius;
+            // Opaque: Yt.raised is a translucent overlay, the page would
+            // show through the suggestions.
+            background: Yt.bar;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #00000099;
+            opacity: 0;
+            init => { self.opacity = 1; }
+            animate opacity { duration: 120ms; }
+            VerticalLayout {
+                padding: 4px;
+                for s in root.search-suggestions: Rectangle {
+                    height: 34px;
+                    border-radius: 6px;
+                    background: hover.has-hover ? Yt.hover : transparent;
+                    hover := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.suggest-open = false; root.search-online(s); keys.focus(); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 8px;
+                        Icon { name: "search"; color: Yt.secondary; width: 16px; height: 16px; y: (parent.height - self.height) / 2; }
+                        Text { text: s; color: Yt.text; overflow: elide; vertical-alignment: center; }
                     }
                 }
             }

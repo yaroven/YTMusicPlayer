@@ -485,12 +485,12 @@ fn signing_in_closes_the_account_dialog() {
     assert!(!h.ui.get_account_open());
 }
 
-/// Renders the now-playing lyrics into `target/lyrics.png` with the real
-/// software renderer (a look at the karaoke view without a screen). Its own
-/// process: `cargo test -- --ignored --exact gui::tests::lyrics_png`.
+/// Renders the real window into `target/*.png` with the software renderer
+/// the app ships, so a look at the UI needs no screen:
+/// `cargo test -- --ignored --exact gui::tests::screens_png`.
 #[test]
-#[ignore = "writes target/lyrics.png; needs its own process (a different Slint platform)"]
-fn lyrics_png() {
+#[ignore = "writes target/*.png; needs its own process (a different Slint platform)"]
+fn screens_png() {
     use slint::platform::software_renderer::{
         MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType,
     };
@@ -512,7 +512,7 @@ fn lyrics_png() {
         std::time::Instant::now(),
     )))
     .unwrap();
-    let (w, h) = (1100u32, 720u32);
+    let (w, h) = (1280u32, 760u32);
     window.set_size(slint::PhysicalSize::new(w, h));
 
     let library = seeded_library();
@@ -530,8 +530,157 @@ fn lyrics_png() {
     let ui = open_window().unwrap();
     ui.show().unwrap();
 
+    let mut scratch = vec![PremultipliedRgbaColor::default(); (w * h) as usize];
+    let mut settle = |frames: usize| {
+        for _ in 0..frames {
+            slint::platform::update_timers_and_animations();
+            std::thread::sleep(Duration::from_millis(25));
+            window.request_redraw();
+            window.draw_if_needed(|renderer| {
+                renderer.render(&mut scratch, w as usize);
+            });
+        }
+    };
+    let save = |name: &str| {
+        let mut pixels = vec![PremultipliedRgbaColor::default(); (w * h) as usize];
+        window.request_redraw();
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut pixels, w as usize);
+        });
+        let raw: Vec<u8> = pixels
+            .iter()
+            .flat_map(|p| [p.red, p.green, p.blue])
+            .collect();
+        let out =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("target/{name}.png"));
+        image::RgbImage::from_raw(w, h, raw)
+            .unwrap()
+            .save(&out)
+            .unwrap();
+        println!("wrote {}", out.display());
+    };
+
+    // --- 0. The library list it starts on -----------------------------------
+    settle(20);
+    save("library");
+
+    // --- 1. Explore: the shelves the catalog sends back ---------------------
+    ui.invoke_nav_to(7);
+    let mut snap = snapshot(
+        session_view(),
+        Changes {
+            explore: true,
+            ..Changes::default()
+        },
+    );
+    let chip = |title: &str, id: &str| Item {
+        kind: ItemKind::Playlist,
+        id: id.into(),
+        title: title.into(),
+        subtitle: "".into(),
+        thumbnail: None,
+        track: None,
+        explicit: false,
+    };
+    let album = |title: &str, by: &str| Item {
+        kind: ItemKind::Album,
+        id: format!("MPREb_{title}").into(),
+        title: title.into(),
+        subtitle: format!("Album • {by}").into(),
+        thumbnail: None,
+        track: None,
+        explicit: title.starts_with('T'),
+    };
+    snap.explore = Some(Arc::from([
+        Shelf {
+            title: "Browse".into(),
+            items: vec![
+                chip("New releases", "FEmusic_new_releases"),
+                chip("Charts", "FEmusic_charts"),
+                chip("Moods & genres", "FEmusic_moods_and_genres"),
+            ],
+        },
+        Shelf {
+            title: "New albums & singles".into(),
+            items: vec![
+                album("Tidal Glass", "Marina Vel"),
+                album("Quiet Machines", "Orhan Ray"),
+                album("Paper Lanterns", "The Nine Hours"),
+                album("Slow Harbour", "Juno Pike"),
+            ],
+        },
+    ]));
+    view.borrow_mut().absorb(snap, Some(&ui));
+    settle(30);
+    save("explore");
+    assert_eq!(ui.get_tracks_title(), "Explore");
+    assert_eq!(ui.get_shelves().row_count(), 2);
+
+    // --- 2. Search: the "E" badge and the suggestions dropdown --------------
+    let mut snap = snapshot(
+        session_view(),
+        Changes {
+            search: true,
+            suggestions: true,
+            ..Changes::default()
+        },
+    );
+    let song = |title: &str, by: &str, secs: u32, explicit: bool| Track {
+        video_id: title.into(),
+        title: title.into(),
+        artist: by.into(),
+        duration_secs: Some(secs),
+        explicit,
+    };
+    // A songs search fills `tracks` and leaves `items` empty (the cards are
+    // for the album / artist / playlist tabs), as `Session::search` does.
+    snap.search = Some(SearchResults {
+        query: "marina".into(),
+        kind: SearchKind::Songs,
+        tracks: Arc::from([
+            song("Tidal Glass", "Marina Vel", 213, true),
+            song("Quiet Machines", "Orhan Ray", 194, false),
+            song("Paper Lanterns", "The Nine Hours", 246, true),
+        ]),
+        items: Arc::from([]),
+    });
+    snap.suggestions = Some(Arc::from([
+        "marina vel".to_owned(),
+        "marina vel tidal glass".to_owned(),
+        "marina vel live".to_owned(),
+    ]));
+    view.borrow_mut().absorb(snap, Some(&ui));
+    settle(10);
+    assert_eq!(ui.get_list_mode(), 0, "songs are rows, not cards");
+    assert_eq!(ui.get_tracks().row_count(), 3);
+    assert_eq!(
+        ui.get_tracks().row_data(0).unwrap().time,
+        "3:33",
+        "rows keep showing their length next to the badge"
+    );
+    assert!(
+        ui.get_tracks().row_data(0).unwrap().explicit
+            && !ui.get_tracks().row_data(1).unwrap().explicit,
+        "explicit songs are marked"
+    );
+    // "/" focuses the search box; then type, as a user would (which also
+    // filters the shown list).
+    window.dispatch_event(slint::platform::WindowEvent::KeyPressed { text: '/'.into() });
+    for c in "marina".chars() {
+        window.dispatch_event(slint::platform::WindowEvent::KeyPressed { text: c.into() });
+    }
+    settle(20);
+    save("search");
+    assert_eq!(ui.get_search_suggestions().row_count(), 3);
+    assert_eq!(
+        ui.get_tracks().row_count(),
+        1,
+        "typing filtered the list down to the matching song"
+    );
+
+    // --- 3. Now playing: karaoke lyrics -------------------------------------
     let mut session = session_view();
-    session.now = Some(track("Bohemian Rhapsody"));
+    session.now = Some(track("Tidal Glass"));
     session.position = Duration::from_millis(14_600);
     session.state = PlayState::Paused;
     let mut snap = snapshot(
@@ -541,9 +690,10 @@ fn lyrics_png() {
             ..Changes::default()
         },
     );
-    let lrc = "[00:06.00] Is this the real life?\n[00:10.00] Is this just fantasy?\n\
-        [00:14.00] Caught in a landslide, no escape from reality\n[00:22.00]\n\
-        [00:28.00] Open your eyes, look up to the skies and see\n[00:34.00] I'm just a poor boy";
+    // Made-up lines: the renderer doesn't care what they say.
+    let lrc = "[00:06.00] First line of the test song\n[00:10.00] Second line goes here\n\
+        [00:14.00] A longer third line that wraps around the panel nicely\n[00:22.00]\n\
+        [00:28.00] After the break the singing starts again\n[00:34.00] And the last line";
     snap.lyrics = Some(Arc::new(Lyrics {
         lines: crate::lyrics::parse_lrc_for_tests(lrc),
         source: "LRCLIB".into(),
@@ -551,38 +701,11 @@ fn lyrics_png() {
     view.borrow_mut().absorb(snap, Some(&ui));
     ui.set_expanded(true);
     ui.set_now_tab(1);
-    // Let the opening animations finish.
-    let mut scratch = vec![PremultipliedRgbaColor::default(); (w * h) as usize];
-    for _ in 0..60 {
-        slint::platform::update_timers_and_animations();
-        std::thread::sleep(Duration::from_millis(25));
-        window.request_redraw();
-        window.draw_if_needed(|renderer| {
-            renderer.render(&mut scratch, w as usize);
-        });
-    }
-    // What a word change costs: one full repaint.
-    let started = std::time::Instant::now();
-    for _ in 0..20 {
-        window.request_redraw();
-        window.draw_if_needed(|renderer| {
-            renderer.render(&mut scratch, w as usize);
-        });
-    }
-    println!("full repaint: {:?}", started.elapsed() / 20);
-    let mut pixels = vec![PremultipliedRgbaColor::default(); (w * h) as usize];
-    window.request_redraw();
-    window.draw_if_needed(|renderer| {
-        renderer.render(&mut pixels, w as usize);
-    });
-    let raw: Vec<u8> = pixels
-        .iter()
-        .flat_map(|p| [p.red, p.green, p.blue])
-        .collect();
-    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/lyrics.png");
-    image::RgbImage::from_raw(w, h, raw)
-        .unwrap()
-        .save(&out)
-        .unwrap();
-    println!("wrote {}", out.display());
+    settle(40);
+    save("lyrics");
+    assert!(
+        !ui.get_suggest_open() || ui.get_expanded(),
+        "the suggestions don't hang over the full-screen view"
+    );
+    assert_eq!(ui.get_lyrics().row_count(), 7, "6 lines plus the intro");
 }

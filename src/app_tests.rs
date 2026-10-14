@@ -123,6 +123,64 @@ async fn search_results_replace_the_list() {
     insta::assert_snapshot!(screen(&mut app));
 }
 
+/// Key 6 opens Explore and shows the shelves the catalog sent.
+#[tokio::test]
+async fn explore_shows_its_shelves() {
+    use crate::catalog::{Item, ItemKind, Shelf};
+    let mut app = app().await;
+    let chip = |title: &str, id: &str| Item {
+        kind: ItemKind::Playlist,
+        id: id.into(),
+        title: title.into(),
+        subtitle: "".into(),
+        thumbnail: None,
+        track: None,
+        explicit: false,
+    };
+    app.session.explore = Some(Arc::from([Shelf {
+        title: "Browse".into(),
+        items: vec![
+            chip("New releases", "FEmusic_new_releases"),
+            chip("Charts", "FEmusic_charts"),
+        ],
+    }]));
+    char(&mut app, '6');
+    let s = screen(&mut app);
+    assert!(
+        s.contains("Explore") && s.contains("Charts") && s.contains("New releases"),
+        "{s}"
+    );
+}
+
+/// Explicit songs are marked with an "E" after the title.
+#[tokio::test]
+async fn explicit_songs_are_marked() {
+    let mut app = app().await;
+    let mut page = artist_page(2);
+    page.tracks[0].explicit = true;
+    app.session.search = Some(SearchResults {
+        query: "hits".into(),
+        kind: crate::catalog::SearchKind::Songs,
+        tracks: page.tracks.clone().into(),
+        items: Arc::from([]),
+    });
+    app.apply(Changes {
+        search: true,
+        ..Changes::default()
+    });
+    let s = screen(&mut app);
+    let marked = s
+        .lines()
+        .find(|l| l.contains(&*page.tracks[0].title))
+        .unwrap_or_default();
+    assert!(marked.contains(" E"), "explicit: {marked:?}");
+    let plain = s
+        .lines()
+        .find(|l| l.contains(&*page.tracks[1].title))
+        .unwrap_or_default();
+    assert!(!plain.contains(" E"), "clean: {plain:?}");
+}
+
 #[tokio::test]
 async fn sleep_timer_cycles() {
     let mut app = app().await;
