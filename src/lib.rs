@@ -29,4 +29,5 @@ pub mod sysmem;
 pub(crate) mod testing;
 pub mod ui;
 pub mod update;
+pub mod video;
 pub mod youtube_session;

@@ -184,3 +184,13 @@ async fn downloads_stop_and_can_be_deleted() {
     let status = s.status.as_ref().unwrap();
     assert!(status.text.starts_with("Deleted 0"), "{}", status.text);
 }
+
+/// Watching the clip of nothing says so instead of opening a window.
+#[tokio::test]
+async fn watching_needs_a_playing_song() {
+    let (mut s, _, _) = session(Resolves::Fail).await;
+    s.watch_video();
+    assert!(!s.watching);
+    let status = s.status.as_ref().unwrap();
+    assert!(status.is_error && status.text.contains("Nothing is playing"));
+}

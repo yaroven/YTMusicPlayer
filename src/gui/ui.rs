@@ -115,6 +115,7 @@ slint::slint! {
             : name == "downloaded" ? "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
             : name == "album" ? "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 14.5c-2.49 0-4.5-2.01-4.5-4.5S9.51 7.5 12 7.5s4.5 2.01 4.5 4.5-2.01 4.5-4.5 4.5zm0-5.5c-.55 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1z"
             : name == "artist" ? "M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"
+            : name == "video" ? "M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM9.5 16.5l7-4.5-7-4.5v9z"
             : name == "more" ? "M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"
             : name == "back" ? "M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"
             : name == "radio" ? "M3.24 6.15C2.51 6.43 2 7.17 2 8v12c0 1.1.89 2 2 2h16c1.11 0 2-.9 2-2V8c0-1.11-.89-2-2-2H8.3l8.26-3.34L15.88 1 3.24 6.15zM7 20c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm13-8h-2v-2h-2v2H4V8h16v4z"
@@ -682,6 +683,28 @@ slint::slint! {
         }
     }
 
+    // Where the clip plays: the web view is a child of the window, put
+    // exactly over this rectangle, so Slint keeps the layout and the system
+    // draws the video into it.
+    component VideoArea inherits Rectangle {
+        callback rect(length, length, length, length);
+        property <Point> spot: self.absolute-position;
+        background: #000000;
+        border-radius: 8px;
+        changed spot => { root.rect(self.spot.x, self.spot.y, self.width, self.height); }
+        changed width => { root.rect(self.spot.x, self.spot.y, self.width, self.height); }
+        changed height => { root.rect(self.spot.x, self.spot.y, self.width, self.height); }
+        init => { root.rect(self.spot.x, self.spot.y, self.width, self.height); }
+        Text {
+            text: "Loading the video…";
+            color: Yt.secondary;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: parent.width;
+            height: parent.height;
+        }
+    }
+
     // "Up next" / "Lyrics" / "Related" panel of the now-playing view.
     component QueuePanel inherits VerticalLayout {
         in property <[TrackRow]> rows;
@@ -1092,6 +1115,14 @@ slint::slint! {
         in property <bool> syncing;
         // Songs still being downloaded (0: none).
         in property <int> downloading;
+        // The clip is open in the video window.
+        in property <bool> watching;
+        // Showing the video instead of the cover.
+        in-out property <bool> video-on;
+        // Where the video goes (window coordinates).
+        callback video-rect(length, length, length, length);
+        // The video was switched off (closing the full-screen view).
+        callback video-off();
         in property <string> memory-text;
         in-out property <bool> account-open;
         in-out property <bool> oauth-expanded;
@@ -1175,6 +1206,7 @@ slint::slint! {
         callback go-back();
         callback toggle-saved();
         callback download-all();
+        callback watch-video();
         callback stop-downloads();
         callback remove-all-downloads();
         callback new-playlist(string);
@@ -1207,7 +1239,15 @@ slint::slint! {
 
         // Lyrics / Related are fetched only while their tab is on screen.
         changed now-tab => { root.now-tab-changed(root.expanded ? root.now-tab : 0); }
-        changed expanded => { root.now-tab-changed(root.expanded ? root.now-tab : 0); }
+        changed expanded => {
+            root.now-tab-changed(root.expanded ? root.now-tab : 0);
+            // Leaving the full-screen view stops the video and hands the
+            // song back to the audio player.
+            if (!root.expanded && root.video-on) {
+                root.video-on = false;
+                root.video-off();
+            }
+        }
 
         forward-focus: keys;
         keys := FocusScope {
@@ -1218,6 +1258,7 @@ slint::slint! {
                 if (event.text == Key.Escape && root.can-back) { root.go-back(); return accept; }
                 if (event.text == Key.Backspace && root.can-back) { root.go-back(); return accept; }
                 if (event.text == " ") { root.toggle-pause(); return accept; }
+                if (event.text == "V" || event.text == "v") { root.watch-video(); return accept; }
                 if (event.text == "n") { root.next(); return accept; }
                 if (event.text == "p") { root.prev(); return accept; }
                 if (event.text == "f") { root.toggle-like(); return accept; }
@@ -1609,7 +1650,7 @@ slint::slint! {
                             padding: 40px;
                             padding-bottom: 24px;
                             spacing: 48px;
-                            BigCover {
+                            if !root.video-on: BigCover {
                                 horizontal-stretch: 3;
                                 art: root.now-art;
                                 has-art: root.now-has-art;
@@ -1617,6 +1658,10 @@ slint::slint! {
                                 hue: root.now-hue;
                                 playing: root.playing;
                                 clicked => { root.toggle-pause(); keys.focus(); }
+                            }
+                            if root.video-on: VideoArea {
+                                horizontal-stretch: 3;
+                                rect(x, y, w, h) => { root.video-rect(x, y, w, h); }
                             }
                             QueuePanel {
                                 horizontal-stretch: 2;
@@ -1642,7 +1687,7 @@ slint::slint! {
                         if !root.wide-now: VerticalLayout {
                             padding: 16px;
                             spacing: 16px;
-                            BigCover {
+                            if !root.video-on: BigCover {
                                 height: min(root.win-width - 32px, root.win-height * 0.36);
                                 art: root.now-art;
                                 has-art: root.now-has-art;
@@ -1650,6 +1695,10 @@ slint::slint! {
                                 hue: root.now-hue;
                                 playing: root.playing;
                                 clicked => { root.toggle-pause(); keys.focus(); }
+                            }
+                            if root.video-on: VideoArea {
+                                height: min(root.win-width - 32px, root.win-height * 0.36);
+                                rect(x, y, w, h) => { root.video-rect(x, y, w, h); }
                             }
                             QueuePanel {
                                 vertical-stretch: 1;
@@ -1777,6 +1826,12 @@ slint::slint! {
                                 clicked => { root.cycle-repeat(); keys.focus(); }
                             }
                             if !root.tiny: IconButton { icon: "shuffle"; active: root.shuffle; y: (parent.height - self.height) / 2; clicked => { root.toggle-shuffle(); keys.focus(); } }
+                            if root.now-title != "" && !root.tiny: IconButton {
+                                icon: "video";
+                                active: root.video-on || root.watching;
+                                y: (parent.height - self.height) / 2;
+                                clicked => { root.watch-video(); keys.focus(); }
+                            }
                             if !root.tiny: IconButton {
                                 icon: "cast";
                                 active: root.casting != "";

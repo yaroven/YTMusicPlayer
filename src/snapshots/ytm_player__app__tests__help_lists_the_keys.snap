@@ -25,7 +25,7 @@ expression: s
 │            │D                      download for offline (again: delete it)          │            │
 │            │S                      save album / follow artist                       │            │
 │            │m                      menu (playlists, downloads)                      │            │
-│            │t                      lyrics                                           │            │
+│            │t  V                   lyrics · watch the video                         │            │
 │            │z / C                  sleep timer / play on a Chromecast               │            │
 └────────────│r / L                  sync library / sign in                           │────────────┘
 ┌ ■ nothing p│?   q                  this help · quit                                 │at vol  50% ┐

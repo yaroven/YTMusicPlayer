@@ -15,6 +15,8 @@ mod art;
 mod macos;
 mod tray;
 mod ui;
+#[cfg(any(target_os = "macos", windows))]
+mod video;
 
 use std::{
     cell::RefCell,
@@ -89,6 +91,12 @@ enum Cmd {
     ToggleSaved(Item, Option<String>),
     Download(Vec<Track>),
     RemoveDownload(Arc<str>),
+    /// Switch the window to the video: the audio pauses.
+    VideoOn,
+    /// Back to audio, at the second the video stopped (when it reported one).
+    VideoOff(Option<Duration>),
+    /// No web view here (Linux): open the clip in the browser.
+    WatchVideo,
     StopDownloads,
     RemoveAllDownloads,
     Sync,
@@ -780,6 +788,11 @@ struct View {
     explore: Option<Arc<[Shelf]>>,
     /// What YouTube Music suggests for the query being typed.
     suggestion_rows: Rc<VecModel<SharedString>>,
+    /// The clip playing over the cover, when the video is on.
+    #[cfg(any(target_os = "macos", windows))]
+    video: Option<video::VideoView>,
+    /// Where the video goes (window coordinates, logical pixels).
+    video_rect: (f32, f32, f32, f32),
     /// Art URL of the page header.
     header_art: Option<Arc<str>>,
     /// Track for "New playlist…" from the save-to menu.
@@ -1036,6 +1049,12 @@ impl View {
     /// The window closed: drop what only it needed (art, cards).
     fn detach(&mut self) {
         self.lyrics.ticker.stop();
+        // The web view belongs to the window that is going away.
+        #[cfg(any(target_os = "macos", windows))]
+        if let Some(video) = self.video.take() {
+            let at = video.position();
+            let _ = self.tx.send(Cmd::VideoOff(at));
+        }
         {
             let mut art = self.art.borrow_mut();
             art.thumbs.clear();
@@ -1076,6 +1095,7 @@ impl View {
         ui.set_syncing(view.syncing);
         ui.set_searching(view.searching);
         ui.set_downloading(view.downloading as i32);
+        ui.set_watching(view.watching);
         ui.set_signed_in(view.signed_in);
         ui.set_signing_in(view.signing_in);
         ui.set_yt_signed_in(view.youtube_signed_in);
@@ -1420,6 +1440,9 @@ fn new_view(
         home: None,
         explore: None,
         suggestion_rows: Rc::new(VecModel::default()),
+        #[cfg(any(target_os = "macos", windows))]
+        video: None,
+        video_rect: (0.0, 0.0, 0.0, 0.0),
         header_art: None,
         pending_add: None,
         art,
@@ -1853,6 +1876,65 @@ fn wire_callbacks(
             send(Cmd::ToggleSaved(item, channel), tx);
         }
     });
+    // The clip plays in the window on macOS / Windows; elsewhere the
+    // browser gets it (`Session::watch_video`).
+    on!(on_watch_video, [tx, view, ui], || {
+        #[cfg(any(target_os = "macos", windows))]
+        {
+            let mut v = view.borrow_mut();
+            if let Some(video) = v.video.take() {
+                ui.set_video_on(false);
+                send(Cmd::VideoOff(video.position()), tx);
+                return;
+            }
+            if v.last.as_ref().and_then(|s| s.now.as_ref()).is_none() {
+                return;
+            }
+            drop(v);
+            // The video needs the big area: open it, and the rectangle's
+            // own callback starts the clip once it has a place on screen.
+            ui.set_expanded(true);
+            ui.set_video_on(true);
+            send(Cmd::VideoOn, tx);
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
+        send(Cmd::WatchVideo, tx);
+    });
+    #[cfg(any(target_os = "macos", windows))]
+    on!(on_video_rect, [tx, view, ui], |x, y, w, h| {
+        let mut v = view.borrow_mut();
+        v.video_rect = (x, y, w, h);
+        if let Some(video) = &v.video {
+            return video.set_bounds(v.video_rect);
+        }
+        if !ui.get_video_on() {
+            return;
+        }
+        let Some((id, at)) = v
+            .last
+            .as_ref()
+            .and_then(|s| s.now.as_ref().map(|t| (t.video_id.clone(), s.position)))
+        else {
+            return;
+        };
+        match video::VideoView::open(ui, id, at, v.video_rect) {
+            Ok(video) => v.video = Some(video),
+            Err(err) => {
+                tracing::warn!("opening the video: {err:#}");
+                ui.set_video_on(false);
+                send(Cmd::VideoOff(None), tx);
+            }
+        }
+    });
+    #[cfg(any(target_os = "macos", windows))]
+    on!(on_video_off, [tx, view, ui], || {
+        let at = view.borrow_mut().video.take().and_then(|v| v.position());
+        send(Cmd::VideoOff(at), tx);
+    });
+    #[cfg(not(any(target_os = "macos", windows)))]
+    on!(on_video_rect, [tx, view, ui], |_x, _y, _w, _h| {});
+    #[cfg(not(any(target_os = "macos", windows)))]
+    on!(on_video_off, [tx, view, ui], || {});
     on!(on_stop_downloads, [tx, view, ui], || send(
         Cmd::StopDownloads,
         tx
@@ -2164,6 +2246,9 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::ToggleSaved(item, channel) => session.toggle_saved(item, channel),
         Cmd::Download(tracks) => session.download(tracks),
         Cmd::RemoveDownload(id) => session.remove_download(id),
+        Cmd::VideoOn => session.pause_for_video(),
+        Cmd::VideoOff(at) => session.resume_from_video(at),
+        Cmd::WatchVideo => session.watch_video(),
         Cmd::StopDownloads => session.cancel_downloads(),
         Cmd::RemoveAllDownloads => session.remove_all_downloads(),
         Cmd::Sync => session.start_sync(),

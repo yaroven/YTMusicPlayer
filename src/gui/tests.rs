@@ -67,6 +67,7 @@ fn session_view() -> SessionView {
         status: None,
         syncing: false,
         searching: false,
+        watching: false,
         downloading: 0,
         signed_in: true,
         signing_in: false,
@@ -359,6 +360,26 @@ fn queue_rows_move_and_go() {
         &cmds[..],
         [Cmd::QueueMove(1, 0), Cmd::QueueRemove(0)]
     ));
+}
+
+/// The player bar's video button switches the window to the clip (on
+/// Linux, which has no system web view, it hands it to the browser).
+#[test]
+fn the_video_button_switches_to_the_clip() {
+    let mut h = harness();
+    let mut view = session_view();
+    view.now = Some(track("Song"));
+    h.absorb(snapshot(view, Changes::default()));
+    h.ui.invoke_watch_video();
+    let cmds = h.commands();
+    if cfg!(any(target_os = "macos", windows)) {
+        assert!(h.ui.get_expanded(), "the video needs the full-screen view");
+        // Opening the web view itself needs a window on screen; here only
+        // the command matters (a failure switches back on its own).
+        assert!(matches!(cmds.first(), Some(Cmd::VideoOn)));
+    } else {
+        assert!(matches!(&cmds[..], [Cmd::WatchVideo]));
+    }
 }
 
 #[test]

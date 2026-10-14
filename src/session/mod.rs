@@ -42,7 +42,7 @@ use crate::{
     media::{MediaAction, MediaControls},
     storage::{Download, Library},
     sync::SyncReport,
-    sysmem,
+    sysmem, video,
 };
 
 pub const SEEK_STEP_SECS: i64 = 5;
@@ -159,6 +159,8 @@ pub struct SessionView {
     pub status: Option<(String, bool)>,
     pub syncing: bool,
     pub searching: bool,
+    /// The clip of the playing song is open in the video window.
+    pub watching: bool,
     /// How many songs are still being downloaded.
     pub downloading: usize,
     pub signed_in: bool,
@@ -237,6 +239,11 @@ enum Background {
     DownloadRemoved {
         video_id: Arc<str>,
         result: Result<()>,
+    },
+    /// The video window closed; the song continues where it stopped.
+    VideoClosed {
+        video_id: Arc<str>,
+        result: Result<Duration>,
     },
     /// Downloads were cancelled; `stopped` were still queued or running.
     DownloadsStopped {
@@ -317,6 +324,8 @@ pub struct Session {
     /// Related shelves of the playing track (when asked for).
     pub related: Option<(Arc<str>, Arc<[Shelf]>)>,
     want_related: bool,
+    /// The clip is open in the video window.
+    pub watching: bool,
     /// Tracks being downloaded.
     pub downloading: HashSet<Arc<str>>,
     /// The task working through them, so it can be stopped.
@@ -435,6 +444,7 @@ impl Session {
             want_lyrics: false,
             related: None,
             want_related: false,
+            watching: false,
             downloading: HashSet::new(),
             download_task: None,
             signing_in: false,
@@ -485,6 +495,7 @@ impl Session {
             status: self.status.as_ref().map(|s| (s.text.clone(), s.is_error)),
             syncing: self.syncing,
             searching: self.searching,
+            watching: self.watching,
             downloading: self.downloading.len(),
             signed_in: self.signed_in(),
             signing_in: self.signing_in,
@@ -662,6 +673,7 @@ impl Session {
             | Background::Followed { .. }
             | Background::Downloaded { .. }
             | Background::DownloadRemoved { .. }
+            | Background::VideoClosed { .. }
             | Background::DownloadsStopped { .. }
             | Background::DownloadsCleared(_)
             | Background::SignedIn { .. }
@@ -806,6 +818,56 @@ impl Session {
 
     pub fn toggle_pause(&mut self) {
         self.player.toggle_pause();
+    }
+
+    /// The window switched to the video: the audio waits there.
+    pub fn pause_for_video(&mut self) {
+        self.watching = true;
+        self.player.set_paused(true);
+        self.set_info("Watching the video — the audio waits here");
+    }
+
+    /// Back from the video: the song carries on where the video stopped.
+    pub fn resume_from_video(&mut self, at: Option<Duration>) {
+        self.watching = false;
+        if let Some(at) = at {
+            self.seek_to(at);
+        }
+        self.player.set_paused(false);
+    }
+
+    /// Watches the playing song's clip: the audio stops, and when the video
+    /// window closes the song carries on where the video stopped. Without a
+    /// system web view (Linux) the clip opens in the browser instead.
+    pub fn watch_video(&mut self) {
+        let Some(track) = self.queue.current().cloned() else {
+            self.set_error("Nothing is playing");
+            return;
+        };
+        if self.watching {
+            self.set_info("The video is already open");
+            return;
+        }
+        let at = self.player_status.position;
+        self.player.set_paused(true);
+        if !video::in_window() {
+            let url = video::watch_url(&track.video_id, at);
+            match open::that_detached(&url) {
+                Ok(_) => self.set_info(format!("Watching {} in your browser", track.title)),
+                Err(err) => self.set_error(format!("Opening the video: {err}")),
+            }
+            return;
+        }
+        self.watching = true;
+        self.set_info(format!(
+            "Watching {} — the audio continues when you close the window",
+            track.title
+        ));
+        let (tx, video_id) = (self.tx.clone(), track.video_id.clone());
+        tokio::spawn(async move {
+            let result = video::watch(&video_id, at).await;
+            let _ = tx.send(Background::VideoClosed { video_id, result });
+        });
     }
 
     /// `direction` > 0: next; else previous (restarts a track > 3 s in).

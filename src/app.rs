@@ -546,6 +546,7 @@ impl App {
                     }
                 }
             }
+            Action::Video => self.session.watch_video(),
             Action::SaveOrFollow => {
                 let item = if self.showing_cards() {
                     self.card(self.card_selected)

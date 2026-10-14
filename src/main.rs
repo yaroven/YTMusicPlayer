@@ -83,6 +83,14 @@ fn main() -> Result<()> {
         return ytm_player::signin::run_window();
     }
 
+    // The video window's child process (see `video`): plays the clip and
+    // prints the position it stopped at.
+    #[cfg(all(feature = "gui", any(target_os = "macos", windows)))]
+    if let ["video-window", video_id, at] = args.as_slice() {
+        let at = std::time::Duration::from_secs(at.parse().unwrap_or(0));
+        return ytm_player::video::run_window(video_id, at);
+    }
+
     let gui = matches!(args.as_slice(), ["gui"])
         || (args.is_empty() && (settings.ui.eq_ignore_ascii_case("gui") || in_app_bundle()));
     if gui {

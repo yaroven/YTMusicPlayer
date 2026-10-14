@@ -247,6 +247,19 @@ impl Session {
                     Err(err) => self.set_error(format!("Download failed: {err:#}")),
                 }
             }
+            Background::VideoClosed { video_id, result } => {
+                self.watching = false;
+                match result {
+                    // Carry on in audio where the video stopped.
+                    Ok(at) if self.queue.current().is_some_and(|t| t.video_id == video_id) => {
+                        self.seek_to(at);
+                        self.player.set_paused(false);
+                        self.set_info("Back to audio");
+                    }
+                    Ok(_) => {}
+                    Err(err) => self.set_error(format!("Video: {err:#}")),
+                }
+            }
             Background::DownloadsStopped { stopped } => {
                 changes.downloads = true;
                 self.set_info(match stopped {

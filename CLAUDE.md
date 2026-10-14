@@ -450,6 +450,28 @@ Domain terms are defined in `CONTEXT.md`.
   cancel. "Delete all" (`remove_all_downloads`) removes the files and the
   records; the GUI asks first, the TUI has it in the `m` menu.
 
+- **Watching the clip in the window** (user's request 2026-10-14, who asked
+  for YouTube Music's behaviour: the video in the app, not a browser): the
+  system web view (wry) as a **child view of the player's own window**
+  (`gui::video`), placed over the big cover (16:9, centred) through a
+  `VideoArea` rectangle in Slint that reports its place
+  (`video-rect(x, y, w, h)`); Slint keeps the layout, the system draws the
+  video into it. The page is YouTube's **embed** player (just the video);
+  owners can forbid embedding (measured: Vevo's `currentTime` stays 0), and
+  the injected script then sends the view on to the watch page, stripped to
+  the player with CSS. The same script reports `currentTime` every 500 ms
+  over wry's IPC, so switching back seeks the audio there
+  (`Session::pause_for_video` / `resume_from_video`).
+  Measured 2026-10-14 (M1, debug, 1040x692 window, `footprint`): the player
+  55 MB with the video on (46-50 MB without), and macOS's own WebKit
+  processes 547 MB (WebContent) + 35 MB (GPU) + 16 MB (Networking) while a
+  YouTube page plays — they are separate processes and all of it goes when
+  the video is switched off, which destroys the web view.
+  The TUI and Linux keep `video::watch` / `video::watch_url`: a child
+  process `ytm video-window <id> <seconds>` (same trick as `signin`) or the
+  browser. `YTM_VIDEO_EXIT_AFTER=<secs>` closes that window by itself, for
+  testing without a hand on the mouse.
+
 ## Open TODOs
 
 - iPhone: verify signed-in age-restricted playback on a real account,
