@@ -20,8 +20,10 @@ pub use crate::session::{Deps, Status};
 use crate::{
     api::models::{LIKED_PLAYLIST_ID, Playlist, Track},
     catalog::{Item, ItemKind, SearchKind},
+    i18n::Lang,
     library_view::{LibraryView, SessionData, Source},
     session::{Changes, SEEK_STEP_SECS, Session, Sleep, VOLUME_STEP},
+    tr,
     ui::{self, keymap::Action},
 };
 
@@ -64,14 +66,18 @@ pub enum MenuEntry {
 }
 
 impl MenuEntry {
-    pub fn label(&self) -> &str {
+    pub fn label(&self, lang: Lang) -> &str {
         match self {
-            Self::NewPlaylist => "New playlist…",
-            Self::Rename => "Rename this playlist…",
-            Self::Delete => "Delete this playlist",
-            Self::DownloadAll => "Download all for offline",
-            Self::StopDownloads => "Stop downloading",
-            Self::RemoveAllDownloads => "Delete all downloaded songs",
+            Self::NewPlaylist => tr!(lang, "New playlist…", "Новий плейлист…"),
+            Self::Rename => tr!(lang, "Rename this playlist…", "Перейменувати плейлист…"),
+            Self::Delete => tr!(lang, "Delete this playlist", "Видалити цей плейлист"),
+            Self::DownloadAll => tr!(lang, "Download all for offline", "Завантажити все офлайн"),
+            Self::StopDownloads => tr!(lang, "Stop downloading", "Зупинити завантаження"),
+            Self::RemoveAllDownloads => tr!(
+                lang,
+                "Delete all downloaded songs",
+                "Видалити всі завантажені пісні"
+            ),
             Self::CastTo(_, name) => name,
             Self::Note(text) => text,
         }
@@ -132,7 +138,8 @@ pub struct App {
 }
 
 pub async fn run(deps: Deps) -> Result<()> {
-    let library = LibraryView::new(deps.library.clone())?;
+    let mut library = LibraryView::new(deps.library.clone())?;
+    library.set_language(crate::i18n::Lang::from_code(&deps.language));
     let mut app = App::new(Session::new(deps)?, library);
     app.session.startup(app.library.playlists().is_empty());
 

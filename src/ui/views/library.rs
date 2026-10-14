@@ -15,6 +15,7 @@ use crate::{
     api::models::Track,
     app::{App, Focus, Mode, TracksView},
     catalog::{ItemKind, SearchKind},
+    tr,
     ui::{ACCENT, centered_text, fmt_time},
 };
 
@@ -40,14 +41,23 @@ fn highlight(focused: bool) -> Style {
 
 pub fn draw_playlists(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Playlists;
-    let block = pane(Line::from(" Library "), focused);
+    let lang = app.session.lang;
+    let block = pane(Line::from(tr!(lang, " Library ", " Бібліотека ")), focused);
     if app.library.playlists().is_empty() {
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let hint = match (app.session.syncing, app.session.signed_in()) {
-            (true, _) => "syncing…",
-            (false, true) => "empty — press r to sync",
-            (false, false) => "not logged in — run `ytm login`",
+            (true, _) => tr!(lang, "syncing…", "синхронізую…"),
+            (false, true) => tr!(
+                lang,
+                "empty — press r to sync",
+                "порожньо — натисни r, щоб синхронізувати"
+            ),
+            (false, false) => tr!(
+                lang,
+                "not signed in — press L",
+                "не виконано вхід — натисни L"
+            ),
         };
         centered_text(frame, inner, hint);
         return;
@@ -107,9 +117,10 @@ pub fn draw_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
 
 /// " ABBA Gold · Album • 1992 · [Songs] Albums … " — the list's heading.
 fn heading(app: &App, count: usize) -> Vec<Span<'static>> {
+    let lang = app.session.lang;
     let lib = &app.library;
     let name = match lib.title() {
-        name if name.is_empty() => "Tracks".to_owned(),
+        name if name.is_empty() => tr!(lang, "Tracks", "Пісні").to_owned(),
         name => name,
     };
     let mut title = vec![Span::raw(format!(" {name} · "))];
@@ -138,18 +149,19 @@ fn heading(app: &App, count: usize) -> Vec<Span<'static>> {
         .page_item()
         .is_some_and(|(item, _)| lib.is_saved(&item.id))
     {
-        title.push(Span::raw("✓ saved ").fg(ACCENT));
+        title.push(Span::raw(tr!(lang, "✓ saved ", "✓ збережено ")).fg(ACCENT));
     }
     title
 }
 
 /// Albums, artists and playlists (search results, saved, page shelves).
 fn draw_cards(frame: &mut Frame, area: Rect, app: &mut App) {
+    let lang = app.session.lang;
     let focused = app.focus == Focus::Tracks;
     let count = app.card_count();
     let mut title = heading(app, count);
     if app.library.total() > 0 {
-        title.push(Span::raw("i songs ").dark_gray());
+        title.push(Span::raw(tr!(lang, "i songs ", "i пісні ")).dark_gray());
     }
     let block = pane(Line::from(title), focused);
     let height = area.height.saturating_sub(3) as usize;
@@ -164,10 +176,10 @@ fn draw_cards(frame: &mut Frame, area: Rect, app: &mut App) {
         .filter_map(|i| {
             let (shelf, item) = app.card(i)?;
             let kind = match item.kind {
-                ItemKind::Album => "album",
-                ItemKind::Artist => "artist",
-                ItemKind::Playlist => "playlist",
-                ItemKind::Song => "song",
+                ItemKind::Album => tr!(lang, "album", "альбом"),
+                ItemKind::Artist => tr!(lang, "artist", "виконавець"),
+                ItemKind::Playlist => tr!(lang, "playlist", "плейлист"),
+                ItemKind::Song => tr!(lang, "song", "пісня"),
             };
             let saved = if app.library.is_saved(&item.id) {
                 "✓ "
@@ -189,7 +201,7 @@ fn draw_cards(frame: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Fill(1),
     ];
     let table = Table::new(rows, widths)
-        .header(Row::new(["", "Title", "", ""]).dark_gray())
+        .header(Row::new(["", tr!(lang, "Title", "Назва"), "", ""]).dark_gray())
         .block(block)
         .column_spacing(2)
         .row_highlight_style(highlight(focused));
@@ -198,10 +210,13 @@ fn draw_cards(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 fn draw_playlist_tracks(frame: &mut Frame, area: Rect, app: &mut App) {
+    let lang = app.session.lang;
     let focused = app.focus == Focus::Tracks;
     let mut title = heading(app, app.library.len());
     if app.card_count() > 0 {
-        title.push(Span::raw("i albums & artists ").dark_gray());
+        title.push(
+            Span::raw(tr!(lang, "i albums & artists ", "i альбоми й виконавці ")).dark_gray(),
+        );
     }
     let lib = &app.library;
     let searching = matches!(app.mode, Mode::Search);

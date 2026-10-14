@@ -1,5 +1,6 @@
 //! Key -> [`Action`] mapping. Vim keys and arrows both work.
 
+use crate::i18n::Lang;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,8 +60,15 @@ pub enum Action {
     SignIn,
 }
 
-/// `(keys, description)` rows for the help popup.
-pub const HELP: &[(&str, &str)] = &[
+/// `(keys, description)` rows for the help popup, in the chosen language.
+pub fn help(lang: Lang) -> &'static [(&'static str, &'static str)] {
+    match lang {
+        Lang::En => HELP_EN,
+        Lang::Uk => HELP_UK,
+    }
+}
+
+const HELP_EN: &[(&str, &str)] = &[
     ("↑/↓  k/j, PgUp/PgDn  g/G", "move · page · top / bottom"),
     ("Tab  h/l", "switch pane"),
     ("Enter / click", "open / play"),
@@ -85,6 +93,36 @@ pub const HELP: &[(&str, &str)] = &[
     ("z / C", "sleep timer / play on a Chromecast"),
     ("r / L", "sync library / sign in"),
     ("?   q", "this help · quit"),
+];
+
+const HELP_UK: &[(&str, &str)] = &[
+    (
+        "↑/↓  k/j, PgUp/PgDn  g/G",
+        "рух · сторінка · початок / кінець",
+    ),
+    ("Tab  h/l", "інша панель"),
+    ("Enter / клік", "відкрити / слухати"),
+    ("b  Backspace", "назад"),
+    ("1 2 3", "головна · історія · завантаження"),
+    ("4 5 6", "альбоми · виконавці · огляд"),
+    ("Space   n / p", "пауза · наступна / попередня"),
+    ("← / →  клік по смузі", "перемотка"),
+    ("+ / -", "гучність"),
+    ("/", "фільтр списку (Esc очищає)"),
+    ("o   [ ]", "пошук у YouTube Music · інша категорія"),
+    ("i", "альбоми / виконавці на цій сторінці"),
+    ("s / e / A", "перемішати / повтор / автоплей"),
+    ("v", "черга (x прибрати, J/K рух, X очистити)"),
+    ("u / R / w", "грати наступною / радіо / сторінка виконавця"),
+    ("f / d", "подобається / не подобається"),
+    ("a / x", "додати в плейлист / прибрати з нього"),
+    ("D", "завантажити (ще раз: видалити)"),
+    ("S", "зберегти альбом / стежити за виконавцем"),
+    ("m", "меню (плейлисти, завантаження)"),
+    ("t  V", "текст пісні · дивитися відео"),
+    ("z / C", "таймер сну / грати на Chromecast"),
+    ("r / L", "синхронізувати · увійти"),
+    ("?   q", "ця довідка · вихід"),
 ];
 
 pub fn action_for(key: KeyEvent) -> Option<Action> {

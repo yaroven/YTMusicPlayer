@@ -12,7 +12,11 @@ use ratatui::{
     widgets::{Block, Clear, List, ListItem, Paragraph, Row, Table},
 };
 
-use crate::app::{App, Mode, Prompt};
+use crate::{
+    app::{App, Mode, Prompt},
+    i18n::Lang,
+    tr,
+};
 
 pub const ACCENT: Color = Color::Red;
 
@@ -33,22 +37,32 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     views::now_playing::draw(frame, player, app);
     views::now_playing::draw_status(frame, status, app);
 
+    let lang = app.session.lang;
     match &mut app.mode {
-        Mode::Help => draw_help(frame),
+        Mode::Help => draw_help(frame, lang),
         Mode::AddTo { track, state } => {
-            let title = format!(" Add “{}” to ", track.title);
+            let title = tr!(lang, " Add “{}” to ", " Додати «{}» до ", track.title);
             let items: Vec<ListItem> = app
                 .library
                 .add_choices()
                 .map(|p| ListItem::new(p.title.as_str()))
-                .chain(std::iter::once(ListItem::new("New playlist…".italic())))
+                .chain(std::iter::once(ListItem::new(
+                    tr!(lang, "New playlist…", "Новий плейлист…").italic(),
+                )))
                 .collect();
             let area = centered(frame.area(), 50, items.len() as u16 + 2);
             let list = List::new(items)
                 .block(
                     Block::bordered()
                         .title(title)
-                        .title_bottom(Line::from(" Enter add · Esc cancel ").right_aligned())
+                        .title_bottom(
+                            Line::from(tr!(
+                                lang,
+                                " Enter add · Esc cancel ",
+                                " Enter додати · Esc скасувати "
+                            ))
+                            .right_aligned(),
+                        )
                         .border_style(Style::new().fg(ACCENT)),
                 )
                 .highlight_style(Style::new().add_modifier(Modifier::REVERSED))
@@ -61,7 +75,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             entries,
             state,
         } => {
-            let items: Vec<ListItem> = entries.iter().map(|e| ListItem::new(e.label())).collect();
+            let items: Vec<ListItem> = entries
+                .iter()
+                .map(|e| ListItem::new(e.label(lang)))
+                .collect();
             let area = centered(frame.area(), 40, items.len() as u16 + 2);
             let list = List::new(items)
                 .block(
@@ -76,14 +93,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
         Mode::Prompt { purpose, text } => {
             let title = match purpose {
-                Prompt::NewPlaylist(_) => " New playlist name ",
-                Prompt::Rename(_) => " Rename playlist ",
+                Prompt::NewPlaylist(_) => tr!(lang, " New playlist name ", " Назва плейлиста "),
+                Prompt::Rename(_) => tr!(lang, " Rename playlist ", " Перейменувати плейлист "),
             };
             let area = centered(frame.area(), 50, 3);
             let input = Paragraph::new(format!("{text}▏")).block(
                 Block::bordered()
                     .title(title)
-                    .title_bottom(Line::from(" Enter save · Esc cancel ").right_aligned())
+                    .title_bottom(
+                        Line::from(tr!(
+                            lang,
+                            " Enter save · Esc cancel ",
+                            " Enter зберегти · Esc скасувати "
+                        ))
+                        .right_aligned(),
+                    )
                     .border_style(Style::new().fg(ACCENT)),
             );
             frame.render_widget(Clear, area);
@@ -118,7 +142,7 @@ fn draw_lyrics(frame: &mut Frame, app: &App) {
         .queue
         .current()
         .map(|t| format!(" {} — {} ", t.title, t.artist))
-        .unwrap_or_else(|| " Lyrics ".into());
+        .unwrap_or_else(|| tr!(app.session.lang, " Lyrics ", " Текст пісні ").into());
     let (lines, source, current): (Vec<Line>, String, Option<usize>) = match &app.session.lyrics {
         Some((_, Some(lyrics))) => {
             let current = lyrics.current_line(app.session.player_status.position);
@@ -158,15 +182,23 @@ fn draw_lyrics(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(lines).block(block).scroll((scroll, 0)), area);
 }
 
-fn draw_help(frame: &mut Frame) {
-    let area = centered(frame.area(), 74, keymap::HELP.len() as u16 + 2);
-    let rows = keymap::HELP
+fn draw_help(frame: &mut Frame, lang: Lang) {
+    let help = keymap::help(lang);
+    let area = centered(frame.area(), 74, help.len() as u16 + 2);
+    let rows = help
         .iter()
         .map(|(keys, desc)| Row::new([keys.bold(), (*desc).into()]));
     let table = Table::new(rows, [Constraint::Length(22), Constraint::Min(10)]).block(
         Block::bordered()
-            .title(" Keys ")
-            .title_bottom(Line::from(" any key to close ").right_aligned())
+            .title(tr!(lang, " Keys ", " Клавіші "))
+            .title_bottom(
+                Line::from(tr!(
+                    lang,
+                    " any key to close ",
+                    " будь-яка клавіша закриває "
+                ))
+                .right_aligned(),
+            )
             .border_style(Style::new().fg(ACCENT)),
     );
     frame.render_widget(Clear, area);

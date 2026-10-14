@@ -97,6 +97,32 @@ macro_rules! tr {
     };
 }
 
+/// "пісня / пісні / пісень" by the number before it.
+pub fn songs_uk(n: usize) -> &'static str {
+    let (tens, ones) = (n % 100, n % 10);
+    if (11..=14).contains(&tens) {
+        "пісень"
+    } else if ones == 1 {
+        "пісня"
+    } else if (2..=4).contains(&ones) {
+        "пісні"
+    } else {
+        "пісень"
+    }
+}
+
+/// Like [`tr!`], but always `format!`s — for text with values in it, also
+/// when they are captured inline (`trf!(lang, "{n} songs", "{n} пісень")`).
+#[macro_export]
+macro_rules! trf {
+    ($lang:expr, $en:expr, $uk:expr $(, $($arg:tt)*)?) => {
+        match $lang {
+            $crate::i18n::Lang::Uk => format!($uk $(, $($arg)*)?),
+            $crate::i18n::Lang::En => format!($en $(, $($arg)*)?),
+        }
+    };
+}
+
 /// Every label the window shows.
 pub struct Text {
     pub home: &'static str,
@@ -513,6 +539,17 @@ mod tests {
         let (en, uk) = (Lang::En.text(), Lang::Uk.text());
         assert!(!en.home.is_empty() && !uk.home.is_empty());
         assert_ne!(en.settings, uk.settings);
+    }
+
+    #[test]
+    fn ukrainian_counts_songs_properly() {
+        let s = |n| format!("{n} {}", songs_uk(n));
+        assert_eq!(s(1), "1 пісня");
+        assert_eq!(s(3), "3 пісні");
+        assert_eq!(s(5), "5 пісень");
+        assert_eq!(s(11), "11 пісень");
+        assert_eq!(s(21), "21 пісня");
+        assert_eq!(s(102), "102 пісні");
     }
 
     #[test]

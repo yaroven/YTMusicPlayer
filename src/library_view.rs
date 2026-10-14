@@ -21,9 +21,19 @@ use anyhow::Result;
 use crate::{
     api::models::{LIKED_PLAYLIST_ID, Playlist, Track},
     catalog::{Item, ItemKind, Page, SearchKind, Shelf},
+    i18n::Lang,
     session::{Changes, SearchResults},
     storage::Library,
+    tr,
 };
+
+/// "4 songs" / "4 пісні" — Ukrainian needs the right ending.
+fn songs_count(lang: Lang, n: usize) -> String {
+    match lang {
+        Lang::En => format!("{n} songs"),
+        Lang::Uk => format!("{n} {}", crate::i18n::songs_uk(n)),
+    }
+}
 
 /// Meta key of the playlist shown last (restored on start).
 const LAST_PLAYLIST: &str = "playlist";
@@ -102,9 +112,16 @@ pub struct LibraryView {
     visible: Vec<u32>,
     /// Selected row (index into `visible`).
     selected: Option<usize>,
+    /// The language its titles are in.
+    lang: Lang,
 }
 
 impl LibraryView {
+    /// Switches the language of the titles it builds ("History", "4 songs").
+    pub fn set_language(&mut self, lang: Lang) {
+        self.lang = lang;
+    }
+
     /// Loads the playlists and shows the one shown last (else the first).
     pub fn new(library: Arc<Library>) -> Result<Self> {
         let mut view = Self {
@@ -116,6 +133,7 @@ impl LibraryView {
             filter: String::new(),
             visible: Vec::new(),
             selected: None,
+            lang: Lang::default(),
         };
         let last = view.library.get_meta(LAST_PLAYLIST).ok().flatten();
         view.load_playlists(last.as_deref())?;
@@ -323,7 +341,7 @@ impl LibraryView {
         let tracks = self.library.tracks(&p.id)?;
         self.navigate(Shown {
             source: Source::Playlist(p.id.clone()),
-            subtitle: format!("{} songs", tracks.len()),
+            subtitle: songs_count(self.lang, tracks.len()),
             title: p.title,
             tracks,
             ..Shown::empty()
@@ -379,7 +397,7 @@ impl LibraryView {
         };
         let shown = Shown {
             source: Source::Page(format!("{id}#songs")),
-            subtitle: format!("{} songs", self.shown.tracks.len()),
+            subtitle: songs_count(self.lang, self.shown.tracks.len()),
             shelves: Arc::from([]),
             items: Arc::from([]),
             ..self.shown.clone()
@@ -401,7 +419,7 @@ impl LibraryView {
         shelves.extend(home.unwrap_or_default().iter().cloned());
         let shown = Shown {
             source: Source::Home,
-            title: "Home".into(),
+            title: tr!(self.lang, "Home", "Головна").into(),
             subtitle: if recent.is_empty() {
                 String::new()
             } else {
@@ -423,7 +441,7 @@ impl LibraryView {
     pub fn show_explore(&mut self, explore: Option<&[Shelf]>) {
         let shown = Shown {
             source: Source::Explore,
-            title: "Explore".into(),
+            title: tr!(self.lang, "Explore", "Огляд").into(),
             shelves: explore.unwrap_or_default().to_vec().into(),
             ..Shown::empty()
         };
@@ -438,8 +456,8 @@ impl LibraryView {
         let tracks = self.library.history()?;
         self.navigate(Shown {
             source: Source::History,
-            title: "History".into(),
-            subtitle: format!("{} songs", tracks.len()),
+            title: tr!(self.lang, "History", "Історія").into(),
+            subtitle: songs_count(self.lang, tracks.len()),
             tracks,
             ..Shown::empty()
         });
@@ -452,8 +470,12 @@ impl LibraryView {
         let tracks: Arc<[Track]> = downloads.into_iter().map(|d| d.track).collect();
         self.navigate(Shown {
             source: Source::Downloads,
-            title: "Downloads".into(),
-            subtitle: format!("{} songs · {:.0} MB", tracks.len(), bytes as f64 / 1e6),
+            title: tr!(self.lang, "Downloads", "Завантаження").into(),
+            subtitle: format!(
+                "{} · {:.0} MB",
+                songs_count(self.lang, tracks.len()),
+                bytes as f64 / 1e6
+            ),
             tracks,
             ..Shown::empty()
         });
@@ -464,8 +486,8 @@ impl LibraryView {
     pub fn show_saved(&mut self, kind: ItemKind) -> Result<()> {
         let items: Arc<[Item]> = self.library.saved(kind)?.into();
         let title = match kind {
-            ItemKind::Artist => "Artists",
-            _ => "Albums",
+            ItemKind::Artist => tr!(self.lang, "Artists", "Виконавці"),
+            _ => tr!(self.lang, "Albums", "Альбоми"),
         };
         self.navigate(Shown {
             source: Source::Saved(kind),
@@ -634,7 +656,7 @@ impl LibraryView {
         match self.shown.source.clone() {
             Source::Playlist(id) => {
                 self.shown.tracks = self.library.tracks(&id)?;
-                self.shown.subtitle = format!("{} songs", self.shown.tracks.len());
+                self.shown.subtitle = songs_count(self.lang, self.shown.tracks.len());
                 if let Some(p) = self.playlists.iter().find(|p| p.id == id) {
                     self.shown.title = p.title.clone();
                 }

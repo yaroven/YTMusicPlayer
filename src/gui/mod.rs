@@ -1609,7 +1609,12 @@ fn new_view(
 /// Runs the GUI until it quits. `rt` runs the core on its own thread.
 pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Result<()> {
     let library = deps.library.clone();
-    let library_view = Rc::new(RefCell::new(LibraryView::new(library.clone())?));
+    let lang = Lang::from_code(&settings.language);
+    let library_view = {
+        let mut view = LibraryView::new(library.clone())?;
+        view.set_language(lang);
+        Rc::new(RefCell::new(view))
+    };
     let (cmd_tx, cmd_rx) = unbounded_channel();
 
     let view = new_view(
@@ -2036,8 +2041,15 @@ fn wire_callbacks(
     // browser gets it (`Session::watch_video`).
     on!(on_set_language, [tx, view, ui], |code| {
         let lang = Lang::from_code(&code);
-        view.borrow_mut().lang = lang;
+        {
+            let mut v = view.borrow_mut();
+            v.lang = lang;
+            v.library.borrow_mut().set_language(lang);
+        }
         apply_language(ui, lang);
+        // The shown list's own title ("History", "4 songs") is rebuilt the
+        // next time it is shown; the sidebar and the rest change now.
+        view.borrow_mut().sync_list(ui);
         send(Cmd::SetLanguage(code.into()), tx);
     });
     on!(on_watch_video, [tx, view, ui], || {

@@ -207,3 +207,19 @@ async fn filter_narrows_the_list() {
         "{s}"
     );
 }
+
+#[tokio::test]
+async fn the_terminal_ui_speaks_ukrainian() {
+    let mut app = app().await;
+    app.session.lang = crate::i18n::Lang::Uk;
+    let s = screen(&mut app);
+    assert!(s.contains("Бібліотека"), "the panes are translated:\n{s}");
+    assert!(s.contains("довідка"), "so is the status line:\n{s}");
+
+    char(&mut app, '?');
+    let s = screen(&mut app);
+    for key in ["Клавіші", "текст пісні", "таймер сну"] {
+        assert!(s.contains(key), "help should mention {key}:\n{s}");
+    }
+    insta::assert_snapshot!(s);
+}
