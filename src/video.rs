@@ -28,6 +28,7 @@ pub fn watch_url(video_id: &str, at: Duration) -> String {
 /// refuses to embed many songs — "Video player configuration error 153",
 /// seen 2026-10-14 — while the watch page plays everything; `PAGE_SCRIPT`
 /// strips it down to the player.)
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) fn video_url(video_id: &str, at: Duration) -> String {
     format!(
         "https://www.youtube.com/watch?v={video_id}&t={}s",
@@ -39,6 +40,7 @@ pub(crate) fn video_url(video_id: &str, at: Duration) -> String {
 /// the player, stretches the player over the view (the picture keeps its
 /// shape), and keeps reporting where the video is so the audio can continue
 /// there.
+#[cfg(any(target_os = "macos", windows))]
 pub(crate) const PAGE_SCRIPT: &str = r#"(function () {
     document.documentElement.setAttribute('dark', 'true');
     var css = document.createElement('style');
