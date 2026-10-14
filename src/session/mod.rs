@@ -834,6 +834,7 @@ impl Session {
             self.seek_to(at);
         }
         self.player.set_paused(false);
+        self.set_info("Back to the song");
     }
 
     /// Watches the playing song's clip: the audio stops, and when the video
