@@ -67,6 +67,7 @@ fn session_view() -> SessionView {
         status: None,
         syncing: false,
         searching: false,
+        lang: crate::i18n::Lang::En,
         watching: false,
         downloading: 0,
         signed_in: true,
@@ -748,4 +749,26 @@ fn screens_png() {
         "the suggestions don't hang over the full-screen view"
     );
     assert_eq!(ui.get_lyrics().row_count(), 7, "6 lines plus the intro");
+}
+
+/// The language switch changes the window at once and tells the core to
+/// remember it; the core's own answer (a snapshot) sets it too.
+#[test]
+fn the_window_can_speak_ukrainian() {
+    let mut h = harness();
+    assert_eq!(h.ui.global::<L>().get_home(), "Home");
+
+    h.ui.invoke_set_language("uk".into());
+    assert_eq!(h.ui.global::<L>().get_home(), "Головна");
+    assert_eq!(h.ui.get_lang(), "uk");
+    assert!(matches!(&h.commands()[..], [Cmd::SetLanguage(code)] if code == "uk"));
+
+    let mut view = session_view();
+    view.lang = crate::i18n::Lang::En;
+    h.absorb(snapshot(view, Changes::default()));
+    assert_eq!(
+        h.ui.global::<L>().get_home(),
+        "Home",
+        "the core has the say"
+    );
 }

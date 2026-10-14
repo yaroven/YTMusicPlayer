@@ -13,6 +13,141 @@
 slint::slint! {
     import { ListView, AboutSlint } from "std-widgets.slint";
 
+    // Every label the window shows, in the chosen language (`i18n`).
+    export global L {
+        in property <string> home: "Home";
+        in property <string> explore: "Explore";
+        in property <string> library: "Library";
+        in property <string> history: "History";
+        in property <string> downloads: "Downloads";
+        in property <string> albums: "Albums";
+        in property <string> artists: "Artists";
+        in property <string> playlists: "Playlists";
+        in property <string> songs: "Songs";
+        in property <string> account: "Account";
+        in property <string> sign-in: "Sign in";
+        in property <string> sign-out: "Sign out";
+        in property <string> sign-in-google: "Sign in with Google";
+        in property <string> signing-in: "Signing in…";
+        in property <string> syncing: "Syncing…";
+        in property <string> searching: "Searching…";
+        in property <string> search: "Search";
+        in property <string> search-hint: "Search YouTube Music, or type to filter";
+        in property <string> search-enter: "Enter ↵ search";
+        in property <string> search-prefix: "Search: ";
+        in property <string> made-with-slint: "Made with Slint";
+        in property <string> play: "Play";
+        in property <string> shuffle: "Shuffle";
+        in property <string> radio: "Radio";
+        in property <string> save: "Save";
+        in property <string> saved: "Saved";
+        in property <string> follow: "Follow";
+        in property <string> following: "Following";
+        in property <string> stop: "Stop";
+        in property <string> stop-open: "Stop (";
+        in property <string> delete-all: "Delete all";
+        in property <string> show-all: "Show all ";
+        in property <string> songs-suffix: " songs";
+        in property <string> nothing-playing: "Nothing playing";
+        in property <string> playing-from: "Playing from";
+        in property <string> autoplay: "Autoplay";
+        in property <string> up-next: "UP NEXT";
+        in property <string> lyrics-tab: "LYRICS";
+        in property <string> related-tab: "RELATED";
+        in property <string> loading: "Loading…";
+        in property <string> loading-video: "Loading the video…";
+        in property <string> looking-for-lyrics: "Looking for lyrics…";
+        in property <string> no-lyrics: "No lyrics for this song";
+        in property <string> nothing-found: "Nothing found";
+        in property <string> empty-playlist: "This playlist is empty";
+        in property <string> empty-history: "Songs you play show up here";
+        in property <string> empty-downloads: "Downloaded songs play offline — download from a song's ⋮ menu";
+        in property <string> empty-albums: "Save albums from their page";
+        in property <string> empty-artists: "Follow artists from their page (sync brings your subscriptions)";
+        in property <string> no-match-prefix: "No songs match \\\"";
+        in property <string> no-match-suffix: "\\\" — Enter searches YouTube Music";
+        in property <string> start-radio: "Start radio";
+        in property <string> play-next: "Play next";
+        in property <string> add-to-queue: "Add to queue";
+        in property <string> download: "Download";
+        in property <string> remove-download: "Remove download";
+        in property <string> dislike: "Dislike";
+        in property <string> remove-from-playlist: "Remove from playlist";
+        in property <string> save-to-playlist: "Save to playlist";
+        in property <string> new-playlist-menu: "New playlist…";
+        in property <string> new-playlist: "New playlist";
+        in property <string> rename-playlist: "Rename playlist";
+        in property <string> rename: "Rename";
+        in property <string> create: "Create";
+        in property <string> delete: "Delete";
+        in property <string> cancel: "Cancel";
+        in property <string> name: "Name";
+        in property <string> delete-playlist-q-prefix: "Delete “";
+        in property <string> delete-playlist-q-suffix: "”?";
+        in property <string> delete-playlist-note: "The playlist is deleted on YouTube too.";
+        in property <string> delete-downloads-q: "Delete all downloaded songs?";
+        in property <string> delete-downloads-note: "Their files are removed from this computer; the songs stay in your library and play online.";
+        in property <string> sleep-timer: "Sleep timer";
+        in property <string> minutes-suffix: " minutes";
+        in property <string> end-of-song: "End of song";
+        in property <string> turn-off: "Turn off";
+        in property <string> play-on: "Play on";
+        in property <string> this-computer: "This computer";
+        in property <string> looking-for-cast: "Looking for Chromecasts…";
+        in property <string> no-cast: "No Chromecasts found";
+        in property <string> settings: "Settings";
+        in property <string> language: "Language";
+        in property <string> version-prefix: "Version ";
+        in property <string> is-available-suffix: " is available";
+        in property <string> up-to-date: "Up to date (checked at start)";
+        in property <string> update: "Update";
+        in property <string> updating: "Updating…";
+        in property <string> check-now: "Check now";
+        in property <string> update-to-prefix: "Update to ";
+        in property <string> autoplay-setting: "Autoplay: continue with similar songs";
+        in property <string> normalize-setting: "Normalize volume (like YouTube Music)";
+        in property <string> crossfade-off: "Crossfade: off (gapless)";
+        in property <string> crossfade-prefix: "Crossfade: ";
+        in property <string> seconds-suffix: " s";
+        in property <string> notifications-setting: "Notify when the song changes";
+        in property <string> tray-setting: "Icon in the menu bar / tray (next start)";
+        in property <string> youtube-account: "YouTube account";
+        in property <string> yt-signed-in: "Signed in. Age-restricted songs and your YouTube Music use this account.";
+        in property <string> yt-sign-in-window: "For age-restricted songs and your YouTube Music. Google's own page opens in a window; the password goes only to Google.";
+        in property <string> yt-sign-in-import: "For age-restricted songs and your YouTube Music: sign in at youtube.com in a browser, pick it below, then Import.";
+        in property <string> import: "Import";
+        in property <string> pick-browser: "Pick browser";
+        in property <string> browser: "Browser";
+        in property <string> or-browser-sign-in: "Or use a browser's sign-in";
+        in property <string> browser-note: "Use the YouTube sign-in of this browser, only for such songs. macOS: needs Full Disk Access for ytm-player (System Settings → Privacy & Security).";
+        in property <string> off: "Off";
+        in property <string> integrations-note: "Last.fm and Discord: see config.toml (README: Integrations).";
+        in property <string> google-account: "Google account";
+        in property <string> yt-signed-in-long: "✓ Signed in to YouTube. Your library, age-restricted songs and your YouTube Music use this account.";
+        in property <string> yt-sign-in-long-window: "Sign in for your library (liked music, playlists), age-restricted songs and your own YouTube Music. Google's own page opens in a window; the password goes only to Google.";
+        in property <string> yt-sign-in-long-import: "Sign in at youtube.com in a browser on this computer, pick that browser and Import its sign-in (your library, age-restricted songs, your YouTube Music).";
+        in property <string> data-api-title: "Library sync (YouTube Data API)";
+        in property <string> data-api-connected: "Connected.";
+        in property <string> data-api-not-needed: "Not needed: your library syncs through the sign-in above.";
+        in property <string> data-api-optional: "Optional: liked music and playlists through your own Google OAuth client. The sign-in above does it without one.";
+        in property <string> set-up: "Set up";
+        in property <string> hide: "Hide";
+        in property <string> oauth-client-prefix: "OAuth client: ";
+        in property <string> oauth-step1: "1. Your Google OAuth client";
+        in property <string> oauth-step2: "2. Sign in";
+        in property <string> oauth-how: "In Google Cloud: enable YouTube Data API v3, add your account as a test user, create a client of type “Desktop app” and download its JSON (README: “Set up Google sign-in”).";
+        in property <string> open-google-cloud: "Open Google Cloud";
+        in property <string> import-downloaded-json: "Import downloaded JSON";
+        in property <string> or-paste: "…or paste it:";
+        in property <string> client-id-hint: "Client ID (…apps.googleusercontent.com)";
+        in property <string> client-secret-hint: "Client secret (GOCSPX-…)";
+        in property <string> save-client: "Save client";
+        in property <string> client-set: "✓ client set";
+        in property <string> open-browser-again: "Open the browser again";
+        in property <string> waiting-browser: "Waiting for your browser…";
+        in property <string> unverified-note: "Google warns the app is unverified: it's your own client, choose Continue.";
+    }
+
     export struct PlaylistRow {
         title: string,
         count: int,
@@ -747,7 +882,7 @@ slint::slint! {
         changed height => { root.rect(self.spot.x, self.spot.y, self.width, self.height); }
         init => { root.rect(self.spot.x, self.spot.y, self.width, self.height); }
         Text {
-            text: "Loading the video…";
+            text: L.loading-video;
             color: Yt.secondary;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -777,7 +912,7 @@ slint::slint! {
         tabs := Rectangle {
             height: 38px;
             HorizontalLayout {
-                for title[i] in ["UP NEXT", "LYRICS", "RELATED"]: Text {
+                for title[i] in [L.up-next, L.lyrics-tab, L.related-tab]: Text {
                     horizontal-stretch: 1;
                     text: title;
                     color: i == root.tab ? Yt.text : Yt.secondary;
@@ -813,10 +948,10 @@ slint::slint! {
                 VerticalLayout {
                     horizontal-stretch: 1;
                     alignment: center;
-                    if root.source != "": Text { text: "Playing from"; color: Yt.secondary; font-size: 12px; }
+                    if root.source != "": Text { text: L.playing-from; color: Yt.secondary; font-size: 12px; }
                     if root.source != "": Text { text: root.source; color: Yt.text; font-weight: 600; font-size: 16px; overflow: elide; }
                 }
-                Toggle { text: "Autoplay"; on: root.autoplay; width: 140px; toggled => { root.toggle-autoplay(); } }
+                Toggle { text: L.autoplay; on: root.autoplay; width: 140px; toggled => { root.toggle-autoplay(); } }
                 IconButton { icon: "delete"; size: 36px; icon-size: 20px; y: (parent.height - self.height) / 2; clicked => { root.clear-queue(); } }
             }
             ListView {
@@ -849,7 +984,7 @@ slint::slint! {
             init => { self.opacity = 1; }
             animate opacity { duration: 200ms; }
             if root.lyrics.length == 0: Text {
-                text: root.lyrics-loading ? "Looking for lyrics…" : "No lyrics for this song";
+                text: root.lyrics-loading ? L.looking-for-lyrics : L.no-lyrics;
                 color: Yt.secondary;
                 horizontal-alignment: center;
                 vertical-alignment: center;
@@ -928,7 +1063,7 @@ slint::slint! {
             shelves := VerticalLayout {
                 spacing: 20px;
                 padding-top: 8px;
-                if root.related.length == 0: Text { text: "Loading…"; color: Yt.secondary; }
+                if root.related.length == 0: Text { text: L.loading; color: Yt.secondary; }
                 for s[si] in root.related: ShelfView {
                     shelf: s;
                     card-size: 120px;
@@ -982,7 +1117,7 @@ slint::slint! {
             padding-right: 12px;
             alignment: center;
             Text { text: root.playlist.title; color: Yt.text; overflow: elide; font-weight: root.selected ? 600 : 400; }
-            Text { text: root.playlist.count + " songs"; color: Yt.secondary; font-size: 12px; }
+            Text { text: root.playlist.count + L.songs-suffix; color: Yt.secondary; font-size: 12px; }
         }
     }
 
@@ -1168,6 +1303,9 @@ slint::slint! {
         in property <int> downloading;
         // The clip is open in the video window.
         in property <bool> watching;
+        // The UI language ("en" / "uk").
+        in property <string> lang;
+        callback set-language(string);
         // Showing the video instead of the cover.
         in-out property <bool> video-on;
         // Where the video goes (window coordinates).
@@ -1332,24 +1470,24 @@ slint::slint! {
                                 padding: 12px;
                                 padding-top: 16px;
                                 spacing: 2px;
-                                NavItem { icon: "home"; text: "Home"; selected: root.nav == 1; clicked => { root.nav-to(1); keys.focus(); } }
-                                NavItem { icon: "explore"; text: "Explore"; selected: root.nav == 7; clicked => { root.nav-to(7); keys.focus(); } }
+                                NavItem { icon: "home"; text: L.home; selected: root.nav == 1; clicked => { root.nav-to(1); keys.focus(); } }
+                                NavItem { icon: "explore"; text: L.explore; selected: root.nav == 7; clicked => { root.nav-to(7); keys.focus(); } }
                                 if root.search-query != "": NavItem {
                                     icon: "search";
-                                    text: "Search: " + root.search-query;
+                                    text: L.search-prefix + root.search-query;
                                     selected: root.nav == 6;
                                     clicked => { root.nav-to(6); keys.focus(); }
                                 }
                                 Rectangle { height: 8px; }
                                 HorizontalLayout {
                                     padding-left: 12px;
-                                    Text { text: "Library"; color: Yt.secondary; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                                    Text { text: L.library; color: Yt.secondary; font-size: 12px; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
                                     IconButton { icon: "plus"; size: 28px; icon-size: 18px; clicked => { root.add-to(-2); root.name-dialog = 1; } }
                                 }
-                                NavItem { icon: "history"; text: "History"; selected: root.nav == 2; clicked => { root.nav-to(2); keys.focus(); } }
-                                NavItem { icon: "download"; text: "Downloads"; selected: root.nav == 3; clicked => { root.nav-to(3); keys.focus(); } }
-                                NavItem { icon: "album"; text: "Albums"; selected: root.nav == 4; clicked => { root.nav-to(4); keys.focus(); } }
-                                NavItem { icon: "artist"; text: "Artists"; selected: root.nav == 5; clicked => { root.nav-to(5); keys.focus(); } }
+                                NavItem { icon: "history"; text: L.history; selected: root.nav == 2; clicked => { root.nav-to(2); keys.focus(); } }
+                                NavItem { icon: "download"; text: L.downloads; selected: root.nav == 3; clicked => { root.nav-to(3); keys.focus(); } }
+                                NavItem { icon: "album"; text: L.albums; selected: root.nav == 4; clicked => { root.nav-to(4); keys.focus(); } }
+                                NavItem { icon: "artist"; text: L.artists; selected: root.nav == 5; clicked => { root.nav-to(5); keys.focus(); } }
                                 Rectangle { height: 1px; background: Yt.divider; }
                                 ListView {
                                     for p[i] in root.playlists: PlaylistItem {
@@ -1359,7 +1497,7 @@ slint::slint! {
                                     }
                                 }
                                 if root.update-version != "": Pill {
-                                    text: root.updating ? "Updating…" : "Update to " + root.update-version;
+                                    text: root.updating ? L.updating : L.update-to-prefix + root.update-version;
                                     icon: "download";
                                     filled: true;
                                     clicked => { root.settings-open = true; }
@@ -1369,7 +1507,7 @@ slint::slint! {
                                     NavItem {
                                         horizontal-stretch: 1;
                                         icon: "account";
-                                        text: root.signed-in || root.yt-signed-in ? "Account" : "Sign in";
+                                        text: root.signed-in || root.yt-signed-in ? L.account : L.sign-in;
                                         clicked => { root.account-opened(); root.account-open = true; }
                                     }
                                     IconButton { icon: "sync"; size: 40px; icon-size: 20px; clicked => { root.sync(); } }
@@ -1380,7 +1518,7 @@ slint::slint! {
                                     }
                                 }
                                 Text {
-                                    text: root.syncing ? "Syncing…" : root.status-text;
+                                    text: root.syncing ? L.syncing : root.status-text;
                                     color: root.status-error ? #ff6b6b : Yt.secondary;
                                     font-size: 12px;
                                     wrap: word-wrap;
@@ -1392,7 +1530,7 @@ slint::slint! {
                                     spacing: 8px;
                                     Text { text: root.memory-text; color: #717171; font-size: 11px; }
                                     Text {
-                                        text: "Made with Slint";
+                                        text: L.made-with-slint;
                                         color: #717171;
                                         font-size: 11px;
                                         TouchArea { clicked => { about-popup.show(); } }
@@ -1455,7 +1593,7 @@ slint::slint! {
                                             horizontal-stretch: 1;
                                             if search.text == "": Text {
                                                 x: 8px;
-                                                text: root.tiny ? "Search" : "Search YouTube Music, or type to filter";
+                                                text: root.tiny ? L.search : L.search-hint;
                                                 color: Yt.secondary;
                                                 vertical-alignment: center;
                                                 height: parent.height;
@@ -1479,7 +1617,7 @@ slint::slint! {
                                             }
                                         }
                                         if (search.text != "" && !root.tiny) || root.searching: Text {
-                                            text: root.searching ? "Searching…" : "Enter ↵ search";
+                                            text: root.searching ? L.searching : L.search-enter;
                                             color: Yt.secondary;
                                             font-size: 12px;
                                             vertical-alignment: center;
@@ -1518,32 +1656,32 @@ slint::slint! {
                                     }
                                     Text { text: root.tracks-subtitle; color: Yt.secondary; overflow: elide; }
                                 }
-                                if root.list-mode != 1 && root.tracks.length > 0: Pill { text: "Play"; icon: "play"; filled: true; compact: root.tiny || (root.compact && root.page-kind != 0); y: (parent.height - self.height) / 2; clicked => { root.play-all(); keys.focus(); } }
-                                if root.list-mode != 1 && root.tracks.length > 0 && !root.tiny: Pill { text: "Shuffle"; icon: "shuffle"; compact: root.compact; y: (parent.height - self.height) / 2; clicked => { root.shuffle-play(); keys.focus(); } }
-                                if root.list-mode != 1 && root.tracks.length > 0 && root.page-kind != 0 && !root.tiny: Pill { text: "Radio"; icon: "radio"; compact: true; y: (parent.height - self.height) / 2; clicked => { root.start-radio(); keys.focus(); } }
+                                if root.list-mode != 1 && root.tracks.length > 0: Pill { text: L.play; icon: "play"; filled: true; compact: root.tiny || (root.compact && root.page-kind != 0); y: (parent.height - self.height) / 2; clicked => { root.play-all(); keys.focus(); } }
+                                if root.list-mode != 1 && root.tracks.length > 0 && !root.tiny: Pill { text: L.shuffle; icon: "shuffle"; compact: root.compact; y: (parent.height - self.height) / 2; clicked => { root.shuffle-play(); keys.focus(); } }
+                                if root.list-mode != 1 && root.tracks.length > 0 && root.page-kind != 0 && !root.tiny: Pill { text: L.radio; icon: "radio"; compact: true; y: (parent.height - self.height) / 2; clicked => { root.start-radio(); keys.focus(); } }
                                 if root.page-kind == 1 || root.page-kind == 3: Pill {
-                                    text: root.page-saved ? "Saved" : "Save";
+                                    text: root.page-saved ? L.saved : L.save;
                                     icon: root.page-saved ? "check" : "plus";
                                     compact: root.compact;
                                     y: (parent.height - self.height) / 2;
                                     clicked => { root.toggle-saved(); }
                                 }
                                 if root.page-kind == 2: Pill {
-                                    text: root.page-saved ? "Following" : "Follow";
+                                    text: root.page-saved ? L.following : L.follow;
                                     icon: root.page-saved ? "check" : "plus";
                                     compact: root.compact;
                                     y: (parent.height - self.height) / 2;
                                     clicked => { root.toggle-saved(); }
                                 }
                                 if root.downloading > 0: Pill {
-                                    text: root.downloading > 1 ? "Stop (" + root.downloading + ")" : "Stop";
+                                    text: root.downloading > 1 ? L.stop-open + root.downloading + ")" : L.stop;
                                     icon: "close";
                                     compact: root.compact;
                                     y: (parent.height - self.height) / 2;
                                     clicked => { root.stop-downloads(); keys.focus(); }
                                 }
                                 if root.nav == 3 && root.tracks.length > 0 && !root.tiny: Pill {
-                                    text: "Delete all";
+                                    text: L.delete-all;
                                     icon: "delete";
                                     compact: root.compact;
                                     y: (parent.height - self.height) / 2;
@@ -1564,7 +1702,7 @@ slint::slint! {
                             if root.nav == 6: HorizontalLayout {
                                 spacing: 8px;
                                 alignment: start;
-                                for label[k] in ["Songs", "Albums", "Artists", "Playlists"]: Chip {
+                                for label[k] in [L.songs, L.albums, L.artists, L.playlists]: Chip {
                                     text: label;
                                     selected: k == root.search-kind;
                                     clicked => { root.search-category(k); keys.focus(); }
@@ -1582,7 +1720,7 @@ slint::slint! {
                                         padding-left: 14px;
                                         padding-right: 6px;
                                         spacing: 4px;
-                                        Text { text: "Library"; color: Yt.text; vertical-alignment: center; horizontal-stretch: 1; }
+                                        Text { text: L.library; color: Yt.text; vertical-alignment: center; horizontal-stretch: 1; }
                                         Icon { name: "dropdown"; width: 24px; height: 24px; y: (parent.height - self.height) / 2; }
                                     }
                                     picker-touch := TouchArea { clicked => { playlists-popup.show(); } }
@@ -1595,13 +1733,13 @@ slint::slint! {
                             }
                             Rectangle { height: 1px; background: Yt.divider; }
                             if (root.list-mode == 0 && root.tracks.length == 0) || (root.list-mode == 1 && root.cards.length == 0): Text {
-                                text: search.text != "" ? "No songs match \"" + search.text + "\" — Enter searches YouTube Music"
-                                    : root.nav == 6 ? "Nothing found"
-                                    : root.nav == 3 ? "Downloaded songs play offline — download from a song's ⋮ menu"
-                                    : root.nav == 2 ? "Songs you play show up here"
-                                    : root.nav == 4 ? "Save albums from their page"
-                                    : root.nav == 5 ? "Follow artists from their page (sync brings your subscriptions)"
-                                    : "This playlist is empty";
+                                text: search.text != "" ? L.no-match-prefix + search.text + L.no-match-suffix
+                                    : root.nav == 6 ? L.nothing-found
+                                    : root.nav == 3 ? L.empty-downloads
+                                    : root.nav == 2 ? L.empty-history
+                                    : root.nav == 4 ? L.empty-albums
+                                    : root.nav == 5 ? L.empty-artists
+                                    : L.empty-playlist;
                                 color: Yt.secondary;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
@@ -1660,7 +1798,7 @@ slint::slint! {
                                             alignment: start;
                                             padding-top: 8px;
                                             Pill {
-                                                text: "Show all " + root.page-songs + " songs";
+                                                text: L.show-all + root.page-songs + L.songs-suffix;
                                                 clicked => { root.show-all-songs(); keys.focus(); }
                                             }
                                         }
@@ -1861,7 +1999,7 @@ slint::slint! {
                                 VerticalLayout {
                                     alignment: center;
                                     max-width: 360px;
-                                    Text { text: root.now-title != "" ? root.now-title : "Nothing playing"; color: Yt.text; font-weight: 500; overflow: elide; }
+                                    Text { text: root.now-title != "" ? root.now-title : L.nothing-playing; color: Yt.text; font-weight: 500; overflow: elide; }
                                     Text {
                                         text: root.now-artist;
                                         color: now-artist-touch.has-hover ? Yt.text : Yt.secondary;
@@ -1971,7 +2109,7 @@ slint::slint! {
 
         // --- Google account dialog ---
         if root.account-open: Dialog {
-            title: "Google account";
+            title: L.google-account;
             card-width: 480px;
             close => { root.account-open = false; keys.focus(); }
             // The YouTube sign-in: age-restricted songs, the account's YouTube Music.
@@ -1979,10 +2117,10 @@ slint::slint! {
                 spacing: 10px;
                 Text {
                     text: root.yt-signed-in
-                        ? "✓ Signed in to YouTube. Your library, age-restricted songs and your YouTube Music use this account."
+                        ? L.yt-signed-in-long
                         : root.yt-window
-                            ? "Sign in for your library (liked music, playlists), age-restricted songs and your own YouTube Music. Google's own page opens in a window; the password goes only to Google."
-                            : "Sign in at youtube.com in a browser on this computer, pick that browser and Import its sign-in (your library, age-restricted songs, your YouTube Music).";
+                            ? L.yt-sign-in-long-window
+                            : L.yt-sign-in-long-import;
                     color: Yt.text;
                     wrap: word-wrap;
                 }
@@ -1990,7 +2128,7 @@ slint::slint! {
                     alignment: start;
                     spacing: 8px;
                     Pill {
-                        text: root.yt-signing-in ? "Signing in…" : root.yt-signed-in ? "Sign out" : root.yt-window ? "Sign in with Google" : "Import";
+                        text: root.yt-signing-in ? L.signing-in : root.yt-signed-in ? L.sign-out : root.yt-window ? L.sign-in-google : L.import;
                         icon: "account";
                         filled: !root.yt-signed-in && !root.yt-signing-in;
                         clicked => {
@@ -2001,7 +2139,7 @@ slint::slint! {
                         }
                     }
                     if !root.yt-signed-in && !root.yt-window: Pill {
-                        text: root.set-cookies == "" ? "Pick browser" : root.set-cookies;
+                        text: root.set-cookies == "" ? L.pick-browser : root.set-cookies;
                         icon: "dropdown";
                         clicked => { root.cookies-cycle(); }
                     }
@@ -2015,20 +2153,20 @@ slint::slint! {
                 VerticalLayout {
                     horizontal-stretch: 1;
                     alignment: center;
-                    Text { text: "Library sync (YouTube Data API)"; color: Yt.text; font-weight: 600; }
+                    Text { text: L.data-api-title; color: Yt.text; font-weight: 600; }
                     Text {
                         text: root.signed-in
-                            ? "Connected."
+                            ? L.data-api-connected
                             : root.yt-signed-in
-                                ? "Not needed: your library syncs through the sign-in above."
-                                : "Optional: liked music and playlists through your own Google OAuth client. The sign-in above does it without one.";
+                                ? L.data-api-not-needed
+                                : L.data-api-optional;
                         color: Yt.secondary;
                         font-size: 12px;
                         wrap: word-wrap;
                     }
                 }
                 if !root.signed-in && !root.yt-signed-in: Pill {
-                    text: root.oauth-expanded ? "Hide" : "Set up";
+                    text: root.oauth-expanded ? L.hide : L.set-up;
                     icon: root.oauth-expanded ? "up" : "down";
                     y: (parent.height - self.height) / 2;
                     clicked => { root.oauth-expanded = !root.oauth-expanded; }
@@ -2037,59 +2175,59 @@ slint::slint! {
             if root.signed-in: VerticalLayout {
                 spacing: 12px;
                 Text { text: "✓ Signed in. Your library syncs from YouTube; likes and playlist changes go back to it."; color: Yt.text; wrap: word-wrap; }
-                Text { text: "OAuth client: " + root.client-id; color: Yt.secondary; font-size: 12px; overflow: elide; }
+                Text { text: L.oauth-client-prefix + root.client-id; color: Yt.secondary; font-size: 12px; overflow: elide; }
                 HorizontalLayout {
                     alignment: start;
-                    Pill { text: "Sign out"; icon: "account"; clicked => { root.sign-out(); } }
+                    Pill { text: L.sign-out; icon: "account"; clicked => { root.sign-out(); } }
                 }
             }
             if !root.signed-in && root.oauth-expanded: VerticalLayout {
                 spacing: 10px;
-                Text { text: "1. Your Google OAuth client"; color: Yt.text; font-weight: 600; }
+                Text { text: L.oauth-step1; color: Yt.text; font-weight: 600; }
                 Text {
-                    text: "In Google Cloud: enable YouTube Data API v3, add your account as a test user, create a client of type “Desktop app” and download its JSON (README: “Set up Google sign-in”).";
+                    text: L.oauth-how;
                     color: Yt.secondary;
                     wrap: word-wrap;
                 }
                 HorizontalLayout {
                     alignment: start;
                     spacing: 8px;
-                    Pill { text: "Open Google Cloud"; icon: "open"; clicked => { root.open-console(); } }
+                    Pill { text: L.open-google-cloud; icon: "open"; clicked => { root.open-console(); } }
                     if root.download-file != "": Pill {
-                        text: "Import downloaded JSON";
+                        text: L.import-downloaded-json;
                         icon: "playlist-add";
                         filled: true;
                         clicked => { root.import-downloaded(); }
                     }
                 }
-                Text { text: "…or paste it:"; color: Yt.secondary; font-size: 12px; }
-                id-field := Field { placeholder: "Client ID (…apps.googleusercontent.com)"; text: root.client-id; }
-                secret-field := Field { placeholder: "Client secret (GOCSPX-…)"; password: true; }
+                Text { text: L.or-paste; color: Yt.secondary; font-size: 12px; }
+                id-field := Field { placeholder: L.client-id-hint; text: root.client-id; }
+                secret-field := Field { placeholder: L.client-secret-hint; password: true; }
                 HorizontalLayout {
                     alignment: start;
                     spacing: 12px;
                     Pill {
-                        text: "Save client";
+                        text: L.save-client;
                         icon: "sync";
                         clicked => { root.save-client(id-field.text, secret-field.text); }
                     }
-                    if root.client-id != "": Text { text: "✓ client set"; color: Yt.secondary; vertical-alignment: center; }
+                    if root.client-id != "": Text { text: L.client-set; color: Yt.secondary; vertical-alignment: center; }
                 }
                 Rectangle { height: 1px; background: Yt.divider; }
-                Text { text: "2. Sign in"; color: Yt.text; font-weight: 600; }
+                Text { text: L.oauth-step2; color: Yt.text; font-weight: 600; }
                 HorizontalLayout {
                     alignment: start;
                     spacing: 12px;
                     Pill {
-                        text: root.signing-in ? "Open the browser again" : "Sign in with Google";
+                        text: root.signing-in ? L.open-browser-again : L.sign-in-google;
                         icon: "account";
                         filled: root.client-id != "";
                         clicked => { root.sign-in(); }
                     }
-                    if root.signing-in: Text { text: "Waiting for your browser…"; color: Yt.secondary; vertical-alignment: center; }
+                    if root.signing-in: Text { text: L.waiting-browser; color: Yt.secondary; vertical-alignment: center; }
                 }
                 Text {
-                    text: "Google warns the app is unverified: it's your own client, choose Continue.";
+                    text: L.unverified-note;
                     color: Yt.secondary;
                     font-size: 12px;
                     wrap: word-wrap;
@@ -2105,7 +2243,7 @@ slint::slint! {
 
         // --- settings ---
         if root.settings-open: Dialog {
-            title: "Settings";
+            title: L.settings;
             close => { root.settings-open = false; keys.focus(); }
             HorizontalLayout {
                 spacing: 12px;
@@ -2114,13 +2252,13 @@ slint::slint! {
                     alignment: center;
                     Text { text: "ytm-player " + root.app-version; color: Yt.text; }
                     Text {
-                        text: root.update-version != "" ? "Version " + root.update-version + " is available" : "Up to date (checked at start)";
+                        text: root.update-version != "" ? L.version-prefix + root.update-version + L.is-available-suffix : L.up-to-date;
                         color: root.update-version != "" ? Yt.red : Yt.secondary;
                         font-size: 12px;
                     }
                 }
                 Pill {
-                    text: root.updating ? "Updating…" : root.update-version != "" ? "Update" : "Check now";
+                    text: root.updating ? L.updating : root.update-version != "" ? L.update : L.check-now;
                     icon: root.update-version != "" ? "download" : "sync";
                     filled: root.update-version != "";
                     y: (parent.height - self.height) / 2;
@@ -2130,12 +2268,31 @@ slint::slint! {
                     }
                 }
             }
-            Toggle { text: "Autoplay: continue with similar songs"; on: root.autoplay; toggled => { root.toggle-autoplay(); } }
-            Toggle { text: "Normalize volume (like YouTube Music)"; on: root.set-normalize; toggled => { root.setting-toggled("normalize_volume"); } }
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: L.language;
+                    color: Yt.text;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Chip {
+                    text: "English";
+                    selected: root.lang != "uk";
+                    clicked => { root.set-language("en"); }
+                }
+                Chip {
+                    text: "Українська";
+                    selected: root.lang == "uk";
+                    clicked => { root.set-language("uk"); }
+                }
+            }
+            Toggle { text: L.autoplay-setting; on: root.autoplay; toggled => { root.toggle-autoplay(); } }
+            Toggle { text: L.normalize-setting; on: root.set-normalize; toggled => { root.setting-toggled("normalize_volume"); } }
             VerticalLayout {
                 spacing: 4px;
                 Text {
-                    text: root.set-crossfade < 0.5 ? "Crossfade: off (gapless)" : "Crossfade: " + round(root.set-crossfade) + " s";
+                    text: root.set-crossfade < 0.5 ? L.crossfade-off : L.crossfade-prefix + round(root.set-crossfade) + L.seconds-suffix;
                     color: Yt.text;
                 }
                 ThinSlider {
@@ -2144,27 +2301,27 @@ slint::slint! {
                     changed(v) => { root.crossfade-changed(round(v * 12)); }
                 }
             }
-            Toggle { text: "Notify when the song changes"; on: root.set-notifications; toggled => { root.setting-toggled("notifications"); } }
-            Toggle { text: "Icon in the menu bar / tray (next start)"; on: root.set-tray; toggled => { root.setting-toggled("tray"); } }
+            Toggle { text: L.notifications-setting; on: root.set-notifications; toggled => { root.setting-toggled("notifications"); } }
+            Toggle { text: L.tray-setting; on: root.set-tray; toggled => { root.setting-toggled("tray"); } }
             HorizontalLayout {
                 spacing: 12px;
                 VerticalLayout {
                     horizontal-stretch: 1;
                     alignment: center;
-                    Text { text: "YouTube account"; color: Yt.text; }
+                    Text { text: L.youtube-account; color: Yt.text; }
                     Text {
                         text: root.yt-signed-in
-                            ? "Signed in. Age-restricted songs and your YouTube Music use this account."
+                            ? L.yt-signed-in
                             : root.yt-window
-                                ? "For age-restricted songs and your YouTube Music. Google's own page opens in a window; the password goes only to Google."
-                                : "For age-restricted songs and your YouTube Music: sign in at youtube.com in a browser, pick it below, then Import.";
+                                ? L.yt-sign-in-window
+                                : L.yt-sign-in-import;
                         color: Yt.secondary;
                         font-size: 12px;
                         wrap: word-wrap;
                     }
                 }
                 Pill {
-                    text: root.yt-signing-in ? "Signing in…" : root.yt-signed-in ? "Sign out" : root.yt-window ? "Sign in with Google" : "Import";
+                    text: root.yt-signing-in ? L.signing-in : root.yt-signed-in ? L.sign-out : root.yt-window ? L.sign-in-google : L.import;
                     icon: "account";
                     filled: !root.yt-signed-in && !root.yt-signing-in;
                     y: (parent.height - self.height) / 2;
@@ -2181,23 +2338,23 @@ slint::slint! {
                 VerticalLayout {
                     horizontal-stretch: 1;
                     alignment: center;
-                    Text { text: root.yt-window ? "Or use a browser's sign-in" : "Browser"; color: Yt.text; }
+                    Text { text: root.yt-window ? L.or-browser-sign-in : L.browser; color: Yt.text; }
                     Text {
-                        text: "Use the YouTube sign-in of this browser, only for such songs. macOS: needs Full Disk Access for ytm-player (System Settings → Privacy & Security).";
+                        text: L.browser-note;
                         color: Yt.secondary;
                         font-size: 12px;
                         wrap: word-wrap;
                     }
                 }
                 Pill {
-                    text: root.set-cookies == "" ? "Off" : root.set-cookies;
+                    text: root.set-cookies == "" ? L.off : root.set-cookies;
                     icon: "account";
                     y: (parent.height - self.height) / 2;
                     clicked => { root.cookies-cycle(); }
                 }
             }
             Text {
-                text: "Last.fm and Discord: see config.toml (README: Integrations).";
+                text: L.integrations-note;
                 color: Yt.secondary;
                 font-size: 12px;
                 wrap: word-wrap;
@@ -2206,13 +2363,13 @@ slint::slint! {
 
         // --- new / rename playlist ---
         if root.name-dialog != 0: Dialog {
-            title: root.name-dialog == 1 ? "New playlist" : "Rename playlist";
+            title: root.name-dialog == 1 ? L.new-playlist : L.rename-playlist;
             close => { root.name-dialog = 0; keys.focus(); }
-            name-field := Field { placeholder: "Name"; text: root.name-dialog == 2 ? root.tracks-title : ""; }
+            name-field := Field { placeholder: L.name; text: root.name-dialog == 2 ? root.tracks-title : ""; }
             HorizontalLayout {
                 alignment: end;
                 Pill {
-                    text: root.name-dialog == 1 ? "Create" : "Rename";
+                    text: root.name-dialog == 1 ? L.create : L.rename;
                     filled: true;
                     icon: "check";
                     clicked => {
@@ -2225,19 +2382,19 @@ slint::slint! {
         }
 
         if root.downloads-dialog: Dialog {
-            title: "Delete all downloaded songs?";
+            title: L.delete-downloads-q;
             close => { root.downloads-dialog = false; keys.focus(); }
             Text {
-                text: "Their files are removed from this computer; the songs stay in your library and play online.";
+                text: L.delete-downloads-note;
                 color: Yt.secondary;
                 wrap: word-wrap;
             }
             HorizontalLayout {
                 alignment: end;
                 spacing: 8px;
-                Pill { text: "Cancel"; clicked => { root.downloads-dialog = false; keys.focus(); } }
+                Pill { text: L.cancel; clicked => { root.downloads-dialog = false; keys.focus(); } }
                 Pill {
-                    text: "Delete all";
+                    text: L.delete-all;
                     icon: "delete";
                     filled: true;
                     clicked => { root.remove-all-downloads(); root.downloads-dialog = false; keys.focus(); }
@@ -2246,14 +2403,14 @@ slint::slint! {
         }
 
         if root.delete-dialog: Dialog {
-            title: "Delete “" + root.tracks-title + "”?";
+            title: L.delete-playlist-q-prefix + root.tracks-title + L.delete-playlist-q-suffix;
             close => { root.delete-dialog = false; keys.focus(); }
-            Text { text: "The playlist is deleted on YouTube too."; color: Yt.secondary; wrap: word-wrap; }
+            Text { text: L.delete-playlist-note; color: Yt.secondary; wrap: word-wrap; }
             HorizontalLayout {
                 alignment: end;
                 spacing: 8px;
-                Pill { text: "Cancel"; clicked => { root.delete-dialog = false; keys.focus(); } }
-                Pill { text: "Delete"; icon: "delete"; filled: true; clicked => { root.delete-playlist(); root.delete-dialog = false; keys.focus(); } }
+                Pill { text: L.cancel; clicked => { root.delete-dialog = false; keys.focus(); } }
+                Pill { text: L.delete; icon: "delete"; filled: true; clicked => { root.delete-playlist(); root.delete-dialog = false; keys.focus(); } }
             }
         }
 
@@ -2273,13 +2430,13 @@ slint::slint! {
                 drop-shadow-color: #00000099;
                 VerticalLayout {
                     padding: 6px;
-                    MenuItem { icon: "radio"; text: "Start radio"; clicked => { root.row-action(root.menu-row, "radio"); } }
-                    MenuItem { icon: "queue-next"; text: "Play next"; clicked => { root.row-action(root.menu-row, "next"); } }
-                    MenuItem { icon: "queue-add"; text: "Add to queue"; clicked => { root.row-action(root.menu-row, "queue"); } }
-                    MenuItem { icon: "playlist-add"; text: "Save to playlist"; clicked => { root.row-action(root.menu-row, "add"); add-popup.show(); } }
-                    MenuItem { icon: "download"; text: "Download"; clicked => { root.row-action(root.menu-row, "download"); } }
-                    MenuItem { icon: "dislike"; text: "Dislike"; clicked => { root.row-action(root.menu-row, "dislike"); } }
-                    MenuItem { icon: "delete"; text: root.nav == 3 ? "Remove download" : "Remove from playlist"; clicked => { root.row-action(root.menu-row, "remove"); } }
+                    MenuItem { icon: "radio"; text: L.start-radio; clicked => { root.row-action(root.menu-row, "radio"); } }
+                    MenuItem { icon: "queue-next"; text: L.play-next; clicked => { root.row-action(root.menu-row, "next"); } }
+                    MenuItem { icon: "queue-add"; text: L.add-to-queue; clicked => { root.row-action(root.menu-row, "queue"); } }
+                    MenuItem { icon: "playlist-add"; text: L.save-to-playlist; clicked => { root.row-action(root.menu-row, "add"); add-popup.show(); } }
+                    MenuItem { icon: "download"; text: L.download; clicked => { root.row-action(root.menu-row, "download"); } }
+                    MenuItem { icon: "dislike"; text: L.dislike; clicked => { root.row-action(root.menu-row, "dislike"); } }
+                    MenuItem { icon: "delete"; text: root.nav == 3 ? L.remove-download : L.remove-from-playlist; clicked => { root.row-action(root.menu-row, "remove"); } }
                 }
             }
         }
@@ -2299,8 +2456,8 @@ slint::slint! {
                 drop-shadow-color: #00000099;
                 VerticalLayout {
                     padding: 6px;
-                    MenuItem { icon: "settings"; text: "Rename"; clicked => { root.name-dialog = 2; } }
-                    MenuItem { icon: "delete"; text: "Delete"; clicked => { root.delete-dialog = true; } }
+                    MenuItem { icon: "settings"; text: L.rename; clicked => { root.name-dialog = 2; } }
+                    MenuItem { icon: "delete"; text: L.delete; clicked => { root.delete-dialog = true; } }
                 }
             }
         }
@@ -2320,10 +2477,10 @@ slint::slint! {
                 drop-shadow-color: #00000099;
                 VerticalLayout {
                     padding: 6px;
-                    Text { text: "Sleep timer"; color: Yt.text; font-weight: 600; height: 36px; vertical-alignment: center; x: 12px; }
-                    for m in [15, 30, 45, 60]: MenuItem { icon: "moon"; text: m + " minutes"; clicked => { root.set-sleep(m); } }
-                    MenuItem { icon: "moon"; text: "End of song"; clicked => { root.set-sleep(0); } }
-                    if root.sleep-text != "": MenuItem { icon: "close"; text: "Turn off"; clicked => { root.set-sleep(-1); } }
+                    Text { text: L.sleep-timer; color: Yt.text; font-weight: 600; height: 36px; vertical-alignment: center; x: 12px; }
+                    for m in [15, 30, 45, 60]: MenuItem { icon: "moon"; text: m + L.minutes-suffix; clicked => { root.set-sleep(m); } }
+                    MenuItem { icon: "moon"; text: L.end-of-song; clicked => { root.set-sleep(0); } }
+                    if root.sleep-text != "": MenuItem { icon: "close"; text: L.turn-off; clicked => { root.set-sleep(-1); } }
                 }
             }
         }
@@ -2343,15 +2500,15 @@ slint::slint! {
                 drop-shadow-color: #00000099;
                 VerticalLayout {
                     padding: 6px;
-                    Text { text: "Play on"; color: Yt.text; font-weight: 600; height: 36px; vertical-alignment: center; x: 12px; }
-                    MenuItem { icon: root.casting == "" ? "check" : "computer"; text: "This computer"; clicked => { root.cast-to(-1); } }
+                    Text { text: L.play-on; color: Yt.text; font-weight: 600; height: 36px; vertical-alignment: center; x: 12px; }
+                    MenuItem { icon: root.casting == "" ? "check" : "computer"; text: L.this-computer; clicked => { root.cast-to(-1); } }
                     for d[i] in root.cast-devices: MenuItem {
                         icon: d == root.casting ? "check" : "cast";
                         text: d;
                         clicked => { root.cast-to(i); }
                     }
                     if root.cast-devices.length == 0: Text {
-                        text: root.cast-scanning ? "Looking for Chromecasts…" : "No Chromecasts found";
+                        text: root.cast-scanning ? L.looking-for-cast : L.no-cast;
                         color: Yt.secondary;
                         height: 44px;
                         vertical-alignment: center;
@@ -2376,7 +2533,7 @@ slint::slint! {
                 drop-shadow-color: #00000099;
                 VerticalLayout {
                     padding: 8px;
-                    Text { text: "Save to playlist"; color: Yt.text; font-weight: 600; height: 36px; vertical-alignment: center; x: 8px; }
+                    Text { text: L.save-to-playlist; color: Yt.text; font-weight: 600; height: 36px; vertical-alignment: center; x: 8px; }
                     ListView {
                         for title[i] in root.add-choices: Rectangle {
                             height: 40px;
@@ -2386,7 +2543,7 @@ slint::slint! {
                             pick := TouchArea { clicked => { root.add-to(i); add-popup.close(); } }
                         }
                     }
-                    MenuItem { icon: "plus"; text: "New playlist…"; clicked => { root.add-to(-1); root.name-dialog = 1; } }
+                    MenuItem { icon: "plus"; text: L.new-playlist-menu; clicked => { root.add-to(-1); root.name-dialog = 1; } }
                 }
             }
         }
@@ -2407,13 +2564,13 @@ slint::slint! {
                 drop-shadow-color: #00000099;
                 VerticalLayout {
                     padding: 6px;
-                    MenuItem { icon: "home"; text: "Home"; clicked => { root.nav-to(1); playlists-popup.close(); } }
-                    MenuItem { icon: "explore"; text: "Explore"; clicked => { root.nav-to(7); playlists-popup.close(); } }
-                    if root.search-query != "": MenuItem { icon: "search"; text: "Search: " + root.search-query; clicked => { root.nav-to(6); playlists-popup.close(); } }
-                    MenuItem { icon: "history"; text: "History"; clicked => { root.nav-to(2); playlists-popup.close(); } }
-                    MenuItem { icon: "download"; text: "Downloads"; clicked => { root.nav-to(3); playlists-popup.close(); } }
-                    MenuItem { icon: "album"; text: "Albums"; clicked => { root.nav-to(4); playlists-popup.close(); } }
-                    MenuItem { icon: "artist"; text: "Artists"; clicked => { root.nav-to(5); playlists-popup.close(); } }
+                    MenuItem { icon: "home"; text: L.home; clicked => { root.nav-to(1); playlists-popup.close(); } }
+                    MenuItem { icon: "explore"; text: L.explore; clicked => { root.nav-to(7); playlists-popup.close(); } }
+                    if root.search-query != "": MenuItem { icon: "search"; text: L.search-prefix + root.search-query; clicked => { root.nav-to(6); playlists-popup.close(); } }
+                    MenuItem { icon: "history"; text: L.history; clicked => { root.nav-to(2); playlists-popup.close(); } }
+                    MenuItem { icon: "download"; text: L.downloads; clicked => { root.nav-to(3); playlists-popup.close(); } }
+                    MenuItem { icon: "album"; text: L.albums; clicked => { root.nav-to(4); playlists-popup.close(); } }
+                    MenuItem { icon: "artist"; text: L.artists; clicked => { root.nav-to(5); playlists-popup.close(); } }
                     ListView {
                         for p[i] in root.playlists: PlaylistItem {
                             playlist: p;

@@ -180,6 +180,7 @@ pub(crate) async fn session_with(
         youtube: crate::youtube_session::YouTubeSession::none(),
         cookies_from_browser: String::new(),
         liked_music_only: true,
+        language: "en".into(),
         volume: 0.5,
         media_controls: false,
         audio_device: None,

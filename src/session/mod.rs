@@ -38,6 +38,7 @@ use crate::{
     },
     catalog::{Catalog, Item, Page, SearchKind, Shelf},
     config::settings::Settings,
+    i18n::Lang,
     lyrics::Lyrics,
     media::{MediaAction, MediaControls},
     storage::{Download, Library},
@@ -64,6 +65,8 @@ pub struct Deps {
     pub catalog: Catalog,
     pub http: reqwest::Client,
     pub liked_music_only: bool,
+    /// "auto", "en" or "uk" (`config.toml`).
+    pub language: String,
     pub volume: f32,
     pub media_controls: bool,
     pub audio_device: Option<String>,
@@ -159,6 +162,8 @@ pub struct SessionView {
     pub status: Option<(String, bool)>,
     pub syncing: bool,
     pub searching: bool,
+    /// The language the UI should use.
+    pub lang: Lang,
     /// The clip of the playing song is open in the video window.
     pub watching: bool,
     /// How many songs are still being downloaded.
@@ -324,6 +329,8 @@ pub struct Session {
     /// Related shelves of the playing track (when asked for).
     pub related: Option<(Arc<str>, Arc<[Shelf]>)>,
     want_related: bool,
+    /// The language the player speaks ([`crate::i18n`]).
+    pub lang: Lang,
     /// The clip is open in the video window.
     pub watching: bool,
     /// Tracks being downloaded.
@@ -422,6 +429,7 @@ impl Session {
         queue.repeat = Repeat::parse(meta("repeat").as_deref().unwrap_or_default());
         player.set_crossfade(deps.crossfade);
         let cookies_browser = deps.cookies_from_browser.clone();
+        let lang = Lang::from_code(&deps.language);
         Self {
             player_status: player.status(),
             deps,
@@ -444,6 +452,7 @@ impl Session {
             want_lyrics: false,
             related: None,
             want_related: false,
+            lang,
             watching: false,
             downloading: HashSet::new(),
             download_task: None,
@@ -495,6 +504,7 @@ impl Session {
             status: self.status.as_ref().map(|s| (s.text.clone(), s.is_error)),
             syncing: self.syncing,
             searching: self.searching,
+            lang: self.lang,
             watching: self.watching,
             downloading: self.downloading.len(),
             signed_in: self.signed_in(),
@@ -945,6 +955,13 @@ impl Session {
         self.player.set_crossfade(overlap);
         self.queue_changed();
         self.store_setting("crossfade", &overlap.as_secs().to_string());
+    }
+
+    /// Switches the language of everything the player says; kept in
+    /// `config.toml`.
+    pub fn set_language(&mut self, code: &str) {
+        self.lang = Lang::from_code(code);
+        self.store_setting("language", &format!("{code:?}"));
     }
 
     /// Loudness normalization on or off (from the next track).

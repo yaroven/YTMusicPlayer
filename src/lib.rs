@@ -13,6 +13,7 @@ pub mod discord;
 pub mod fmt;
 #[cfg(feature = "gui")]
 pub mod gui;
+pub mod i18n;
 pub mod instance;
 pub mod lastfm;
 pub mod library_view;

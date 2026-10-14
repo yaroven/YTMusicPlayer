@@ -43,13 +43,14 @@ use crate::{
     catalog::{Item, ItemKind, Page, SearchKind, Shelf},
     config::settings::Settings,
     fmt::fmt_time,
+    i18n::Lang,
     library_view::{LibraryView, SessionData, Source},
     lyrics::Lyrics,
     session::{Changes, Deps, SearchResults, Session, SessionView, Sleep},
     storage::Library,
 };
 use art::ArtSize;
-use ui::{CardRow, LyricLine, MainWindow, PlaylistRow, ShelfRow, TrackRow};
+use ui::{CardRow, L, LyricLine, MainWindow, PlaylistRow, ShelfRow, TrackRow};
 
 /// Decoded thumbnails kept in memory (~27 KB each at 96x96 RGB): a screen
 /// of rows plus the queue panel on a tall window.
@@ -97,6 +98,7 @@ enum Cmd {
     /// Back to audio, at the second the video stopped (when it reported one).
     #[cfg(any(target_os = "macos", windows))]
     VideoOff(Option<Duration>),
+    SetLanguage(String),
     /// No web view here (Linux): open the clip in the browser.
     #[cfg(not(any(target_os = "macos", windows)))]
     WatchVideo,
@@ -794,6 +796,8 @@ struct View {
     /// The clip playing over the cover, when the video is on.
     #[cfg(any(target_os = "macos", windows))]
     video: Option<video::VideoView>,
+    /// The language the window speaks.
+    lang: Lang,
     /// Where the video goes (window coordinates, logical pixels).
     #[cfg(any(target_os = "macos", windows))]
     video_rect: (f32, f32, f32, f32),
@@ -1032,6 +1036,7 @@ impl View {
         ui.set_yt_window(cfg!(any(target_os = "macos", windows)));
         ui.set_queue_source(self.queue_source.borrow().clone());
         ui.set_app_version(env!("CARGO_PKG_VERSION").into());
+        apply_language(ui, self.lang);
         if let Some(width) = self
             .store
             .get_meta("sidebar_width")
@@ -1155,6 +1160,13 @@ impl View {
 
     /// Takes in a snapshot from the core; renders it when a window is open.
     fn absorb(&mut self, snap: Snapshot, ui: Option<&MainWindow>) {
+        // The core decides the language (settings, or the system's).
+        if snap.view.lang != self.lang {
+            self.lang = snap.view.lang;
+            if let Some(ui) = ui {
+                apply_language(ui, self.lang);
+            }
+        }
         if let Some((done, page)) = &snap.update_done {
             use crate::update::Installed;
             match done {
@@ -1295,6 +1307,144 @@ fn downloaded_client_name() -> String {
     account::downloaded_client_json()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .unwrap_or_default()
+}
+
+/// Puts the chosen language's labels into the window.
+fn apply_language(ui: &MainWindow, lang: Lang) {
+    let t = lang.text();
+    let l = ui.global::<L>();
+    l.set_home(t.home.into());
+    l.set_explore(t.explore.into());
+    l.set_library(t.library.into());
+    l.set_history(t.history.into());
+    l.set_downloads(t.downloads.into());
+    l.set_albums(t.albums.into());
+    l.set_artists(t.artists.into());
+    l.set_playlists(t.playlists.into());
+    l.set_songs(t.songs.into());
+    l.set_account(t.account.into());
+    l.set_sign_in(t.sign_in.into());
+    l.set_sign_out(t.sign_out.into());
+    l.set_sign_in_google(t.sign_in_google.into());
+    l.set_signing_in(t.signing_in.into());
+    l.set_syncing(t.syncing.into());
+    l.set_searching(t.searching.into());
+    l.set_search(t.search.into());
+    l.set_search_hint(t.search_hint.into());
+    l.set_search_enter(t.search_enter.into());
+    l.set_search_prefix(t.search_prefix.into());
+    l.set_made_with_slint(t.made_with_slint.into());
+    l.set_play(t.play.into());
+    l.set_shuffle(t.shuffle.into());
+    l.set_radio(t.radio.into());
+    l.set_save(t.save.into());
+    l.set_saved(t.saved.into());
+    l.set_follow(t.follow.into());
+    l.set_following(t.following.into());
+    l.set_stop(t.stop.into());
+    l.set_stop_open(t.stop_open.into());
+    l.set_delete_all(t.delete_all.into());
+    l.set_show_all(t.show_all.into());
+    l.set_songs_suffix(t.songs_suffix.into());
+    l.set_nothing_playing(t.nothing_playing.into());
+    l.set_playing_from(t.playing_from.into());
+    l.set_autoplay(t.autoplay.into());
+    l.set_up_next(t.up_next.into());
+    l.set_lyrics_tab(t.lyrics_tab.into());
+    l.set_related_tab(t.related_tab.into());
+    l.set_loading(t.loading.into());
+    l.set_loading_video(t.loading_video.into());
+    l.set_looking_for_lyrics(t.looking_for_lyrics.into());
+    l.set_no_lyrics(t.no_lyrics.into());
+    l.set_nothing_found(t.nothing_found.into());
+    l.set_empty_playlist(t.empty_playlist.into());
+    l.set_empty_history(t.empty_history.into());
+    l.set_empty_downloads(t.empty_downloads.into());
+    l.set_empty_albums(t.empty_albums.into());
+    l.set_empty_artists(t.empty_artists.into());
+    l.set_no_match_prefix(t.no_match_prefix.into());
+    l.set_no_match_suffix(t.no_match_suffix.into());
+    l.set_start_radio(t.start_radio.into());
+    l.set_play_next(t.play_next.into());
+    l.set_add_to_queue(t.add_to_queue.into());
+    l.set_download(t.download.into());
+    l.set_remove_download(t.remove_download.into());
+    l.set_dislike(t.dislike.into());
+    l.set_remove_from_playlist(t.remove_from_playlist.into());
+    l.set_save_to_playlist(t.save_to_playlist.into());
+    l.set_new_playlist_menu(t.new_playlist_menu.into());
+    l.set_new_playlist(t.new_playlist.into());
+    l.set_rename_playlist(t.rename_playlist.into());
+    l.set_rename(t.rename.into());
+    l.set_create(t.create.into());
+    l.set_delete(t.delete.into());
+    l.set_cancel(t.cancel.into());
+    l.set_name(t.name.into());
+    l.set_delete_playlist_q_prefix(t.delete_playlist_q_prefix.into());
+    l.set_delete_playlist_q_suffix(t.delete_playlist_q_suffix.into());
+    l.set_delete_playlist_note(t.delete_playlist_note.into());
+    l.set_delete_downloads_q(t.delete_downloads_q.into());
+    l.set_delete_downloads_note(t.delete_downloads_note.into());
+    l.set_sleep_timer(t.sleep_timer.into());
+    l.set_minutes_suffix(t.minutes_suffix.into());
+    l.set_end_of_song(t.end_of_song.into());
+    l.set_turn_off(t.turn_off.into());
+    l.set_play_on(t.play_on.into());
+    l.set_this_computer(t.this_computer.into());
+    l.set_looking_for_cast(t.looking_for_cast.into());
+    l.set_no_cast(t.no_cast.into());
+    l.set_settings(t.settings.into());
+    l.set_language(t.language.into());
+    l.set_version_prefix(t.version_prefix.into());
+    l.set_is_available_suffix(t.is_available_suffix.into());
+    l.set_up_to_date(t.up_to_date.into());
+    l.set_update(t.update.into());
+    l.set_updating(t.updating.into());
+    l.set_check_now(t.check_now.into());
+    l.set_update_to_prefix(t.update_to_prefix.into());
+    l.set_autoplay_setting(t.autoplay_setting.into());
+    l.set_normalize_setting(t.normalize_setting.into());
+    l.set_crossfade_off(t.crossfade_off.into());
+    l.set_crossfade_prefix(t.crossfade_prefix.into());
+    l.set_seconds_suffix(t.seconds_suffix.into());
+    l.set_notifications_setting(t.notifications_setting.into());
+    l.set_tray_setting(t.tray_setting.into());
+    l.set_youtube_account(t.youtube_account.into());
+    l.set_yt_signed_in(t.yt_signed_in.into());
+    l.set_yt_sign_in_window(t.yt_sign_in_window.into());
+    l.set_yt_sign_in_import(t.yt_sign_in_import.into());
+    l.set_import(t.import.into());
+    l.set_pick_browser(t.pick_browser.into());
+    l.set_browser(t.browser.into());
+    l.set_or_browser_sign_in(t.or_browser_sign_in.into());
+    l.set_browser_note(t.browser_note.into());
+    l.set_off(t.off.into());
+    l.set_integrations_note(t.integrations_note.into());
+    l.set_google_account(t.google_account.into());
+    l.set_yt_signed_in_long(t.yt_signed_in_long.into());
+    l.set_yt_sign_in_long_window(t.yt_sign_in_long_window.into());
+    l.set_yt_sign_in_long_import(t.yt_sign_in_long_import.into());
+    l.set_data_api_title(t.data_api_title.into());
+    l.set_data_api_connected(t.data_api_connected.into());
+    l.set_data_api_not_needed(t.data_api_not_needed.into());
+    l.set_data_api_optional(t.data_api_optional.into());
+    l.set_set_up(t.set_up.into());
+    l.set_hide(t.hide.into());
+    l.set_oauth_client_prefix(t.oauth_client_prefix.into());
+    l.set_oauth_step1(t.oauth_step1.into());
+    l.set_oauth_step2(t.oauth_step2.into());
+    l.set_oauth_how(t.oauth_how.into());
+    l.set_open_google_cloud(t.open_google_cloud.into());
+    l.set_import_downloaded_json(t.import_downloaded_json.into());
+    l.set_or_paste(t.or_paste.into());
+    l.set_client_id_hint(t.client_id_hint.into());
+    l.set_client_secret_hint(t.client_secret_hint.into());
+    l.set_save_client(t.save_client.into());
+    l.set_client_set(t.client_set.into());
+    l.set_open_browser_again(t.open_browser_again.into());
+    l.set_waiting_browser(t.waiting_browser.into());
+    l.set_unverified_note(t.unverified_note.into());
+    ui.set_lang(lang.code().into());
 }
 
 /// Opens the window again, or brings it to the front (called from the
@@ -1444,6 +1594,7 @@ fn new_view(
         home: None,
         explore: None,
         suggestion_rows: Rc::new(VecModel::default()),
+        lang: Lang::default(),
         #[cfg(any(target_os = "macos", windows))]
         video: None,
         #[cfg(any(target_os = "macos", windows))]
@@ -1883,6 +2034,12 @@ fn wire_callbacks(
     });
     // The clip plays in the window on macOS / Windows; elsewhere the
     // browser gets it (`Session::watch_video`).
+    on!(on_set_language, [tx, view, ui], |code| {
+        let lang = Lang::from_code(&code);
+        view.borrow_mut().lang = lang;
+        apply_language(ui, lang);
+        send(Cmd::SetLanguage(code.into()), tx);
+    });
     on!(on_watch_video, [tx, view, ui], || {
         #[cfg(any(target_os = "macos", windows))]
         {
@@ -2255,6 +2412,7 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::VideoOn => session.pause_for_video(),
         #[cfg(any(target_os = "macos", windows))]
         Cmd::VideoOff(at) => session.resume_from_video(at),
+        Cmd::SetLanguage(code) => session.set_language(&code),
         #[cfg(not(any(target_os = "macos", windows)))]
         Cmd::WatchVideo => session.watch_video(),
         Cmd::StopDownloads => session.cancel_downloads(),

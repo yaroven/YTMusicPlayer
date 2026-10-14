@@ -124,6 +124,7 @@ pub async fn deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
         source,
         http: http.clone(),
         liked_music_only: settings.liked_music_only,
+        language: settings.language.clone(),
         volume: settings.volume,
         media_controls: settings.media_controls,
         audio_device: settings.audio_device(),

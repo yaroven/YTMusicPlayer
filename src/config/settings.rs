@@ -22,6 +22,10 @@ device_client_secret = ""
 # Interface `ytm` opens: "tui" (terminal) or "gui" (window).
 ui = "tui"
 
+# Language of the window and the terminal UI: "auto" (the system's),
+# "en" or "uk".
+language = "auto"
+
 # Media keys and the system "Now Playing" widget (macOS, Linux).
 media_controls = true
 
@@ -89,6 +93,8 @@ pub struct Settings {
     pub device_client_id: String,
     pub device_client_secret: String,
     pub ui: String,
+    /// "auto", "en" or "uk".
+    pub language: String,
     pub media_controls: bool,
     pub audio_device: String,
     pub js_fallback: bool,
@@ -117,6 +123,7 @@ impl Default for Settings {
             device_client_id: String::new(),
             device_client_secret: String::new(),
             ui: "tui".into(),
+            language: "auto".into(),
             media_controls: true,
             audio_device: String::new(),
             js_fallback: true,
