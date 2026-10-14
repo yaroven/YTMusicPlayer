@@ -31,16 +31,21 @@ fn script(watch_url: &str) -> String {
     format!(
         r#"(function () {{
     var watch = location.pathname === '/watch';
-    if (watch) {{
-        var css = document.createElement('style');
-        css.textContent = 'ytd-masthead,#masthead-container,#secondary,#below,ytd-comments,#chat,tp-yt-app-drawer{{display:none!important}}'
-            + 'ytd-watch-flexy #primary,ytd-watch-flexy #primary-inner,#player,#player-container{{max-width:100vw!important;padding:0!important;margin:0!important}}'
-            + 'html,body{{overflow:hidden!important;background:#000!important}}';
-        (document.head || document.documentElement).appendChild(css);
-    }} else {{
-        var css = document.createElement('style');
-        css.textContent = 'html,body{{background:#000!important;margin:0!important}}';
-        (document.head || document.documentElement).appendChild(css);
+    // YouTube's own dark theme, so nothing white shows around the video.
+    document.documentElement.setAttribute('dark', 'true');
+    var css = document.createElement('style');
+    // The player fills the view and the picture keeps its shape in the middle.
+    css.textContent = 'html,body{{background:#000!important;margin:0!important;overflow:hidden!important}}'
+        + '#player,#movie_player,.html5-video-player,.html5-video-container{{width:100vw!important;height:100vh!important;left:0!important;top:0!important}}'
+        + 'video{{width:100%!important;height:100%!important;left:0!important;top:0!important;object-fit:contain!important}}'
+        + (watch
+            ? 'ytd-masthead,#masthead-container,#secondary,#below,ytd-comments,#chat,tp-yt-app-drawer,#related,ytd-watch-metadata{{display:none!important}}'
+              + 'ytd-app,#content,#page-manager,ytd-watch-flexy,#columns,#primary,#primary-inner,#player,#player-container-outer,#player-container-inner,#movie_player{{background:#000!important}}'
+              + 'ytd-watch-flexy #primary{{padding:0!important;margin:0!important;max-width:100vw!important}}'
+              + '#player-container-outer,#player-container-inner{{max-width:100vw!important}}'
+            : '#player,.html5-video-player{{background:#000!important}}');
+    (document.head || document.documentElement).appendChild(css);
+    if (!watch) {{
         // Embedding is blocked for some songs: their watch page still plays.
         setTimeout(function () {{
             var v = document.querySelector('video');

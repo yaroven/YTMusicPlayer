@@ -115,6 +115,7 @@ slint::slint! {
             : name == "downloaded" ? "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
             : name == "album" ? "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 14.5c-2.49 0-4.5-2.01-4.5-4.5S9.51 7.5 12 7.5s4.5 2.01 4.5 4.5-2.01 4.5-4.5 4.5zm0-5.5c-.55 0-1 .45-1 1s.45 1 1 1 1-.45 1-1-.45-1-1-1z"
             : name == "artist" ? "M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"
+            : name == "note" ? "M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"
             : name == "video" ? "M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM9.5 16.5l7-4.5-7-4.5v9z"
             : name == "more" ? "M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"
             : name == "back" ? "M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"
@@ -679,6 +680,56 @@ slint::slint! {
             cover-touch := TouchArea {
                 mouse-cursor: pointer;
                 clicked => { root.clicked(); }
+            }
+        }
+    }
+
+    // YouTube Music's song / video switch, over the cover.
+    component MediaSwitch inherits Rectangle {
+        in property <bool> video;
+        callback choose(bool);
+        width: 92px;
+        height: 36px;
+        border-radius: 18px;
+        background: Yt.raised;
+        HorizontalLayout {
+            padding: 4px;
+            spacing: 4px;
+            Rectangle {
+                width: 40px;
+                border-radius: 14px;
+                background: root.video ? transparent : #ffffff26;
+                animate background { duration: 140ms; }
+                Icon {
+                    name: "note";
+                    color: root.video ? Yt.secondary : Yt.text;
+                    width: 20px;
+                    height: 20px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.choose(false); }
+                }
+            }
+            Rectangle {
+                width: 40px;
+                border-radius: 14px;
+                background: root.video ? #ffffff26 : transparent;
+                animate background { duration: 140ms; }
+                Icon {
+                    name: "video";
+                    color: root.video ? Yt.text : Yt.secondary;
+                    width: 20px;
+                    height: 20px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.choose(true); }
+                }
             }
         }
     }
@@ -1650,18 +1701,38 @@ slint::slint! {
                             padding: 40px;
                             padding-bottom: 24px;
                             spacing: 48px;
-                            if !root.video-on: BigCover {
+                            VerticalLayout {
                                 horizontal-stretch: 3;
-                                art: root.now-art;
-                                has-art: root.now-has-art;
-                                initial: root.now-initial;
-                                hue: root.now-hue;
-                                playing: root.playing;
-                                clicked => { root.toggle-pause(); keys.focus(); }
-                            }
-                            if root.video-on: VideoArea {
-                                horizontal-stretch: 3;
-                                rect(x, y, w, h) => { root.video-rect(x, y, w, h); }
+                                spacing: 16px;
+                                HorizontalLayout {
+                                    alignment: center;
+                                    MediaSwitch {
+                                        video: root.video-on;
+                                        choose(v) => {
+                                            if (v != root.video-on) { root.watch-video(); }
+                                            keys.focus();
+                                        }
+                                    }
+                                }
+                                if !root.video-on: BigCover {
+                                    art: root.now-art;
+                                    has-art: root.now-has-art;
+                                    initial: root.now-initial;
+                                    hue: root.now-hue;
+                                    playing: root.playing;
+                                    clicked => { root.toggle-pause(); keys.focus(); }
+                                }
+                                if root.video-on: Rectangle {
+                                    vertical-stretch: 1;
+                                    VideoArea {
+                                        // 16:9, as big as fits, centred.
+                                        width: min(parent.width, parent.height * 16 / 9);
+                                        height: self.width * 9 / 16;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        rect(x, y, w, h) => { root.video-rect(x, y, w, h); }
+                                    }
+                                }
                             }
                             QueuePanel {
                                 horizontal-stretch: 2;
@@ -1687,6 +1758,16 @@ slint::slint! {
                         if !root.wide-now: VerticalLayout {
                             padding: 16px;
                             spacing: 16px;
+                            HorizontalLayout {
+                                alignment: center;
+                                MediaSwitch {
+                                    video: root.video-on;
+                                    choose(v) => {
+                                        if (v != root.video-on) { root.watch-video(); }
+                                        keys.focus();
+                                    }
+                                }
+                            }
                             if !root.video-on: BigCover {
                                 height: min(root.win-width - 32px, root.win-height * 0.36);
                                 art: root.now-art;
@@ -1697,7 +1778,7 @@ slint::slint! {
                                 clicked => { root.toggle-pause(); keys.focus(); }
                             }
                             if root.video-on: VideoArea {
-                                height: min(root.win-width - 32px, root.win-height * 0.36);
+                                height: min(root.win-width - 32px, root.win-height * 0.36) * 9 / 16;
                                 rect(x, y, w, h) => { root.video-rect(x, y, w, h); }
                             }
                             QueuePanel {
@@ -1826,12 +1907,6 @@ slint::slint! {
                                 clicked => { root.cycle-repeat(); keys.focus(); }
                             }
                             if !root.tiny: IconButton { icon: "shuffle"; active: root.shuffle; y: (parent.height - self.height) / 2; clicked => { root.toggle-shuffle(); keys.focus(); } }
-                            if root.now-title != "" && !root.tiny: IconButton {
-                                icon: "video";
-                                active: root.video-on || root.watching;
-                                y: (parent.height - self.height) / 2;
-                                clicked => { root.watch-video(); keys.focus(); }
-                            }
                             if !root.tiny: IconButton {
                                 icon: "cast";
                                 active: root.casting != "";

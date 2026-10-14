@@ -462,6 +462,12 @@ Domain terms are defined in `CONTEXT.md`.
   the player with CSS. The same script reports `currentTime` every 500 ms
   over wry's IPC, so switching back seeks the audio there
   (`Session::pause_for_video` / `resume_from_video`).
+  The switch between song and video is YouTube Music's: ♪ / ▶ over the cover
+  (`MediaSwitch`), not a button in the player bar. The page is forced into
+  YouTube's dark theme (`document.documentElement.setAttribute('dark')` plus
+  black backgrounds) — signed out it defaults to the light one and showed
+  white bands around the video — and the player is stretched to the view with
+  `object-fit: contain` on the video, so the picture keeps its shape.
   Measured 2026-10-14 (M1, debug, 1040x692 window, `footprint`): the player
   55 MB with the video on (46-50 MB without), and macOS's own WebKit
   processes 547 MB (WebContent) + 35 MB (GPU) + 16 MB (Networking) while a

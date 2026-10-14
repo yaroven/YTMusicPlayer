@@ -25,13 +25,14 @@ Open **ytm-player** from your applications, or run `ytm gui`.
   header (it also drops the half-written file); the Downloads list has
   **Delete all**, and ⋮ → Remove deletes a single song's file.
 - **Player bar:** progress (click to seek), previous / play / next, the
-  current track with dislike, like and ⋮, volume, repeat, shuffle, **video**,
-  **Cast**, **sleep timer** and the full-screen view.
-- **Video** (the ▶ in a frame, or `V`): the song's clip plays in the window
-  in place of the cover, with Up next / Lyrics / Related beside it. The audio
-  waits meanwhile; switching back (the same button, or closing the
-  full-screen view) continues the song where the video stopped. On Linux,
-  which has no system web view, the clip opens in your browser.
+  current track with dislike, like and ⋮, volume, repeat, shuffle, **Cast**,
+  **sleep timer** and the full-screen view.
+- **Song or video:** the switch over the cover in the full-screen view (♪ /
+  ▶, like YouTube Music's), or `V`. The clip then plays in the window in
+  place of the cover, with Up next / Lyrics / Related beside it; the audio
+  waits meanwhile, and switching back (♪, `V`, or closing the full-screen
+  view) continues the song where the video stopped. On Linux, which has no
+  system web view, the clip opens in your browser.
 - **Now playing** (click the track or ▲): big cover — click it to play or
   pause — with **Up next**
   (reorder, remove, clear, autoplay switch), **Lyrics** and **Related**, over
