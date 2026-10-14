@@ -64,7 +64,7 @@ pub fn draw_playlists(frame: &mut Frame, area: Rect, app: &mut App) {
     }
     let items = app.library.playlists().iter().map(|p| {
         ListItem::new(Line::from(vec![
-            Span::raw(p.title.as_str()),
+            Span::raw(crate::library_view::playlist_title(lang, p).to_owned()),
             format!(" {}", p.item_count).dark_gray(),
         ]))
     });
@@ -136,7 +136,7 @@ fn heading(app: &App, count: usize) -> Vec<Span<'static>> {
     if lib.showing_results() {
         let current = lib.search_kind();
         for kind in SearchKind::ALL {
-            let label = format!("{} ", kind.label());
+            let label = format!("{} ", kind.label_in(lang));
             title.push(if Some(kind) == current {
                 Span::raw(label).fg(ACCENT).bold()
             } else {

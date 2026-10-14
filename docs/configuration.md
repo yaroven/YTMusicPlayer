@@ -8,6 +8,7 @@ Everything in it is optional — the player works with the defaults.
 | Key | Default | Meaning |
 |---|---|---|
 | `ui` | `"tui"` | what `ytm` opens: `"tui"` or `"gui"` |
+| `language` | `"auto"` | language of the window and the terminal UI: `"auto"` (the system's), `"en"` or `"uk"` |
 | `volume` | `0.8` | volume for the very first start |
 | `autoplay` | `true` | when the queue runs out, keep playing the last song's radio |
 | `normalize_volume` | `true` | turn loud tracks down to YouTube's loudness target |

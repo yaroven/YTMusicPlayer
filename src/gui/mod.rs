@@ -48,6 +48,7 @@ use crate::{
     lyrics::Lyrics,
     session::{Changes, Deps, SearchResults, Session, SessionView, Sleep},
     storage::Library,
+    tr, trf,
 };
 use art::ArtSize;
 use ui::{CardRow, L, LyricLine, MainWindow, PlaylistRow, ShelfRow, TrackRow};
@@ -814,8 +815,9 @@ impl View {
     /// Playlist names and counts changed (sidebar, "save to" choices).
     fn sync_playlists(&self) {
         let lib = self.library.borrow();
+        let lang = self.lang;
         let row = |p: &Playlist| PlaylistRow {
-            title: p.title.as_str().into(),
+            title: crate::library_view::playlist_title(lang, p).into(),
             count: p.item_count as i32,
         };
         self.playlist_rows
@@ -1096,7 +1098,7 @@ impl View {
             Repeat::One => 2,
         });
         ui.set_autoplay(view.autoplay);
-        ui.set_sleep_text(sleep_text(view.sleep).into());
+        ui.set_sleep_text(sleep_text(view.sleep, view.lang).into());
         ui.set_casting(view.casting.clone().unwrap_or_default().into());
         ui.set_cast_scanning(self.cast_scanning);
         ui.set_update_version(view.update.clone().unwrap_or_default().into());
@@ -1163,8 +1165,10 @@ impl View {
         // The core decides the language (settings, or the system's).
         if snap.view.lang != self.lang {
             self.lang = snap.view.lang;
+            self.library.borrow_mut().set_language(self.lang);
             if let Some(ui) = ui {
                 apply_language(ui, self.lang);
+                self.sync_list(ui);
             }
         }
         if let Some((done, page)) = &snap.update_done {
@@ -1610,11 +1614,7 @@ fn new_view(
 pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Result<()> {
     let library = deps.library.clone();
     let lang = Lang::from_code(&settings.language);
-    let library_view = {
-        let mut view = LibraryView::new(library.clone())?;
-        view.set_language(lang);
-        Rc::new(RefCell::new(view))
-    };
+    let library_view = Rc::new(RefCell::new(LibraryView::new_in(library.clone(), lang)?));
     let (cmd_tx, cmd_rx) = unbounded_channel();
 
     let view = new_view(
@@ -2473,13 +2473,13 @@ fn apply(session: &mut Session, cmd: Cmd) {
 }
 
 /// "23 min" / "end of song" for the sleep timer.
-fn sleep_text(sleep: Option<Sleep>) -> String {
+fn sleep_text(sleep: Option<Sleep>, lang: Lang) -> String {
     match sleep {
         None => String::new(),
-        Some(Sleep::EndOfTrack) => "end of song".into(),
+        Some(Sleep::EndOfTrack) => tr!(lang, "end of song", "кінець пісні").into(),
         Some(Sleep::At(at)) => {
             let left = at.saturating_duration_since(Instant::now()).as_secs();
-            format!("{} min", left.div_ceil(60))
+            trf!(lang, "{} min", "{} хв", left.div_ceil(60))
         }
     }
 }

@@ -3,6 +3,7 @@
 //! YouTube Music answers as the account.
 
 use super::{Background, Changes, Session};
+use crate::{tr, trf};
 
 impl Session {
     /// `browser`: take that browser's YouTube sign-in instead of the window.
@@ -57,23 +58,39 @@ impl Session {
                 match result {
                     Ok(()) => {
                         self.use_youtube_cookies();
-                        self.set_info("Signed in to YouTube");
+                        self.set_info(tr!(
+                            self.lang,
+                            "Signed in to YouTube",
+                            "Вхід у YouTube виконано"
+                        ));
                         // Home becomes the account's own, and the library
                         // can now be read through the session.
                         self.load_home(true);
                         self.start_sync();
                     }
-                    Err(err) => self.set_error(format!("YouTube sign-in: {err:#}")),
+                    Err(err) => self.set_error(trf!(
+                        self.lang,
+                        "YouTube sign-in: {err:#}",
+                        "Вхід у YouTube: {err:#}"
+                    )),
                 }
             }
             Background::YouTubeSignedOut(result) => {
                 self.use_youtube_cookies();
                 match result {
                     Ok(()) => {
-                        self.set_info("Signed out of YouTube");
+                        self.set_info(tr!(
+                            self.lang,
+                            "Signed out of YouTube",
+                            "Вихід із YouTube виконано"
+                        ));
                         self.load_home(true);
                     }
-                    Err(err) => self.set_error(format!("YouTube sign-out: {err:#}")),
+                    Err(err) => self.set_error(trf!(
+                        self.lang,
+                        "YouTube sign-out: {err:#}",
+                        "Вихід із YouTube: {err:#}"
+                    )),
                 }
             }
             _ => unreachable!("not a YouTube sign-in event"),

@@ -212,7 +212,11 @@ async fn filter_narrows_the_list() {
 async fn the_terminal_ui_speaks_ukrainian() {
     let mut app = app().await;
     app.session.lang = crate::i18n::Lang::Uk;
+    app.library.set_language(crate::i18n::Lang::Uk);
+    // The heading is built when a list is opened.
+    char(&mut app, '2');
     let s = screen(&mut app);
+    assert!(s.contains("Історія"), "the list's own title:\n{s}");
     assert!(s.contains("Бібліотека"), "the panes are translated:\n{s}");
     assert!(s.contains("довідка"), "so is the status line:\n{s}");
 

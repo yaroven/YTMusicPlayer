@@ -9,6 +9,7 @@ use super::{Background, Changes, Session};
 use crate::{
     audio::player::{PlayState, Playback, PlayerEvent},
     cast::{self, CastPlayer, Device},
+    tr, trf,
 };
 
 /// How long a device scan listens for answers.
@@ -22,11 +23,19 @@ impl Session {
                 match result {
                     Ok(devices) => {
                         if devices.is_empty() {
-                            self.set_info("No Cast devices found on this network");
+                            self.set_info(tr!(
+                                self.lang,
+                                "No Cast devices found on this network",
+                                "У цій мережі немає пристроїв Cast"
+                            ));
                         }
                         self.cast_devices = devices.into();
                     }
-                    Err(err) => self.set_error(format!("Looking for Cast devices: {err:#}")),
+                    Err(err) => self.set_error(trf!(
+                        self.lang,
+                        "Looking for Cast devices: {err:#}",
+                        "Пошук пристроїв Cast: {err:#}"
+                    )),
                 }
                 changes.cast = true;
             }
@@ -36,9 +45,13 @@ impl Session {
                     Ok((player, events)) => {
                         self.cast_alive = Some(player.alive());
                         self.switch_output(Box::new(player), events, Some(name.clone()));
-                        self.set_info(format!("Playing on {name}"));
+                        self.set_info(trf!(self.lang, "Playing on {name}", "Грає на {name}"));
                     }
-                    Err(err) => self.set_error(format!("Can't cast to {name}: {err:#}")),
+                    Err(err) => self.set_error(trf!(
+                        self.lang,
+                        "Can't cast to {name}: {err:#}",
+                        "Не вдалось транслювати на {name}: {err:#}"
+                    )),
                 }
             }
             _ => unreachable!("not a cast event"),
@@ -63,11 +76,20 @@ impl Session {
             if let Some((player, events)) = self.local.take() {
                 self.cast_alive = None;
                 self.switch_output(player, events, None);
-                self.set_info("Playing on this computer");
+                self.set_info(tr!(
+                    self.lang,
+                    "Playing on this computer",
+                    "Грає на цьому комп'ютері"
+                ));
             }
             return;
         };
-        self.set_info(format!("Connecting to {}…", device.name));
+        self.set_info(trf!(
+            self.lang,
+            "Connecting to {}…",
+            "Під'єднуюсь до {}…",
+            device.name
+        ));
         let (tx, volume) = (self.tx.clone(), self.player_status.volume);
         tokio::spawn(async move {
             let name = device.name.clone();
@@ -88,7 +110,11 @@ impl Session {
         {
             let name = self.casting.clone().unwrap_or_default();
             self.cast_to(None);
-            self.set_error(format!("Lost the connection to {name}"));
+            self.set_error(trf!(
+                self.lang,
+                "Lost the connection to {name}",
+                "Втрачено зв'язок із {name}"
+            ));
         }
     }
 

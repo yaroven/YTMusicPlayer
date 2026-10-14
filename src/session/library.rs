@@ -6,7 +6,7 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
 
-use super::{Background, Changes, NOT_SIGNED_IN, Session};
+use super::{Background, Changes, Session, not_signed_in};
 use crate::{
     account::{Flow, Prompt},
     api::{
@@ -15,6 +15,7 @@ use crate::{
     },
     catalog::{Catalog, Item, ItemKind},
     sync::{sync_library, sync_with_session},
+    tr, trf,
 };
 
 /// Where a library write goes: the youtube.com session (InnerTube, the
@@ -97,9 +98,13 @@ impl Session {
                     Ok(r) => {
                         changes.library = true;
                         changes.saved = true;
-                        self.set_info(r.summary());
+                        self.set_info(r.summary(self.lang));
                     }
-                    Err(err) => self.set_error(format!("Sync failed: {err:#}")),
+                    Err(err) => self.set_error(trf!(
+                        self.lang,
+                        "Sync failed: {err:#}",
+                        "Синхронізація не вдалась: {err:#}"
+                    )),
                 }
             }
             Background::Rated {
@@ -120,9 +125,18 @@ impl Session {
                     changes.playlist = Some(LIKED_PLAYLIST_ID.into());
                     changes.liked = Some(track.video_id.clone());
                     self.set_info(match rating {
-                        Rating::Like => format!("♥ Liked {}", track.title),
-                        Rating::None => format!("Removed like: {}", track.title),
-                        Rating::Dislike => format!("Disliked {}", track.title),
+                        Rating::Like => {
+                            trf!(self.lang, "♥ Liked {}", "♥ Вподобано {}", track.title)
+                        }
+                        Rating::None => trf!(
+                            self.lang,
+                            "Removed like: {}",
+                            "Вподобайку знято: {}",
+                            track.title
+                        ),
+                        Rating::Dislike => {
+                            trf!(self.lang, "Disliked {}", "Не подобається {}", track.title)
+                        }
                     });
                     // A disliked track shouldn't keep playing.
                     if rating == Rating::Dislike
@@ -145,7 +159,13 @@ impl Session {
                     if let Err(err) = lib.add_item(&playlist.id, &track, false, Some(&item_id)) {
                         tracing::warn!(%err, "updating local playlist");
                     }
-                    self.set_info(format!("Added {} to {}", track.title, playlist.title));
+                    self.set_info(trf!(
+                        self.lang,
+                        "Added {} to {}",
+                        "Додано {} до {}",
+                        track.title,
+                        playlist.title
+                    ));
                     changes.playlist = Some(playlist.id);
                 }
                 Err(err) => self.set_error(format!("{err:#}")),
@@ -159,7 +179,13 @@ impl Session {
                     if let Err(err) = lib.remove_track(&playlist.id, &track.video_id) {
                         tracing::warn!(%err, "updating local playlist");
                     }
-                    self.set_info(format!("Removed {} from {}", track.title, playlist.title));
+                    self.set_info(trf!(
+                        self.lang,
+                        "Removed {} from {}",
+                        "Прибрано {} з {}",
+                        track.title,
+                        playlist.title
+                    ));
                     changes.playlist = Some(playlist.id);
                 }
                 Err(err) => self.set_error(format!("{err:#}")),
@@ -180,7 +206,7 @@ impl Session {
                         tracing::warn!(%err, "storing the new playlist");
                     }
                     changes.library = true;
-                    self.set_info(format!("Created {}", playlist.title));
+                    self.set_info(trf!(self.lang, "Created {}", "Створено {}", playlist.title));
                     if let Some(track) = then_add {
                         self.add_to_playlist(playlist, track);
                     }
@@ -193,7 +219,11 @@ impl Session {
                         tracing::warn!(%err, "renaming locally");
                     }
                     changes.playlist = Some(id);
-                    self.set_info(format!("Renamed to {title}"));
+                    self.set_info(trf!(
+                        self.lang,
+                        "Renamed to {title}",
+                        "Перейменовано на {title}"
+                    ));
                 }
                 Err(err) => self.set_error(format!("{err:#}")),
             },
@@ -203,7 +233,7 @@ impl Session {
                         tracing::warn!(%err, "deleting locally");
                     }
                     changes.library = true;
-                    self.set_info(format!("Deleted {}", playlist.title));
+                    self.set_info(trf!(self.lang, "Deleted {}", "Видалено {}", playlist.title));
                 }
                 Err(err) => self.set_error(format!("{err:#}")),
             },
@@ -225,12 +255,14 @@ impl Session {
                     Ok(()) => {
                         changes.saved = true;
                         let verb = match (follow, item.kind) {
-                            (true, ItemKind::Artist) => "Following",
-                            (false, ItemKind::Artist) => "Unfollowed",
-                            (true, _) => "Saved",
-                            (false, _) => "Removed",
+                            (true, ItemKind::Artist) => tr!(self.lang, "Following", "Стежу за"),
+                            (false, ItemKind::Artist) => {
+                                tr!(self.lang, "Unfollowed", "Більше не стежу за")
+                            }
+                            (true, _) => tr!(self.lang, "Saved", "Збережено"),
+                            (false, _) => tr!(self.lang, "Removed", "Прибрано"),
                         };
-                        self.set_info(format!("{verb} {}", item.title));
+                        self.set_info(trf!(self.lang, "{verb} {}", "{verb} {}", item.title));
                     }
                     Err(err) => self.set_error(format!("{err:#}")),
                 }
@@ -239,12 +271,18 @@ impl Session {
                 self.downloading.remove(&track.video_id);
                 changes.downloads = true;
                 match result {
-                    Ok(d) => self.set_info(format!(
+                    Ok(d) => self.set_info(trf!(
+                        self.lang,
                         "Downloaded {} ({:.1} MB)",
+                        "Завантажено {} ({:.1} МБ)",
                         track.title,
                         d.bytes as f64 / 1e6
                     )),
-                    Err(err) => self.set_error(format!("Download failed: {err:#}")),
+                    Err(err) => self.set_error(trf!(
+                        self.lang,
+                        "Download failed: {err:#}",
+                        "Завантаження не вдалось: {err:#}"
+                    )),
                 }
             }
             Background::VideoClosed { video_id, result } => {
@@ -254,23 +292,31 @@ impl Session {
                     Ok(at) if self.queue.current().is_some_and(|t| t.video_id == video_id) => {
                         self.seek_to(at);
                         self.player.set_paused(false);
-                        self.set_info("Back to audio");
+                        self.set_info(tr!(self.lang, "Back to audio", "Назад до аудіо"));
                     }
                     Ok(_) => {}
-                    Err(err) => self.set_error(format!("Video: {err:#}")),
+                    Err(err) => self.set_error(trf!(self.lang, "Video: {err:#}", "Відео: {err:#}")),
                 }
             }
             Background::DownloadsStopped { stopped } => {
                 changes.downloads = true;
                 self.set_info(match stopped {
-                    1 => "Stopped the download".to_owned(),
-                    n => format!("Stopped {n} downloads"),
+                    1 => tr!(self.lang, "Stopped the download", "Завантаження зупинено").to_owned(),
+                    n => trf!(
+                        self.lang,
+                        "Stopped {n} downloads",
+                        "Зупинено завантажень: {n}"
+                    ),
                 });
             }
             Background::DownloadsCleared(result) => {
                 changes.downloads = true;
                 match result {
-                    Ok(n) => self.set_info(format!("Deleted {n} downloaded song(s)")),
+                    Ok(n) => self.set_info(trf!(
+                        self.lang,
+                        "Deleted {n} downloaded song(s)",
+                        "Видалено завантажених пісень: {n}"
+                    )),
                     Err(err) => self.set_error(format!("{err:#}")),
                 }
             }
@@ -288,18 +334,30 @@ impl Session {
                 match result {
                     Ok(()) => {
                         self.deps.account.connect();
-                        self.set_info("Signed in");
+                        self.set_info(tr!(self.lang, "Signed in", "Вхід виконано"));
                         self.start_sync();
                     }
-                    Err(err) => self.set_error(format!("Sign-in failed: {err:#}")),
+                    Err(err) => self.set_error(trf!(
+                        self.lang,
+                        "Sign-in failed: {err:#}",
+                        "Вхід не вдався: {err:#}"
+                    )),
                 }
             }
             Background::SignedIn { .. } => {} // a newer attempt replaced it
             Background::SignedOut(result) => {
                 changes.account = true;
                 match result {
-                    Ok(()) => self.set_info("Signed out — the library stays available offline"),
-                    Err(err) => self.set_error(format!("Sign-out failed: {err:#}")),
+                    Ok(()) => self.set_info(tr!(
+                        self.lang,
+                        "Signed out — the library stays available offline",
+                        "Вихід виконано — бібліотека лишається офлайн"
+                    )),
+                    Err(err) => self.set_error(trf!(
+                        self.lang,
+                        "Sign-out failed: {err:#}",
+                        "Вихід не вдався: {err:#}"
+                    )),
                 }
             }
             _ => unreachable!("not a library event"),
@@ -308,7 +366,7 @@ impl Session {
 
     fn youtube(&mut self) -> Option<Arc<YouTubeClient>> {
         if !self.signed_in() {
-            self.set_error(NOT_SIGNED_IN);
+            self.set_error(not_signed_in(self.lang));
         }
         self.deps.account.youtube()
     }
@@ -331,7 +389,7 @@ impl Session {
         Fut: std::future::Future<Output = Background> + Send + 'static,
     {
         let Some(writer) = self.writer() else {
-            self.set_error(NOT_SIGNED_IN);
+            self.set_error(not_signed_in(self.lang));
             return;
         };
         self.set_info(busy);
@@ -352,7 +410,11 @@ impl Session {
         if self.deps.youtube.signed_in() {
             let catalog = self.deps.catalog.clone();
             self.syncing = true;
-            self.set_info("Syncing library…");
+            self.set_info(tr!(
+                self.lang,
+                "Syncing library…",
+                "Синхронізую бібліотеку…"
+            ));
             tokio::spawn(async move {
                 let result = sync_with_session(&catalog, library).await;
                 let _ = tx.send(Background::Synced(result));
@@ -363,7 +425,11 @@ impl Session {
             return;
         };
         self.syncing = true;
-        self.set_info("Syncing library…");
+        self.set_info(tr!(
+            self.lang,
+            "Syncing library…",
+            "Синхронізую бібліотеку…"
+        ));
         let music_only = self.deps.liked_music_only;
         tokio::spawn(async move {
             let result = sync_library(&youtube, library, music_only).await;
@@ -398,9 +464,9 @@ impl Session {
 
     fn rate(&mut self, track: Track, rating: Rating) {
         let busy = match rating {
-            Rating::Like => "Liking…",
-            Rating::None => "Removing like…",
-            Rating::Dislike => "Disliking…",
+            Rating::Like => tr!(self.lang, "Liking…", "Ставлю вподобайку…"),
+            Rating::None => tr!(self.lang, "Removing like…", "Знімаю вподобайку…"),
+            Rating::Dislike => tr!(self.lang, "Disliking…", "Ставлю «не подобається»…"),
         };
         self.with_youtube(busy, move |yt| async move {
             let result = yt.set_rating(&track.video_id, rating).await;
@@ -415,7 +481,7 @@ impl Session {
     /// Whether like / add-to-playlist are possible (shows why not).
     pub fn can_edit(&mut self) -> bool {
         if self.writer().is_none() {
-            self.set_error(NOT_SIGNED_IN);
+            self.set_error(not_signed_in(self.lang));
             return false;
         }
         true
@@ -424,7 +490,7 @@ impl Session {
     // --- playlists ------------------------------------------------------------------
 
     pub fn add_to_playlist(&mut self, playlist: Playlist, track: Track) {
-        let busy = format!("Adding to {}…", playlist.title);
+        let busy = trf!(self.lang, "Adding to {}…", "Додаю до {}…", playlist.title);
         self.with_youtube(busy, move |yt| async move {
             let result = yt.add_to_playlist(&playlist.id, &track.video_id).await;
             Background::Added {
@@ -447,10 +513,19 @@ impl Session {
             .ok()
             .flatten();
         let Some(item_id) = item_id else {
-            self.set_error("Sync the library first: this entry's id isn't known yet");
+            self.set_error(tr!(
+                self.lang,
+                "Sync the library first: this entry's id isn't known yet",
+                "Спершу синхронізуй бібліотеку: id цього запису ще невідомий"
+            ));
             return;
         };
-        let busy = format!("Removing from {}…", playlist.title);
+        let busy = trf!(
+            self.lang,
+            "Removing from {}…",
+            "Прибираю з {}…",
+            playlist.title
+        );
         self.with_youtube(busy, move |yt| async move {
             let result = yt
                 .remove_from_playlist(&playlist.id, &track.video_id, &item_id)
@@ -469,7 +544,7 @@ impl Session {
         if title.is_empty() {
             return;
         }
-        let busy = format!("Creating {title}…");
+        let busy = trf!(self.lang, "Creating {title}…", "Створюю {title}…");
         self.with_youtube(busy, move |yt| async move {
             let result = yt.create_playlist(&title).await;
             Background::PlaylistCreated {
@@ -485,7 +560,8 @@ impl Session {
         if title.is_empty() || playlist.id == LIKED_PLAYLIST_ID {
             return;
         }
-        self.with_youtube("Renaming…", move |yt| async move {
+        let busy = tr!(self.lang, "Renaming…", "Перейменовую…");
+        self.with_youtube(busy, move |yt| async move {
             let result = yt.rename_playlist(&playlist.id, &title).await;
             Background::PlaylistRenamed {
                 id: playlist.id,
@@ -499,7 +575,7 @@ impl Session {
         if playlist.id == LIKED_PLAYLIST_ID {
             return;
         }
-        let busy = format!("Deleting {}…", playlist.title);
+        let busy = trf!(self.lang, "Deleting {}…", "Видаляю {}…", playlist.title);
         self.with_youtube(busy, move |yt| async move {
             let result = yt.delete_playlist(&playlist.id).await;
             Background::PlaylistDeleted { playlist, result }
@@ -556,7 +632,11 @@ impl Session {
             .map(|d| d.iter().map(|d| d.bytes).sum())
             .unwrap_or(0);
         if limit.is_some_and(|l| used >= l) {
-            self.set_error("Download limit reached (download_limit_mb in config)");
+            self.set_error(tr!(
+                self.lang,
+                "Download limit reached (download_limit_mb in config)",
+                "Ліміт завантажень вичерпано (download_limit_mb у конфігу)"
+            ));
             return;
         }
         let todo: Vec<Track> = tracks
@@ -568,7 +648,12 @@ impl Session {
         if todo.is_empty() {
             return;
         }
-        self.set_info(format!("Downloading {} track(s)…", todo.len()));
+        self.set_info(trf!(
+            self.lang,
+            "Downloading {} track(s)…",
+            "Завантажую треків: {}…",
+            todo.len()
+        ));
         let (source, tx) = (self.deps.source.clone(), self.tx.clone());
         // One task for the batch, so stopping it stops the rest as well.
         self.download_task = Some(tokio::spawn(async move {
@@ -642,8 +727,16 @@ impl Session {
 
     fn client_saved(&mut self, result: Result<()>) {
         match result {
-            Ok(()) if self.signed_in() => self.set_info("OAuth client saved"),
-            Ok(()) => self.set_info("OAuth client saved — now sign in"),
+            Ok(()) if self.signed_in() => self.set_info(tr!(
+                self.lang,
+                "OAuth client saved",
+                "OAuth-клієнт збережено"
+            )),
+            Ok(()) => self.set_info(tr!(
+                self.lang,
+                "OAuth client saved — now sign in",
+                "OAuth-клієнт збережено — тепер увійди"
+            )),
             Err(err) => self.set_error(format!("{err:#}")),
         }
     }
@@ -665,7 +758,11 @@ impl Session {
         };
         self.login_generation += 1;
         self.signing_in = true;
-        self.set_info("Finish signing in in your browser…");
+        self.set_info(tr!(
+            self.lang,
+            "Finish signing in in your browser…",
+            "Заверши вхід у браузері…"
+        ));
         let (tx, generation) = (self.tx.clone(), self.login_generation);
         tokio::spawn(async move {
             let result = signing_in.await;

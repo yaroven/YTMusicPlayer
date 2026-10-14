@@ -2,6 +2,7 @@
 
 use super::{Background, Changes, Session};
 use crate::update::{self, Installed};
+use crate::{tr, trf};
 
 impl Session {
     pub(super) fn update_event(&mut self, event: Background, changes: &mut Changes) {
@@ -10,8 +11,10 @@ impl Session {
                 self.checking_update = false;
                 match result {
                     Ok(Some(found)) => {
-                        self.set_info(format!(
+                        self.set_info(trf!(
+                            self.lang,
                             "ytm-player {} is available — Settings → Update (or `ytm update`)",
+                            "Доступна ytm-player {} — Налаштування → Оновити (або `ytm update`)",
                             found.version
                         ));
                         self.update = Some(found);
@@ -19,8 +22,10 @@ impl Session {
                     Ok(None) => {
                         self.update = None;
                         if manual {
-                            self.set_info(format!(
+                            self.set_info(trf!(
+                                self.lang,
                                 "ytm-player {} is the latest version",
+                                "ytm-player {} — найсвіжіша версія",
                                 env!("CARGO_PKG_VERSION")
                             ));
                         }
@@ -35,15 +40,25 @@ impl Session {
                 match result {
                     Ok(done) => {
                         match &done {
-                            Installed::Replaced => self.set_info("Updated — restarting…"),
-                            Installed::InstallerStarted { .. } => {
-                                self.set_info("The installer is open — follow it to finish")
-                            }
+                            Installed::Replaced => self.set_info(tr!(
+                                self.lang,
+                                "Updated — restarting…",
+                                "Оновлено — перезапускаюсь…"
+                            )),
+                            Installed::InstallerStarted { .. } => self.set_info(tr!(
+                                self.lang,
+                                "The installer is open — follow it to finish",
+                                "Інсталятор відкрито — заверши встановлення в ньому"
+                            )),
                             Installed::Manual(how) => self.set_info(how.clone()),
                         }
                         self.update_done = Some(done);
                     }
-                    Err(err) => self.set_error(format!("Update failed: {err:#}")),
+                    Err(err) => self.set_error(trf!(
+                        self.lang,
+                        "Update failed: {err:#}",
+                        "Оновлення не вдалось: {err:#}"
+                    )),
                 }
                 changes.update = true;
             }
@@ -73,7 +88,12 @@ impl Session {
             return;
         }
         self.updating = true;
-        self.set_info(format!("Downloading ytm-player {}…", found.version));
+        self.set_info(trf!(
+            self.lang,
+            "Downloading ytm-player {}…",
+            "Завантажую ytm-player {}…",
+            found.version
+        ));
         let (http, tx) = (self.deps.http.clone(), self.tx.clone());
         tokio::spawn(async move {
             let result = update::install(&http, &found).await;

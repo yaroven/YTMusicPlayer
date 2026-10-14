@@ -43,7 +43,7 @@ use crate::{
     media::{MediaAction, MediaControls},
     storage::{Download, Library},
     sync::SyncReport,
-    sysmem, video,
+    sysmem, tr, trf, video,
 };
 
 pub const SEEK_STEP_SECS: i64 = 5;
@@ -52,7 +52,14 @@ pub const VOLUME_STEP: f32 = 0.05;
 const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 /// How often memory use is re-measured for display.
 const MEMORY_SAMPLE: Duration = Duration::from_secs(2);
-const NOT_SIGNED_IN: &str = "Not signed in: Sign in → Sign in with Google (or `ytm sign-in`)";
+/// Shown when something needs the account and there is none.
+fn not_signed_in(lang: Lang) -> &'static str {
+    tr!(
+        lang,
+        "Not signed in: Sign in → Sign in with Google (or `ytm sign-in`)",
+        "Вхід не виконано: «Увійти» → «Увійти через Google» (або `ytm sign-in`)"
+    )
+}
 /// Smallest memory change worth a redraw.
 const MEMORY_STEP: u64 = 2 << 20;
 /// The next track is opened this long before the current one ends (plus
@@ -531,8 +538,12 @@ impl Session {
         let can_sync = self.signed_in() || self.deps.youtube.signed_in();
         match (can_sync, library_empty) {
             (true, true) => self.start_sync(),
-            (false, true) => self.set_error(NOT_SIGNED_IN),
-            (false, false) => self.set_info("Offline library (not signed in) — sign in to sync"),
+            (false, true) => self.set_error(not_signed_in(self.lang)),
+            (false, false) => self.set_info(tr!(
+                self.lang,
+                "Offline library (not signed in) — sign in to sync",
+                "Офлайн-бібліотека (вхід не виконано) — увійди, щоб синхронізувати"
+            )),
             (true, false) => {}
         }
     }
@@ -598,7 +609,7 @@ impl Session {
         {
             self.sleep = None;
             self.player.set_paused(true);
-            self.set_info("Sleep timer: paused");
+            self.set_info(tr!(self.lang, "Sleep timer: paused", "Таймер сну: пауза"));
             changed = true;
         }
         self.maybe_preload();
@@ -714,14 +725,23 @@ impl Session {
                 self.drop_preload();
                 if self.sleep == Some(Sleep::EndOfTrack) {
                     self.sleep = None;
-                    self.set_info("Sleep timer: stopped after the track");
+                    self.set_info(tr!(
+                        self.lang,
+                        "Sleep timer: stopped after the track",
+                        "Таймер сну: зупинено після пісні"
+                    ));
                     self.stopped();
                 } else if self.queue.repeat == Repeat::One || self.queue.advance().is_some() {
                     self.play_current();
                 } else if self.deps.autoplay
                     && let Some(seed) = self.queue.current().cloned()
                 {
-                    self.set_info(format!("Autoplay: radio of {}", seed.title));
+                    self.set_info(trf!(
+                        self.lang,
+                        "Autoplay: radio of {}",
+                        "Автоплей: радіо за {}",
+                        seed.title
+                    ));
                     self.fetch_radio(seed, true);
                 } else {
                     self.stopped();
@@ -834,7 +854,11 @@ impl Session {
     pub fn pause_for_video(&mut self) {
         self.watching = true;
         self.player.set_paused(true);
-        self.set_info("Watching the video — the audio waits here");
+        self.set_info(tr!(
+            self.lang,
+            "Watching the video — the audio waits here",
+            "Дивишся відео — аудіо чекає тут"
+        ));
     }
 
     /// Back from the video: the song carries on where the video stopped.
@@ -844,7 +868,7 @@ impl Session {
             self.seek_to(at);
         }
         self.player.set_paused(false);
-        self.set_info("Back to the song");
+        self.set_info(tr!(self.lang, "Back to the song", "Назад до пісні"));
     }
 
     /// Watches the playing song's clip: the audio stops, and when the video
@@ -852,11 +876,15 @@ impl Session {
     /// system web view (Linux) the clip opens in the browser instead.
     pub fn watch_video(&mut self) {
         let Some(track) = self.queue.current().cloned() else {
-            self.set_error("Nothing is playing");
+            self.set_error(tr!(self.lang, "Nothing is playing", "Нічого не грає"));
             return;
         };
         if self.watching {
-            self.set_info("The video is already open");
+            self.set_info(tr!(
+                self.lang,
+                "The video is already open",
+                "Відео вже відкрите"
+            ));
             return;
         }
         let at = self.player_status.position;
@@ -864,14 +892,25 @@ impl Session {
         if !video::in_window() {
             let url = video::watch_url(&track.video_id, at);
             match open::that_detached(&url) {
-                Ok(_) => self.set_info(format!("Watching {} in your browser", track.title)),
-                Err(err) => self.set_error(format!("Opening the video: {err}")),
+                Ok(_) => self.set_info(trf!(
+                    self.lang,
+                    "Watching {} in your browser",
+                    "Дивишся {} у браузері",
+                    track.title
+                )),
+                Err(err) => self.set_error(trf!(
+                    self.lang,
+                    "Opening the video: {err}",
+                    "Відкриття відео: {err}"
+                )),
             }
             return;
         }
         self.watching = true;
-        self.set_info(format!(
+        self.set_info(trf!(
+            self.lang,
             "Watching {} — the audio continues when you close the window",
+            "Дивишся {} — аудіо продовжиться, коли закриєш вікно",
             track.title
         ));
         let (tx, video_id) = (self.tx.clone(), track.video_id.clone());
@@ -932,20 +971,21 @@ impl Session {
     pub fn toggle_shuffle(&mut self) {
         self.queue.toggle_shuffle();
         self.queue_changed();
-        let state = if self.queue.shuffle { "on" } else { "off" };
-        self.set_info(format!("Shuffle {state}"));
+        let state = on_off(self.lang, self.queue.shuffle);
+        self.set_info(trf!(self.lang, "Shuffle {state}", "Перемішування {state}"));
     }
 
     pub fn cycle_repeat(&mut self) {
         self.queue.repeat = self.queue.repeat.cycle();
         self.queue_changed();
-        self.set_info(format!("Repeat {}", self.queue.repeat.as_str()));
+        let mode = repeat_label(self.lang, self.queue.repeat);
+        self.set_info(trf!(self.lang, "Repeat {mode}", "Повтор {mode}"));
     }
 
     pub fn toggle_autoplay(&mut self) {
         self.deps.autoplay = !self.deps.autoplay;
-        let state = if self.deps.autoplay { "on" } else { "off" };
-        self.set_info(format!("Autoplay {state}"));
+        let state = on_off(self.lang, self.deps.autoplay);
+        self.set_info(trf!(self.lang, "Autoplay {state}", "Автоплей {state}"));
         self.store_setting("autoplay", &self.deps.autoplay.to_string());
     }
 
@@ -984,12 +1024,21 @@ impl Session {
     pub fn store_setting(&mut self, key: &str, value: &str) {
         let path = self.deps.account.config_file().to_owned();
         if let Err(err) = Settings::store_value(&path, key, value) {
-            self.set_error(format!("Saving {key}: {err:#}"));
+            self.set_error(trf!(
+                self.lang,
+                "Saving {key}: {err:#}",
+                "Збереження {key}: {err:#}"
+            ));
         }
     }
 
     pub fn play_next(&mut self, track: Track) {
-        self.set_info(format!("Playing next: {}", track.title));
+        self.set_info(trf!(
+            self.lang,
+            "Playing next: {}",
+            "Наступною: {}",
+            track.title
+        ));
         self.queue.play_next(track);
         self.queue_changed();
     }
@@ -999,7 +1048,11 @@ impl Session {
         let n = tracks.len();
         self.queue.append(tracks);
         self.queue_changed();
-        self.set_info(format!("Added {n} to the queue"));
+        self.set_info(trf!(
+            self.lang,
+            "Added {n} to the queue",
+            "Додано {n} у чергу"
+        ));
     }
 
     /// Removes the `n`-th upcoming track.
@@ -1018,7 +1071,7 @@ impl Session {
     pub fn clear_queue(&mut self) {
         self.queue.clear_upcoming();
         self.queue_changed();
-        self.set_info("Queue cleared");
+        self.set_info(tr!(self.lang, "Queue cleared", "Чергу очищено"));
     }
 
     /// Pauses after `minutes`, or at the end of the track (`None`).
@@ -1028,8 +1081,13 @@ impl Session {
             None => Sleep::EndOfTrack,
         });
         self.set_info(match minutes {
-            Some(m) => format!("Sleeping in {m} min"),
-            None => "Stopping after this track".into(),
+            Some(m) => trf!(self.lang, "Sleeping in {m} min", "Сон за {m} хв"),
+            None => tr!(
+                self.lang,
+                "Stopping after this track",
+                "Зупинка після цієї пісні"
+            )
+            .into(),
         });
         // No preload past the end of this track.
         self.queue_changed();
@@ -1037,7 +1095,7 @@ impl Session {
 
     pub fn cancel_sleep(&mut self) {
         self.sleep = None;
-        self.set_info("Sleep timer off");
+        self.set_info(tr!(self.lang, "Sleep timer off", "Таймер сну вимкнено"));
     }
 
     fn media_resync(&mut self) {
@@ -1144,7 +1202,11 @@ impl Session {
             .unwrap_or_default();
         if self.failures < MAX_CONSECUTIVE_FAILURES && self.queue.advance().is_some() {
             self.play_current();
-            self.set_error(format!("{title}: {message} — skipped"));
+            self.set_error(trf!(
+                self.lang,
+                "{title}: {message} — skipped",
+                "{title}: {message} — пропущено"
+            ));
         } else {
             self.set_error(format!("{title}: {message}"));
         }
@@ -1164,6 +1226,26 @@ impl Session {
             text,
             is_error: true,
         });
+    }
+}
+
+/// "on" / "off" in the chosen language.
+fn on_off(lang: Lang, on: bool) -> &'static str {
+    match (lang, on) {
+        (Lang::En, true) => "on",
+        (Lang::En, false) => "off",
+        (Lang::Uk, true) => "увімкнено",
+        (Lang::Uk, false) => "вимкнено",
+    }
+}
+
+/// "off" / "all" / "one" for the repeat mode.
+fn repeat_label(lang: Lang, repeat: Repeat) -> &'static str {
+    match (lang, repeat) {
+        (Lang::En, _) => repeat.as_str(),
+        (Lang::Uk, Repeat::Off) => "вимкнено",
+        (Lang::Uk, Repeat::All) => "усе",
+        (Lang::Uk, Repeat::One) => "одна",
     }
 }
 

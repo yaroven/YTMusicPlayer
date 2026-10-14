@@ -52,6 +52,17 @@ impl SearchKind {
         }
     }
 
+    /// "Songs" / "Albums" … in the chosen language.
+    pub fn label_in(self, lang: crate::i18n::Lang) -> &'static str {
+        match (lang, self) {
+            (crate::i18n::Lang::En, _) => self.label(),
+            (_, Self::Songs) => "Пісні",
+            (_, Self::Albums) => "Альбоми",
+            (_, Self::Artists) => "Виконавці",
+            (_, Self::Playlists) => "Плейлисти",
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Songs => "Songs",

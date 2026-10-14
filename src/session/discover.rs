@@ -11,7 +11,7 @@ use super::{Background, Changes, Session};
 use crate::{
     api::models::Track,
     catalog::{Item, SearchKind},
-    lyrics,
+    lyrics, tr, trf,
 };
 
 /// Results per Data API search (one page, 100 quota units).
@@ -60,7 +60,12 @@ impl Session {
                 match result {
                     Ok(found) => {
                         let n = found.tracks.len() + found.items.len();
-                        self.set_info(format!("{n} {} for “{query}”", kind.label().to_lowercase()));
+                        self.set_info(trf!(
+                            self.lang,
+                            "{n} {} for “{query}”",
+                            "{n} {} за запитом «{query}»",
+                            kind.label_in(self.lang).to_lowercase()
+                        ));
                         self.search = Some(SearchResults {
                             query,
                             kind,
@@ -69,7 +74,11 @@ impl Session {
                         });
                         changes.search = true;
                     }
-                    Err(err) => self.set_error(format!("Search failed: {err:#}")),
+                    Err(err) => self.set_error(trf!(
+                        self.lang,
+                        "Search failed: {err:#}",
+                        "Пошук не вдався: {err:#}"
+                    )),
                 }
             }
             Background::Searched { .. } => {} // a newer search replaced it
@@ -81,7 +90,11 @@ impl Session {
                         self.page = Some(Arc::new(page));
                         changes.page = true;
                     }
-                    Err(err) => self.set_error(format!("Couldn't open it: {err:#}")),
+                    Err(err) => self.set_error(trf!(
+                        self.lang,
+                        "Couldn't open it: {err:#}",
+                        "Не вдалось відкрити: {err:#}"
+                    )),
                 }
             }
             Background::PageLoaded { .. } => {}
@@ -90,7 +103,7 @@ impl Session {
                     self.home = Some(shelves.into());
                     changes.home = true;
                 }
-                Err(err) => self.set_error(format!("Home: {err:#}")),
+                Err(err) => self.set_error(trf!(self.lang, "Home: {err:#}", "Головна: {err:#}")),
             },
             Background::Suggestions { query, result } => {
                 // Only the newest query's suggestions are shown.
@@ -104,7 +117,7 @@ impl Session {
                     self.explore = Some(shelves.into());
                     changes.explore = true;
                 }
-                Err(err) => self.set_error(format!("Explore: {err:#}")),
+                Err(err) => self.set_error(trf!(self.lang, "Explore: {err:#}", "Огляд: {err:#}")),
             },
             Background::Related { video_id, result } => {
                 if self.queue.current().is_some_and(|t| t.video_id == video_id) {
@@ -139,7 +152,7 @@ impl Session {
         }
         self.search_generation += 1;
         self.searching = true;
-        self.set_info(format!("Searching “{query}”…"));
+        self.set_info(trf!(self.lang, "Searching “{query}”…", "Шукаю «{query}»…"));
         let (catalog, youtube, source, tx, generation) = (
             self.deps.catalog.clone(),
             self.deps.account.youtube(),
@@ -189,7 +202,7 @@ impl Session {
     pub fn open_page(&mut self, browse_id: &str) {
         self.page_generation += 1;
         self.page_loading = true;
-        self.set_info("Loading…");
+        self.set_info(tr!(self.lang, "Loading…", "Завантажую…"));
         let (catalog, tx, generation, id) = (
             self.deps.catalog.clone(),
             self.tx.clone(),
@@ -208,7 +221,7 @@ impl Session {
         self.page_generation += 1;
         self.page_loading = true;
         let name = main_artist(&track.artist);
-        self.set_info(format!("Opening {name}…"));
+        self.set_info(trf!(self.lang, "Opening {name}…", "Відкриваю {name}…"));
         let (catalog, tx, generation, video_id) = (
             self.deps.catalog.clone(),
             self.tx.clone(),
@@ -282,7 +295,7 @@ impl Session {
     /// Plays `track` followed by its radio.
     pub fn start_radio(&mut self, track: Track) {
         self.play(vec![track.clone()].into(), 0);
-        self.set_info(format!("Radio: {}", track.title));
+        self.set_info(trf!(self.lang, "Radio: {}", "Радіо: {}", track.title));
         self.fetch_radio(track, false);
     }
 
@@ -313,7 +326,7 @@ impl Session {
         let tracks = match result {
             Ok(tracks) => tracks,
             Err(err) => {
-                self.set_error(format!("Radio: {err:#}"));
+                self.set_error(trf!(self.lang, "Radio: {err:#}", "Радіо: {err:#}"));
                 return;
             }
         };

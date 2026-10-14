@@ -451,7 +451,7 @@ async fn sync(paths: &AppPaths, settings: &Settings) -> Result<()> {
             .context("not signed in — run `ytm sign-in`")?;
         sync_library(&youtube, library, settings.liked_music_only).await?
     };
-    println!("{}", report.summary());
+    println!("{}", report.summary(ytm_player::i18n::Lang::En));
     Ok(())
 }
 

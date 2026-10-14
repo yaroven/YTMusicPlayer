@@ -39,8 +39,9 @@ Open **ytm-player** from your applications, or run `ytm gui`.
   a blurred copy of the cover. Synced lyrics play karaoke style: the sung line
   lights up letter by letter, instrumental breaks show three dots, and a click
   on a line seeks there. `Esc` or ▼ closes it.
-- **Settings:** autoplay, volume normalization, crossfade (0 = gapless),
-  notifications, tray icon, the Google account. Saved to `config.toml`.
+- **Settings:** language (English / Українська), autoplay, volume
+  normalization, crossfade (0 = gapless), notifications, tray icon, the
+  Google account. Saved to `config.toml`.
 - Keys: `Space` play/pause, `n`/`p` next/previous, `f` like, `t` lyrics, `/`
   search box, `Backspace` back, `Esc` closes the full-screen view.
 - The layout adapts to the window: narrower sidebar, then a library picker

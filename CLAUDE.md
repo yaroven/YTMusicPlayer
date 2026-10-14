@@ -478,6 +478,17 @@ Domain terms are defined in `CONTEXT.md`.
   browser. `YTM_VIDEO_EXIT_AFTER=<secs>` closes that window by itself, for
   testing without a hand on the mouse.
 
+- **Two languages, no catalogue files** (user's request 2026-10-14): English
+  and Ukrainian live next to the code in `i18n` — a `Text` table of the
+  window's labels (poured into a Slint global `L`, which the markup reads)
+  and the `tr!` / `trf!` macros for everything else, including every status
+  message. The language comes from `language` in `config.toml` (`auto`
+  follows macOS's `AppleLanguages`, else `LANG`), is switched in Settings
+  without a restart, and travels to the frontends on the `SessionView`.
+  Ukrainian plurals ("4 пісні") go through `i18n::songs_uk`. Anything the
+  user can read needs both languages; the CLI and the log stay English (they
+  are read by scripts and in bug reports).
+
 ## Open TODOs
 
 - iPhone: verify signed-in age-restricted playback on a real account,

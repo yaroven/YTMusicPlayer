@@ -138,8 +138,10 @@ pub struct App {
 }
 
 pub async fn run(deps: Deps) -> Result<()> {
-    let mut library = LibraryView::new(deps.library.clone())?;
-    library.set_language(crate::i18n::Lang::from_code(&deps.language));
+    let library = LibraryView::new_in(
+        deps.library.clone(),
+        crate::i18n::Lang::from_code(&deps.language),
+    )?;
     let mut app = App::new(Session::new(deps)?, library);
     app.session.startup(app.library.playlists().is_empty());
 
@@ -565,7 +567,14 @@ impl App {
                     Some((item, channel)) if item.kind != ItemKind::Song => {
                         self.session.toggle_saved(item, channel)
                     }
-                    _ => self.session.set_error("Open an album or artist to save it"),
+                    _ => {
+                        let lang = self.session.lang;
+                        self.session.set_error(tr!(
+                            lang,
+                            "Open an album or artist to save it",
+                            "Відкрий альбом або виконавця, щоб зберегти"
+                        ))
+                    }
                 }
             }
             Action::PlaylistMenu => {

@@ -17,7 +17,9 @@ use crate::{
         models::{LIKED_PLAYLIST_ID, Playlist},
     },
     catalog::{Catalog, ItemKind},
+    i18n::Lang,
     storage::{Library, SyncedPlaylist},
+    tr, trf,
 };
 
 #[derive(Debug, Clone)]
@@ -35,35 +37,49 @@ pub struct SyncReport {
 
 impl SyncReport {
     /// "Synced 5 playlists, 812 tracks (3 unchanged, 21 API units) · …".
-    pub fn summary(&self) -> String {
+    pub fn summary(&self, lang: Lang) -> String {
         let cost = if self.via_session {
-            "no API quota".to_owned()
+            tr!(lang, "no API quota", "без квоти API").to_owned()
         } else {
-            format!(
+            trf!(
+                lang,
                 "{} unchanged, {} API units",
-                self.unchanged, self.quota_units
+                "{} без змін, {} одиниць API",
+                self.unchanged,
+                self.quota_units
             )
         };
-        format!(
+        trf!(
+            lang,
             "Synced {} playlists, {} tracks ({cost}) · {}",
+            "Синхронізовано {} плейлистів, {} треків ({cost}) · {}",
             self.playlists,
             self.tracks,
-            self.liked_note()
+            self.liked_note(lang)
         )
     }
 
     /// One-line explanation of where the liked list came from.
-    pub fn liked_note(&self) -> String {
+    pub fn liked_note(&self, lang: Lang) -> String {
         match self.liked_source {
-            LikedSource::YouTubeMusic => format!("{} liked (YouTube Music)", self.liked),
+            LikedSource::YouTubeMusic => trf!(
+                lang,
+                "{} liked (YouTube Music)",
+                "{} вподобаних (YouTube Music)",
+                self.liked
+            ),
             LikedSource::LikedVideos {
                 total,
                 music_only: true,
-            } => format!(
+            } => trf!(
+                lang,
                 "{} of {total} liked videos are Music-category (liked_music_only = false keeps all)",
+                "{} із {total} вподобаних відео — музика (liked_music_only = false лишає всі)",
                 self.liked
             ),
-            LikedSource::LikedVideos { .. } => format!("{} liked videos", self.liked),
+            LikedSource::LikedVideos { .. } => {
+                trf!(lang, "{} liked videos", "{} вподобаних відео", self.liked)
+            }
         }
     }
 }
@@ -216,11 +232,11 @@ mod tests {
     #[test]
     fn summaries_say_what_the_sync_cost() {
         assert_eq!(
-            report(true).summary(),
+            report(true).summary(Lang::En),
             "Synced 5 playlists, 812 tracks (no API quota) · 120 liked (YouTube Music)"
         );
         assert_eq!(
-            report(false).summary(),
+            report(false).summary(Lang::En),
             "Synced 5 playlists, 812 tracks (3 unchanged, 21 API units) · 120 liked (YouTube Music)"
         );
     }
@@ -250,7 +266,7 @@ mod tests {
         assert!(
             report.liked > 0 && report.playlists > 1 && report.quota_units == 0,
             "{}",
-            report.summary()
+            report.summary(Lang::En)
         );
         assert_eq!(
             library.tracks(LIKED_PLAYLIST_ID).unwrap().len(),

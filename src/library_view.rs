@@ -27,6 +27,16 @@ use crate::{
     tr,
 };
 
+/// The playlist's name as the user should see it: the account's "Liked
+/// music" is ours, so it follows the language.
+pub fn playlist_title(lang: Lang, playlist: &Playlist) -> &str {
+    if playlist.id == LIKED_PLAYLIST_ID {
+        tr!(lang, "Liked music", "Вподобані")
+    } else {
+        &playlist.title
+    }
+}
+
 /// "4 songs" / "4 пісні" — Ukrainian needs the right ending.
 fn songs_count(lang: Lang, n: usize) -> String {
     match lang {
@@ -117,9 +127,21 @@ pub struct LibraryView {
 }
 
 impl LibraryView {
-    /// Switches the language of the titles it builds ("History", "4 songs").
+    /// Loads the library with its titles in `lang`.
+    pub fn new_in(library: Arc<Library>, lang: Lang) -> Result<Self> {
+        let mut view = Self {
+            lang,
+            ..Self::new(library)?
+        };
+        view.set_language(lang);
+        Ok(view)
+    }
+
+    /// Switches the language of the titles it builds ("History", "4 songs");
+    /// what is on screen is rebuilt.
     pub fn set_language(&mut self, lang: Lang) {
         self.lang = lang;
+        let _ = self.reload_keeping_place();
     }
 
     /// Loads the playlists and shows the one shown last (else the first).
@@ -342,7 +364,7 @@ impl LibraryView {
         self.navigate(Shown {
             source: Source::Playlist(p.id.clone()),
             subtitle: songs_count(self.lang, tracks.len()),
-            title: p.title,
+            title: playlist_title(self.lang, &p).to_owned(),
             tracks,
             ..Shown::empty()
         });
@@ -412,7 +434,7 @@ impl LibraryView {
         let saved = self.library.saved(ItemKind::Album)?;
         if !saved.is_empty() {
             shelves.push(Shelf {
-                title: "Your albums".into(),
+                title: tr!(self.lang, "Your albums", "Твої альбоми").into(),
                 items: saved,
             });
         }
@@ -658,7 +680,7 @@ impl LibraryView {
                 self.shown.tracks = self.library.tracks(&id)?;
                 self.shown.subtitle = songs_count(self.lang, self.shown.tracks.len());
                 if let Some(p) = self.playlists.iter().find(|p| p.id == id) {
-                    self.shown.title = p.title.clone();
+                    self.shown.title = playlist_title(self.lang, p).to_owned();
                 }
             }
             Source::Downloads => {

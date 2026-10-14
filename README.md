@@ -15,6 +15,8 @@ Windows, iOS.
   Music, editable queue, sleep timer, offline downloads, Chromecast, media
   keys and the system "Now Playing" widget. A song with a clip can be
   watched in the window and handed back to the audio where the video stopped.
+- **English or Ukrainian:** the whole interface, switched in Settings
+  (`language` in the config; `auto` follows the system).
 - **Light:** the terminal UI takes ~10 MB of memory idle and ~15 MB while
   playing, the window ~50 MB playing and ~30 MB closed to the tray; near-zero
   CPU. A YouTube Music browser tab typically takes several hundred MB.
