@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result, bail};
 use image::{RgbaImage, imageops::FilterType};
-use slint::{Rgba8Pixel, SharedPixelBuffer};
+use slint::{Image, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArtSize {
@@ -42,13 +42,72 @@ impl ArtSize {
     }
 }
 
+/// Decoded pixels. Only art with see-through parts (round artist pictures,
+/// the large cover's rounded corners) needs the alpha byte; without it a
+/// cached image is a quarter smaller.
+pub enum Pixels {
+    Rgb(SharedPixelBuffer<Rgb8Pixel>),
+    Rgba(SharedPixelBuffer<Rgba8Pixel>),
+}
+
+impl Pixels {
+    pub fn image(self) -> Image {
+        match self {
+            Self::Rgb(buffer) => Image::from_rgb8(buffer),
+            Self::Rgba(buffer) => Image::from_rgba8(buffer),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn width(&self) -> u32 {
+        match self {
+            Self::Rgb(buffer) => buffer.width(),
+            Self::Rgba(buffer) => buffer.width(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn height(&self) -> u32 {
+        match self {
+            Self::Rgb(buffer) => buffer.height(),
+            Self::Rgba(buffer) => buffer.height(),
+        }
+    }
+
+    /// Bytes a decoded image takes (3 or 4 per pixel).
+    #[cfg(test)]
+    pub fn bytes(&self) -> usize {
+        let pixels = (self.width() * self.height()) as usize;
+        match self {
+            Self::Rgb(_) => pixels * 3,
+            Self::Rgba(_) => pixels * 4,
+        }
+    }
+
+    /// The alpha of the top-left pixel (tests: corners and circles).
+    #[cfg(test)]
+    fn corner_alpha(&self) -> u8 {
+        match self {
+            Self::Rgb(_) => 255,
+            Self::Rgba(buffer) => buffer.as_slice()[0].a,
+        }
+    }
+
+    fn rgba_mut(&mut self) -> Option<&mut SharedPixelBuffer<Rgba8Pixel>> {
+        match self {
+            Self::Rgba(buffer) => Some(buffer),
+            Self::Rgb(_) => None,
+        }
+    }
+}
+
 pub struct Art {
-    pub pixels: SharedPixelBuffer<Rgba8Pixel>,
+    pub pixels: Pixels,
     /// Average colour, for the now-playing background.
     pub tint: (u8, u8, u8),
     /// Large covers: a 12 px copy that, stretched over the now-playing
     /// view, looks like a blurred cover (no blur filter in the renderer).
-    pub backdrop: Option<SharedPixelBuffer<Rgba8Pixel>>,
+    pub backdrop: Option<SharedPixelBuffer<Rgb8Pixel>>,
 }
 
 /// Art for `key`: a video id, or for [`ArtSize::Card`] the image URL.
@@ -72,7 +131,10 @@ pub async fn fetch(http: &reqwest::Client, key: &str, size: ArtSize) -> Result<A
             Ok(response) => {
                 let bytes = response.bytes().await?;
                 return tokio::task::spawn_blocking(move || {
-                    let mut art = decode_square(&bytes, size.pixels())?;
+                    // Only round artist pictures and the large cover need
+                    // the alpha byte (circle / rounded corners).
+                    let alpha = matches!(size, ArtSize::Round | ArtSize::Large);
+                    let mut art = decode_square(&bytes, size.pixels(), alpha)?;
                     if size == ArtSize::Round {
                         cut_circle(&mut art);
                     }
@@ -103,9 +165,11 @@ fn card_url(url: &str, edge: u32) -> String {
 
 const BACKDROP: u32 = 12;
 
-/// Decodes a JPEG (or PNG), crops the centre square of its 16:9 picture area and
-/// scales it to `edge` px. Large covers get softly rounded corners.
-pub fn decode_square(jpeg: &[u8], edge: u32) -> Result<Art> {
+/// Decodes a JPEG (or PNG), crops the centre square of its 16:9 picture area
+/// and scales it to `edge` px. With `alpha` the pixels keep their alpha byte
+/// (round pictures, the large cover's rounded corners); without it they are
+/// a quarter smaller in the cache.
+pub fn decode_square(jpeg: &[u8], edge: u32, alpha: bool) -> Result<Art> {
     let img = image::load_from_memory(jpeg)
         .context("decoding thumbnail")?
         .to_rgba8();
@@ -121,13 +185,24 @@ pub fn decode_square(jpeg: &[u8], edge: u32) -> Result<Art> {
     let tint = average(&out);
     let backdrop = (edge >= 256).then(|| {
         let small = image::imageops::resize(&out, BACKDROP, BACKDROP, FilterType::Triangle);
-        SharedPixelBuffer::clone_from_slice(small.as_raw(), BACKDROP, BACKDROP)
+        let rgb: Vec<u8> = small.pixels().flat_map(|p| [p[0], p[1], p[2]]).collect();
+        SharedPixelBuffer::clone_from_slice(&rgb, BACKDROP, BACKDROP)
     });
-    if edge >= 256 {
+    if alpha && edge >= 256 {
         round_corners(&mut out, edge / 40);
     }
+    let pixels = if alpha {
+        Pixels::Rgba(SharedPixelBuffer::clone_from_slice(
+            out.as_raw(),
+            edge,
+            edge,
+        ))
+    } else {
+        let rgb: Vec<u8> = out.pixels().flat_map(|p| [p[0], p[1], p[2]]).collect();
+        Pixels::Rgb(SharedPixelBuffer::clone_from_slice(&rgb, edge, edge))
+    };
     Ok(Art {
-        pixels: SharedPixelBuffer::clone_from_slice(out.as_raw(), edge, edge),
+        pixels,
         tint,
         backdrop,
     })
@@ -136,10 +211,13 @@ pub fn decode_square(jpeg: &[u8], edge: u32) -> Result<Art> {
 /// Makes everything outside the inscribed circle transparent
 /// (anti-aliased over one pixel).
 fn cut_circle(art: &mut Art) {
-    let (w, h) = (art.pixels.width(), art.pixels.height());
+    let Some(pixels) = art.pixels.rgba_mut() else {
+        return;
+    };
+    let (w, h) = (pixels.width(), pixels.height());
     let r = w.min(h) as f32 / 2.0;
     let stride = w as usize;
-    for (i, p) in art.pixels.make_mut_slice().iter_mut().enumerate() {
+    for (i, p) in pixels.make_mut_slice().iter_mut().enumerate() {
         let (x, y) = ((i % stride) as f32 + 0.5, (i / stride) as f32 + 0.5);
         let d = ((x - r).powi(2) + (y - r).powi(2)).sqrt();
         let coverage = (r - d + 0.5).clamp(0.0, 1.0);
@@ -220,7 +298,7 @@ mod tests {
 
     #[test]
     fn letterboxed_thumbnail_crops_to_picture() {
-        let art = decode_square(&jpeg(480, 360), 96).unwrap();
+        let art = decode_square(&jpeg(480, 360), 96, false).unwrap();
         assert_eq!((art.pixels.width(), art.pixels.height()), (96, 96));
         // No black bars made it into the crop.
         assert!(art.tint.0 > 230, "tint {:?}", art.tint);
@@ -228,9 +306,17 @@ mod tests {
 
     #[test]
     fn wide_thumbnail_is_square_and_rounded_when_large() {
-        let art = decode_square(&jpeg(320, 180), 480).unwrap();
+        let art = decode_square(&jpeg(320, 180), 480, true).unwrap();
         assert_eq!(art.pixels.width(), 480);
-        let corner = art.pixels.as_slice()[0];
-        assert!(corner.a < 128, "corner should be transparent");
+        assert!(
+            art.pixels.corner_alpha() < 128,
+            "corner should be transparent"
+        );
+        assert_eq!(art.pixels.bytes(), 480 * 480 * 4, "large covers keep alpha");
+
+        // Row and card art has no see-through parts: a quarter smaller.
+        let thumb = decode_square(&jpeg(640, 360), 96, false).unwrap();
+        assert_eq!((thumb.pixels.width(), thumb.pixels.height()), (96, 96));
+        assert_eq!(thumb.pixels.bytes(), 96 * 96 * 3);
     }
 }

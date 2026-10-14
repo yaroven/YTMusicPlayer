@@ -49,11 +49,11 @@ use crate::{
 use art::ArtSize;
 use ui::{CardRow, LyricLine, MainWindow, PlaylistRow, ShelfRow, TrackRow};
 
-/// Decoded thumbnails kept in memory (~36 KB each at 96x96 RGBA): two
-/// screens of rows plus the queue panel on a tall window.
-const THUMB_CACHE: usize = 80;
-/// Decoded card images kept beyond those on screen (~64 KB each).
-const CARD_CACHE: usize = 48;
+/// Decoded thumbnails kept in memory (~27 KB each at 96x96 RGB): a screen
+/// of rows plus the queue panel on a tall window.
+const THUMB_CACHE: usize = 56;
+/// Decoded card images kept beyond those on screen (~77 KB each).
+const CARD_CACHE: usize = 28;
 /// Rows of the "Up next" list sent to the UI.
 const QUEUE_ROWS: usize = 200;
 /// Songs listed above an album / artist page's shelves.
@@ -959,7 +959,7 @@ impl View {
             self.art.borrow_mut().requested.remove(&key);
             return;
         };
-        let image = Image::from_rgba8(art.pixels);
+        let image = art.pixels.image();
         let is_now = self.now.as_ref().is_some_and(|t| t.video_id == key);
         match size {
             ArtSize::Thumb => {
@@ -983,7 +983,7 @@ impl View {
                 return;
             }
             ArtSize::Large if is_now => {
-                let backdrop = art.backdrop.map(Image::from_rgba8).unwrap_or_default();
+                let backdrop = art.backdrop.map(Image::from_rgb8).unwrap_or_default();
                 self.art.borrow_mut().large = Some((key.clone(), image, art.tint, backdrop));
             }
             ArtSize::Large => return, // track changed meanwhile

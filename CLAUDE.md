@@ -396,6 +396,21 @@ Domain terms are defined in `CONTEXT.md`.
   synced through the Data API stay `false` — it only knows age restriction,
   not explicit lyrics. Suggestions are debounced 250 ms in both UIs.
 
+- **GPU renderer rejected, measured 2026-10-14** (M1, release, sandbox
+  HOME, same window, 45 s after start): Slint `renderer-femtovg` with
+  `SLINT_RENDERER=femtovg` **98 MB** vs the software renderer's **46 MB**
+  (IOAccelerator alone 9 MB resident, and the frame still costs on the CPU
+  side). Don't re-try it for memory.
+- **Where the GUI's memory goes** (same build, `vmmap -summary`): window
+  pixel buffers (Malloc Large, ~1.3 frames of width×height×4 at 2x) and
+  the window server's CoreAnimation layer scale with the window's area and
+  dominate — a user's 97 MB had 37 MB of frames and 19 MB of CoreAnimation
+  against our ~21 MB of heap. Art is stored without the alpha byte unless
+  it needs one (round artist pictures, the large cover's rounded corners),
+  caches hold 56 thumbs / 28 cards: ~4 MB when full, measured −2 MB of
+  heap with 60 rows. SQLite already runs with a 256 KB page cache, the
+  runtime is single-threaded, art decoding is capped at 4 at a time.
+
 ## Open TODOs
 
 - iPhone: verify signed-in age-restricted playback on a real account,
