@@ -290,7 +290,7 @@ struct LibraryView: View {
         List {
             Section {
                 NavigationLink { TrackListView(list: .liked) } label: {
-                    Label("Liked songs", systemImage: "heart.fill")
+                    Label(account.signedIn ? "Liked music" : "Liked songs", systemImage: "heart.fill")
                         .badge(library.liked.count)
                 }
                 NavigationLink { TrackListView(list: .history) } label: {
@@ -332,9 +332,10 @@ struct LibraryView: View {
             }
             Section {
                 if account.signedIn {
-                    NavigationLink { AccountLibraryView() } label: {
-                        Label("Your YouTube Music", systemImage: "music.note.house.fill")
+                    Button("Sync library", systemImage: "arrow.triangle.2.circlepath") {
+                        Task { await library.sync() }
                     }
+                    .disabled(library.syncing)
                     Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
                         confirmSignOut = true
                     }
@@ -347,10 +348,12 @@ struct LibraryView: View {
             } header: {
                 Text("Google account")
             } footer: {
-                if account.signedIn {
-                    Text("Signed in\(account.name.map { " as \($0)" } ?? ""). Age-restricted songs play with this account.")
+                if library.syncing {
+                    Text("Syncing your library…")
+                } else if account.signedIn {
+                    Text("Signed in\(account.name.map { " as \($0)" } ?? ""). Your liked music, playlists and followed artists are this account's, and changes here go back to YouTube.")
                 } else {
-                    Text("Needed for age-restricted songs and your YouTube Music library. The password goes only to Google.")
+                    Text("Needed for your library, age-restricted songs and your own YouTube Music. The password goes only to Google.")
                 }
             }
             Section("Playback") {
@@ -363,6 +366,23 @@ struct LibraryView: View {
             }
         }
         .navigationTitle("Library")
+        .refreshable { await library.sync() }
+        .task {
+            if library.needsFirstSync { await library.sync() }
+        }
+        .onChange(of: account.signedIn) { _, signedIn in
+            if signedIn {
+                Task { await library.sync() }
+            } else {
+                library.forgetAccount()
+            }
+        }
+        .alert("Library", isPresented: Binding(get: { library.error != nil },
+                                               set: { if !$0 { library.error = nil } })) {
+            Button("OK") { library.error = nil }
+        } message: {
+            Text(library.error ?? "")
+        }
         .sheet(isPresented: $signingIn) { SignInView() }
         .confirmationDialog("Sign out of Google?", isPresented: $confirmSignOut, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) { account.signOut() }

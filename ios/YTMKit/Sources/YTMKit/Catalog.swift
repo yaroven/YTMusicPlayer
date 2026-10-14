@@ -33,6 +33,9 @@ public final class Catalog: Sendable {
         self.auth = auth
     }
 
+    /// Whether requests go as an account (its library, its own home).
+    public var signedIn: Bool { auth?.signedIn == true }
+
     func call(_ endpoint: String, _ body: [String: Any]) async throws -> Any {
         var body = body
         body["context"] = ["client": ["clientName": "WEB_REMIX", "clientVersion": Self.clientVersion,
@@ -145,10 +148,121 @@ public final class Catalog: Sendable {
         try await page("VLLM").tracks
     }
 
-    /// The signed-in account's playlists and saved albums' lists.
+    /// The account's own playlists (not Liked Music, not the "New playlist"
+    /// button, which has no page).
     public func libraryPlaylists() async throws -> [Item] {
         let data = try await call("browse", ["browseId": "FEmusic_liked_playlists"])
-        return libraryCards(data).filter { $0.browseId != "VLLM" && $0.browseId != "LM" }
+        return libraryCards(data).filter {
+            $0.kind == .playlist && $0.browseId != "VLLM" && $0.browseId != "LM"
+        }
+    }
+
+    /// Albums the account saved to its library.
+    public func libraryAlbums() async throws -> [Item] {
+        let data = try await call("browse", ["browseId": "FEmusic_liked_albums"])
+        return libraryCards(data).filter { $0.kind == .album }
+    }
+
+    /// Artists the account has songs or albums from (what its Artists list
+    /// shows). Their ids are channel ids, as everywhere else.
+    public func libraryArtists() async throws -> [Item] {
+        let data = try await call("browse", ["browseId": "FEmusic_library_corpus_track_artists"])
+        return findAll(data, "musicResponsiveListItemRenderer")
+            .compactMap { ($0 as? JSON).flatMap { listItem($0) } }
+            .filter { $0.kind == .artist }
+            .map { item in
+                guard item.browseId.hasPrefix("MPLA") else { return item }
+                var item = item
+                item.browseId = String(item.browseId.dropFirst(4))
+                return item
+            }
+    }
+
+    /// A playlist's songs with each entry's `setVideoId`, which removing it
+    /// again needs. Paged like `page`.
+    public func playlistEntries(_ playlistId: String) async throws -> [(track: Track, setVideoId: String)] {
+        let data = try await call("browse", ["browseId": "VL" + bare(playlistId)])
+        var entries = playlistEntriesIn(data)
+        var token = continuation(data)
+        var pages = 1
+        while let t = token, pages < Self.maxPages {
+            pages += 1
+            let more = try await call("browse", ["continuation": t])
+            let extra = playlistEntriesIn(more)
+            if extra.isEmpty { break }
+            entries += extra
+            token = continuation(more)
+        }
+        return entries
+    }
+
+    // MARK: Writes (signed in)
+    //
+    // The same endpoints the YouTube Music site uses, so the account's
+    // library really changes — no Data API, no quota, no OAuth client.
+
+    /// Likes, dislikes or un-rates a song.
+    public func rate(_ videoId: String, _ rating: Rating) async throws {
+        let endpoint = switch rating {
+        case .like: "like/like"
+        case .dislike: "like/dislike"
+        case .none: "like/removelike"
+        }
+        _ = try await write(endpoint, ["target": ["videoId": videoId]])
+    }
+
+    /// Subscribes to a channel (following an artist) or undoes it.
+    public func subscribe(_ channelId: String, on: Bool) async throws {
+        _ = try await write(on ? "subscription/subscribe" : "subscription/unsubscribe",
+                            ["channelIds": [channelId]])
+    }
+
+    /// Creates a private playlist; returns its id (`PL…`).
+    public func createPlaylist(_ title: String) async throws -> String {
+        let data = try await write("playlist/create", ["title": title, "privacyStatus": "PRIVATE"])
+        guard let id = (data as? JSON)?["playlistId"] as? String ?? findFirst(data, "playlistId") as? String else {
+            throw YTMError.http("YouTube Music didn't return the new playlist's id", 200)
+        }
+        return bare(id)
+    }
+
+    public func deletePlaylist(_ playlistId: String) async throws {
+        _ = try await write("playlist/delete", ["playlistId": bare(playlistId)])
+    }
+
+    public func renamePlaylist(_ playlistId: String, to title: String) async throws {
+        _ = try await editPlaylist(playlistId, ["action": "ACTION_SET_PLAYLIST_NAME", "playlistName": title])
+    }
+
+    /// Adds a song to a playlist; returns its `setVideoId`.
+    public func addToPlaylist(_ playlistId: String, _ videoId: String) async throws -> String {
+        let data = try await editPlaylist(playlistId, ["action": "ACTION_ADD_VIDEO", "addedVideoId": videoId])
+        return findFirst(data, "setVideoId") as? String ?? ""
+    }
+
+    /// Removes one entry from a playlist (`setVideoId` identifies it: the
+    /// same song can sit in a playlist more than once).
+    public func removeFromPlaylist(_ playlistId: String, _ videoId: String, setVideoId: String) async throws {
+        _ = try await editPlaylist(playlistId, ["action": "ACTION_REMOVE_VIDEO",
+                                                "removedVideoId": videoId,
+                                                "setVideoId": setVideoId])
+    }
+
+    private func editPlaylist(_ playlistId: String, _ action: [String: Any]) async throws -> Any {
+        try await write("browse/edit_playlist", ["playlistId": bare(playlistId), "actions": [action]])
+    }
+
+    /// A write needs the sign-in, and YouTube reports failures in the body
+    /// rather than the status code.
+    private func write(_ endpoint: String, _ body: [String: Any]) async throws -> Any {
+        guard let auth, auth.signedIn else {
+            throw YTMError.signInRequired("Sign in with Google to change your library")
+        }
+        let data = try await call(endpoint, body)
+        if let status = (data as? JSON)?["status"] as? String, status != "STATUS_SUCCEEDED" {
+            throw YTMError.http("YouTube Music \(endpoint): \(status)", 200)
+        }
+        return data
     }
 
     func next(_ videoId: String) async throws -> Any {

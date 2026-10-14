@@ -14,8 +14,9 @@ setup.
   lock screen and Control Center controls, AirPlay.
 - Karaoke lyrics: the sung line lights up letter by letter, a tap on a line
   seeks there.
-- Editable queue, liked songs, playlists, saved pages and history kept on
-  the phone.
+- Your YouTube Music library once you sign in: liked music, playlists,
+  saved albums and followed artists, with likes and playlist changes written
+  back to YouTube. History and the editable queue stay on the phone.
 - No yt-dlp and no server: the app asks YouTube for the audio link itself.
 
 ## Requirements
@@ -62,13 +63,14 @@ The app works right away: Home, search and playback need no account.
 - Google's own sign-in page opens inside the app. The password goes only to
   Google; the app keeps the resulting youtube.com session in the iPhone's
   Keychain and nowhere else.
-- Signed in, Home becomes your own, **Library → Your YouTube Music** shows
-  your liked music and playlists, and age-restricted songs play with your
-  account (YouTube serves them to signed-in adults only).
-- **Library → Sign out** forgets the session.
-
-Liked songs, playlists, saved albums / artists and history that you make in
-the app stay on the phone and are not written back to YouTube.
+- Signed in, the **Library** tab becomes your account's: liked music, your
+  playlists, saved albums and followed artists, synced from YouTube Music
+  (pull down to sync again, or **Sync library**). Likes, playlist changes,
+  follows and playlist deletions go back to YouTube. Home becomes your own,
+  and age-restricted songs play with your account (YouTube serves them to
+  signed-in adults only).
+- **Library → Sign out** forgets the session and the account's lists;
+  history and anything made while signed out stays.
 
 ## Keeping it installed
 
@@ -81,7 +83,8 @@ SideStore refreshes it; nothing is lost.
 
 - No offline downloads, crossfade, sleep timer, Chromecast, Last.fm or
   Discord yet.
-- Likes and playlists are local to the phone.
+- Reordering songs inside a playlist stays on the phone (as on the desktop
+  player).
 - Age-restricted songs need the Google sign-in, and start a few seconds
   slower than normal ones (YouTube only serves them in a form the app has
   to convert first).

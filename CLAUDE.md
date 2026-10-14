@@ -118,7 +118,7 @@ main services the CFRunLoop for media keys).
 | `packaging/` | Linux .desktop, Arch PKGBUILD, Inno Setup script, macOS pkg builder |
 | `config::{paths, settings}` | per-OS dirs; `config.toml` (template on first run, `store_client` / `store_value` rewrite keys in place, keeping comments) |
 | `ios/YTMKit` (Swift package) | iPhone core, no UI: InnerTube catalog + LRCLIB lyrics ported from `catalog.rs` / `lyrics.rs` (same lenient `findAll` parsing), `Resolver` = on-device stream URLs (no yt-dlp), client list overridable by `ios/clients.json` on main; `swift run YTMKitChecks [--live]` (no XCTest in CLT) |
-| `ios/App` (SwiftUI, iOS 17) | `Player` (AVQueuePlayer, next song resolved ahead, radio autoplay, Now Playing / remote commands, queue saved to `queue.json`), `Library` (liked, history, playlists, saved pages in one JSON), `Router` (per-tab paths); `project.yml` → XcodeGen in CI; `ios/player-check.sh` runs `Player` on macOS, muted, live |
+| `ios/App` (SwiftUI, iOS 17) | `Player` (AVQueuePlayer, next song resolved ahead, radio autoplay, Now Playing / remote commands, queue saved to `queue.json`), `Library` (the account's liked music / playlists / saved pages synced from YouTube Music and written back, plus history, in one JSON), `Router` (per-tab paths); `project.yml` → XcodeGen in CI; `ios/player-check.sh` runs `Player` on macOS, muted, live |
 
 Domain terms are defined in `CONTEXT.md`.
 
@@ -432,6 +432,10 @@ Domain terms are defined in `CONTEXT.md`.
   `ACTION_SET_PLAYLIST_NAME`), `subscription/subscribe|unsubscribe`;
   failures come back as `status != STATUS_SUCCEEDED` with HTTP 200.
   The Data API path stays for accounts that already set up an OAuth client.
+  iPhone mirrors all of it (`Catalog` reads + writes, `Library.sync` /
+  `Library.write`, optimistic local change undone when YouTube refuses);
+  reordering inside a playlist stays local on both (no
+  `ACTION_MOVE_VIDEO_BEFORE` yet).
 
 ## Open TODOs
 

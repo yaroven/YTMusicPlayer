@@ -54,6 +54,11 @@ public enum SearchKind: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
+/// A song's rating in the account.
+public enum Rating: Sendable {
+    case like, dislike, none
+}
+
 public enum ItemKind: String, Codable, Sendable {
     case song, album, artist, playlist
 }

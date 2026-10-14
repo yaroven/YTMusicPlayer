@@ -10,10 +10,16 @@ func pageType(_ endpoint: Any?) -> String? {
 func kindOf(_ pageType: String?) -> ItemKind? {
     switch pageType {
     case "MUSIC_PAGE_TYPE_ALBUM", "MUSIC_PAGE_TYPE_AUDIOBOOK": .album
-    case "MUSIC_PAGE_TYPE_ARTIST", "MUSIC_PAGE_TYPE_USER_CHANNEL": .artist
+    // The library's own rows link to "MPLA<channel id>" pages.
+    case "MUSIC_PAGE_TYPE_ARTIST", "MUSIC_PAGE_TYPE_USER_CHANNEL", "MUSIC_PAGE_TYPE_LIBRARY_ARTIST": .artist
     case "MUSIC_PAGE_TYPE_PLAYLIST": .playlist
     default: nil
     }
+}
+
+/// Playlist ids travel as `PL…`; browse ids carry a `VL` prefix.
+func bare(_ playlistId: String) -> String {
+    playlistId.hasPrefix("VL") ? String(playlistId.dropFirst(2)) : playlistId
 }
 
 /// "3:52" / "1:02:03" → seconds.
@@ -122,6 +128,16 @@ func parseSearch(_ data: Any, kind: SearchKind) -> [Item] {
 }
 
 /// Songs in list rows (album tracks, top songs, playlist items).
+/// Playlist rows as `(song, setVideoId)`; the set id is what removing that
+/// entry from the playlist needs, and is empty when YouTube doesn't give one
+/// (search results, other people's playlists).
+func playlistEntriesIn(_ data: Any) -> [(track: Track, setVideoId: String)] {
+    findAll(data, "musicResponsiveListItemRenderer").compactMap { row in
+        guard let row = row as? JSON, let track = listItem(row)?.track else { return nil }
+        return (track, string(row, "playlistItemData/playlistSetVideoId") ?? "")
+    }
+}
+
 func songsIn(_ data: Any, albumArtist: String? = nil) -> [Track] {
     findAll(data, "musicResponsiveListItemRenderer")
         .compactMap { ($0 as? JSON).flatMap { listItem($0, albumArtist: albumArtist)?.track } }

@@ -104,6 +104,38 @@ let albumRow = #"""
       "footer":{"runs":[{"text":"Source: Musixmatch"}]}}}
     """#))
     check(lyr?.text.hasPrefix("Half-past") == true && lyr?.source == "Source: Musixmatch", "YT lyrics")
+    // The library: playlist rows carry the id a removal needs; the account's
+    // playlists skip "Liked Music" and the "New playlist" button; its artist
+    // rows point at "MPLA<channel id>".
+    let likedRow = songRow.replacingOccurrences(
+        of: #""playlistItemData":{"videoId":"YkLLcIKhJ64"}"#,
+        with: #""playlistItemData":{"videoId":"YkLLcIKhJ64","playlistSetVideoId":"set-1"}"#)
+    let entries = playlistEntriesIn(json(#"{"contents":[\#(likedRow),\#(songRow)]}"#))
+    check(entries.count == 2 && entries[0].setVideoId == "set-1" && entries[1].setVideoId == "",
+          "playlist set ids \(entries.map(\.setVideoId))")
+    check(bare("VLPLroad") == "PLroad" && bare("PLroad") == "PLroad", "bare playlist id")
+    func libraryCard(_ title: String, _ id: String, _ type: String) -> String {
+        #"{"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"\#(title)"}]},"subtitle":{"runs":[{"text":"Playlist"}]},"navigationEndpoint":\#(browse(id, type))}}"#
+    }
+    let libraryLists = json(#"""
+    {"contents":[{"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"New playlist"}]}}},
+      \#(libraryCard("Liked Music", "VLLM", "MUSIC_PAGE_TYPE_PLAYLIST")),
+      \#(libraryCard("Road trip", "VLPLroad", "MUSIC_PAGE_TYPE_PLAYLIST")),
+      \#(libraryCard("ABBA Gold", "MPREb_gold", "MUSIC_PAGE_TYPE_ALBUM"))]}
+    """#)
+    let ownLists = libraryCards(libraryLists).filter {
+        $0.kind == .playlist && $0.browseId != "VLLM" && $0.browseId != "LM"
+    }
+    check(ownLists.count == 1 && ownLists.first?.browseId == "VLPLroad", "own playlists \(ownLists.map(\.title))")
+    let artistRow = json(#"""
+    {"contents":[{"musicResponsiveListItemRenderer":{
+      "flexColumns":[\#(column(#"[{"text":"Korn"}]"#)),\#(column(#"[{"text":"Artist"}]"#))],
+      "navigationEndpoint":\#(browse("MPLAUCkorn", "MUSIC_PAGE_TYPE_LIBRARY_ARTIST"))}}]}
+    """#)
+    let libraryArtist = findAll(artistRow, "musicResponsiveListItemRenderer")
+        .compactMap { ($0 as? JSON).flatMap { listItem($0) } }.first
+    check(libraryArtist?.kind == .artist, "library artist row")
+
     check(parseDuration("1:02:03") == 3723 && parseDuration("1.7B plays") == nil && parseDuration("42") == nil, "durations")
 
     check(cleanTitle(artist: "ABBA", title: "ABBA - Dancing Queen (Official Music Video Remastered)") == ("ABBA", "Dancing Queen"), "clean 1")
