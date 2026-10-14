@@ -22,43 +22,7 @@ use wry::{
 };
 
 use super::MainWindow;
-
-/// Runs on the video page: keeps reporting where the video is (so audio can
-/// continue there), strips the watch page down to the player, and — when the
-/// embed refuses to play, which owners can ask for — moves on to the watch
-/// page, which plays everything.
-fn script(watch_url: &str) -> String {
-    format!(
-        r#"(function () {{
-    var watch = location.pathname === '/watch';
-    // YouTube's own dark theme, so nothing white shows around the video.
-    document.documentElement.setAttribute('dark', 'true');
-    var css = document.createElement('style');
-    // The player fills the view and the picture keeps its shape in the middle.
-    css.textContent = 'html,body{{background:#000!important;margin:0!important;overflow:hidden!important}}'
-        + '#player,#movie_player,.html5-video-player,.html5-video-container{{width:100vw!important;height:100vh!important;left:0!important;top:0!important}}'
-        + 'video{{width:100%!important;height:100%!important;left:0!important;top:0!important;object-fit:contain!important}}'
-        + (watch
-            ? 'ytd-masthead,#masthead-container,#secondary,#below,ytd-comments,#chat,tp-yt-app-drawer,#related,ytd-watch-metadata{{display:none!important}}'
-              + 'ytd-app,#content,#page-manager,ytd-watch-flexy,#columns,#primary,#primary-inner,#player,#player-container-outer,#player-container-inner,#movie_player{{background:#000!important}}'
-              + 'ytd-watch-flexy #primary{{padding:0!important;margin:0!important;max-width:100vw!important}}'
-              + '#player-container-outer,#player-container-inner{{max-width:100vw!important}}'
-            : '#player,.html5-video-player{{background:#000!important}}');
-    (document.head || document.documentElement).appendChild(css);
-    if (!watch) {{
-        // Embedding is blocked for some songs: their watch page still plays.
-        setTimeout(function () {{
-            var v = document.querySelector('video');
-            if (!v || (v.paused && v.currentTime === 0)) {{ location.replace("{watch_url}"); }}
-        }}, 3500);
-    }}
-    setInterval(function () {{
-        var v = document.querySelector('video');
-        if (v && window.ipc) {{ window.ipc.postMessage(String(v.currentTime)); }}
-    }}, 500);
-}})();"#
-    )
-}
+use crate::video::{PAGE_SCRIPT, video_url};
 
 /// A video playing over the window's cover area.
 pub struct VideoView {
@@ -78,25 +42,13 @@ impl VideoView {
     ) -> Result<Self> {
         let position = Arc::new(Mutex::new(None));
         let reported = position.clone();
-        // The embed player is just the video; it refuses songs whose owners
-        // allow embedding only on their own sites (measured 2026-10-14:
-        // `currentTime` stayed 0), and the script then moves to the watch
-        // page, which plays everything.
-        let watch = format!(
-            "https://www.youtube.com/watch?v={video_id}&t={}s",
-            at.as_secs()
-        );
-        let url = format!(
-            "https://www.youtube.com/embed/{video_id}?autoplay=1&playsinline=1&rel=0&start={}",
-            at.as_secs()
-        );
-        let script = script(&watch);
+        let url = video_url(&video_id, at);
         let build = |parent: &slint::winit_030::winit::window::Window| {
             WebViewBuilder::new()
                 .with_bounds(bounds(rect))
                 .with_url(&url)
                 .with_incognito(true)
-                .with_initialization_script(&script)
+                .with_initialization_script(PAGE_SCRIPT)
                 .with_ipc_handler(move |request| {
                     if let Ok(secs) = request.body().parse::<f64>() {
                         *reported.lock().unwrap_or_else(|e| e.into_inner()) = Some(secs);

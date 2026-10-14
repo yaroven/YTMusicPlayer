@@ -23,6 +23,46 @@ pub fn watch_url(video_id: &str, at: Duration) -> String {
     )
 }
 
+/// The page the web view shows: YouTube's watch page, at the second the
+/// audio is on. (Its embed player would be just the video, but YouTube
+/// refuses to embed many songs — "Video player configuration error 153",
+/// seen 2026-10-14 — while the watch page plays everything; `PAGE_SCRIPT`
+/// strips it down to the player.)
+pub(crate) fn video_url(video_id: &str, at: Duration) -> String {
+    format!(
+        "https://www.youtube.com/watch?v={video_id}&t={}s",
+        at.as_secs()
+    )
+}
+
+/// Runs on that page: puts it in YouTube's dark theme, hides everything but
+/// the player, stretches the player over the view (the picture keeps its
+/// shape), and keeps reporting where the video is so the audio can continue
+/// there.
+pub(crate) const PAGE_SCRIPT: &str = r#"(function () {
+    document.documentElement.setAttribute('dark', 'true');
+    var css = document.createElement('style');
+    css.textContent =
+        'html,body{background:#000!important;margin:0!important;overflow:hidden!important}'
+        + 'ytd-masthead,#masthead-container,#secondary,#below,ytd-comments,#chat,'
+        + 'tp-yt-app-drawer,#related,ytd-watch-metadata,#panels,ytd-popup-container'
+        + '{display:none!important}'
+        + 'ytd-app,#content,#page-manager,ytd-watch-flexy,#columns,#primary,#primary-inner,'
+        + '#player,#player-container-outer,#player-container-inner,#movie_player'
+        + '{background:#000!important}'
+        + 'ytd-watch-flexy #primary,#player-container-outer,#player-container-inner'
+        + '{padding:0!important;margin:0!important;max-width:100vw!important}'
+        + '#player,#movie_player,.html5-video-player,.html5-video-container'
+        + '{width:100vw!important;height:100vh!important;left:0!important;top:0!important}'
+        + 'video{width:100%!important;height:100%!important;left:0!important;top:0!important;'
+        + 'object-fit:contain!important}';
+    (document.head || document.documentElement).appendChild(css);
+    setInterval(function () {
+        var v = document.querySelector('video');
+        if (v && window.ipc) { window.ipc.postMessage(String(v.currentTime)); }
+    }, 500);
+})();"#;
+
 /// Opens the clip and waits for the window to close; the result is where
 /// the video stopped, for audio to continue from.
 pub async fn watch(video_id: &str, at: Duration) -> Result<Duration> {
@@ -78,24 +118,7 @@ mod window {
     };
     use wry::{Rect, WebContext, WebView, WebViewBuilder};
 
-    /// The song's YouTube page, at the second the audio is on. (The embed
-    /// player refuses to play videos whose owners only allow embedding on
-    /// their own sites — checked 2026-10-14 with Vevo's: `currentTime`
-    /// stayed at 0 — the watch page plays everything.)
-    fn video_url(video_id: &str, at: Duration) -> String {
-        format!(
-            "https://www.youtube.com/watch?v={video_id}&t={}s",
-            at.as_secs()
-        )
-    }
-
-    /// Reports where the video is, so audio can continue there.
-    const WATCH_POSITION: &str = r#"
-        setInterval(function () {
-            var v = document.querySelector('video');
-            if (v && window.ipc) { window.ipc.postMessage(String(v.currentTime)); }
-        }, 500);
-    "#;
+    use super::{PAGE_SCRIPT, video_url};
 
     struct App {
         url: String,
@@ -131,7 +154,7 @@ mod window {
                 .with_bounds(fill(&window))
                 .with_url(&self.url)
                 .with_incognito(true)
-                .with_initialization_script(WATCH_POSITION)
+                .with_initialization_script(PAGE_SCRIPT)
                 .with_ipc_handler(move |request| {
                     if let Ok(secs) = request.body().parse::<f64>() {
                         *position.lock().unwrap_or_else(|e| e.into_inner()) = Some(secs);
@@ -223,6 +246,7 @@ mod window {
                 video_url("YkLLcIKhJ64", Duration::from_secs(42)),
                 "https://www.youtube.com/watch?v=YkLLcIKhJ64&t=42s"
             );
+            assert!(PAGE_SCRIPT.contains("object-fit:contain"));
         }
     }
 }
