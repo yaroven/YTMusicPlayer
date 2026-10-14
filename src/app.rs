@@ -55,6 +55,8 @@ pub enum MenuEntry {
     Rename,
     Delete,
     DownloadAll,
+    StopDownloads,
+    RemoveAllDownloads,
     /// Play on this computer (`None`) or on a found Cast device.
     CastTo(Option<usize>, String),
     /// A line that does nothing ("Looking for devices…").
@@ -68,6 +70,8 @@ impl MenuEntry {
             Self::Rename => "Rename this playlist…",
             Self::Delete => "Delete this playlist",
             Self::DownloadAll => "Download all for offline",
+            Self::StopDownloads => "Stop downloading",
+            Self::RemoveAllDownloads => "Delete all downloaded songs",
             Self::CastTo(_, name) => name,
             Self::Note(text) => text,
         }
@@ -534,7 +538,12 @@ impl App {
             }
             Action::Download => {
                 if let Some(track) = self.action_target() {
-                    self.session.download(vec![track]);
+                    // Pressed again on a downloaded song: delete it.
+                    if self.session.is_downloaded(&track.video_id) {
+                        self.session.remove_download(track.video_id);
+                    } else {
+                        self.session.download(vec![track]);
+                    }
                 }
             }
             Action::SaveOrFollow => {
@@ -562,6 +571,12 @@ impl App {
                 }
                 if self.library.total() > 0 {
                     entries.push(MenuEntry::DownloadAll);
+                }
+                if !self.session.downloading.is_empty() {
+                    entries.push(MenuEntry::StopDownloads);
+                }
+                if *self.library.source() == Source::Downloads && self.library.total() > 0 {
+                    entries.push(MenuEntry::RemoveAllDownloads);
                 }
                 let mut state = ListState::default();
                 state.select(Some(0));
@@ -890,6 +905,8 @@ impl App {
                     self.session.download(tracks.to_vec());
                 }
             }
+            (MenuEntry::StopDownloads, _) => self.session.cancel_downloads(),
+            (MenuEntry::RemoveAllDownloads, _) => self.session.remove_all_downloads(),
             (MenuEntry::CastTo(index, _), _) => {
                 let device = index.and_then(|i| self.session.cast_devices.get(i).cloned());
                 self.session.cast_to(device);

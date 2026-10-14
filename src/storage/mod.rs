@@ -366,6 +366,12 @@ impl Library {
         Ok(())
     }
 
+    /// Forgets every download (the files are deleted by the caller).
+    pub fn clear_downloads(&self) -> Result<()> {
+        self.conn().execute("DELETE FROM downloads", [])?;
+        Ok(())
+    }
+
     /// Downloaded tracks, newest first.
     pub fn downloads(&self) -> Result<Vec<Download>> {
         let conn = self.conn();

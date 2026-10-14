@@ -67,6 +67,7 @@ fn session_view() -> SessionView {
         status: None,
         syncing: false,
         searching: false,
+        downloading: 0,
         signed_in: true,
         signing_in: false,
         youtube_signed_in: false,
@@ -357,6 +358,23 @@ fn queue_rows_move_and_go() {
     assert!(matches!(
         &cmds[..],
         [Cmd::QueueMove(1, 0), Cmd::QueueRemove(0)]
+    ));
+}
+
+#[test]
+fn downloads_can_be_stopped_and_deleted() {
+    let mut h = harness();
+    let mut view = session_view();
+    view.downloading = 2;
+    h.absorb(snapshot(view, Changes::default()));
+    assert_eq!(h.ui.get_downloading(), 2, "the Stop button shows");
+
+    h.ui.invoke_stop_downloads();
+    h.ui.invoke_remove_all_downloads();
+    let cmds = h.commands();
+    assert!(matches!(
+        &cmds[..],
+        [Cmd::StopDownloads, Cmd::RemoveAllDownloads]
     ));
 }
 

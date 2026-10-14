@@ -159,6 +159,8 @@ pub struct SessionView {
     pub status: Option<(String, bool)>,
     pub syncing: bool,
     pub searching: bool,
+    /// How many songs are still being downloaded.
+    pub downloading: usize,
     pub signed_in: bool,
     pub signing_in: bool,
     /// Signed in to YouTube ("Sign in with Google").
@@ -236,6 +238,12 @@ enum Background {
         video_id: Arc<str>,
         result: Result<()>,
     },
+    /// Downloads were cancelled; `stopped` were still queued or running.
+    DownloadsStopped {
+        stopped: usize,
+    },
+    /// Every downloaded track was deleted (or it failed).
+    DownloadsCleared(Result<usize>),
     Searched {
         generation: u64,
         query: String,
@@ -311,6 +319,8 @@ pub struct Session {
     want_related: bool,
     /// Tracks being downloaded.
     pub downloading: HashSet<Arc<str>>,
+    /// The task working through them, so it can be stopped.
+    download_task: Option<tokio::task::JoinHandle<()>>,
     /// Waiting for the user to finish signing in in the browser.
     pub signing_in: bool,
     login_generation: u64,
@@ -426,6 +436,7 @@ impl Session {
             related: None,
             want_related: false,
             downloading: HashSet::new(),
+            download_task: None,
             signing_in: false,
             login_generation: 0,
             youtube_signing_in: false,
@@ -474,6 +485,7 @@ impl Session {
             status: self.status.as_ref().map(|s| (s.text.clone(), s.is_error)),
             syncing: self.syncing,
             searching: self.searching,
+            downloading: self.downloading.len(),
             signed_in: self.signed_in(),
             signing_in: self.signing_in,
             youtube_signed_in: self.deps.youtube.signed_in(),
@@ -650,6 +662,8 @@ impl Session {
             | Background::Followed { .. }
             | Background::Downloaded { .. }
             | Background::DownloadRemoved { .. }
+            | Background::DownloadsStopped { .. }
+            | Background::DownloadsCleared(_)
             | Background::SignedIn { .. }
             | Background::SignedOut(_) => self.library_event(event, &mut changes),
             Background::YouTubeSignedIn(_) | Background::YouTubeSignedOut(_) => {

@@ -18,8 +18,12 @@ Open **ytm-player** from your applications, or run `ytm gui`.
   `Backspace`) goes back.
 - **Track rows:** click to play; click the artist's name for their page (also
   in the player bar and the queue); hover for like and save to playlist; **⋮**
-  for start radio, play next, add to queue, download, dislike and remove from
-  playlist. ↓ marks downloaded songs, **E** explicit lyrics (18+).
+  for start radio, play next, add to queue, download (again: delete the
+  download), dislike and remove from playlist. ↓ marks downloaded songs,
+  **E** explicit lyrics (18+).
+- **Downloads:** while songs are being saved a **Stop** button appears in the
+  header (it also drops the half-written file); the Downloads list has
+  **Delete all**, and ⋮ → Remove deletes a single song's file.
 - **Player bar:** progress (click to seek), previous / play / next, the
   current track with dislike, like and ⋮, volume, repeat, shuffle, **Cast**,
   **sleep timer** and the full-screen view.
@@ -72,9 +76,9 @@ Run `ytm` in a terminal.
 | `u` / `R` / `w` | play next / start radio / the artist's page |
 | `f` / `d` | like / dislike |
 | `a` / `x` | add to / remove from a playlist |
-| `D` | download for offline (again: remove) |
+| `D` | download for offline (again: delete the download) |
 | `S` | save album / follow artist |
-| `m` | playlist menu: new, rename, delete, download all |
+| `m` | menu: new / rename / delete playlist, download all, stop downloading, delete all downloads |
 | `t` | lyrics |
 | `z` | sleep timer (15 / 30 / 60 min, end of song, off) |
 | `C` | play on a Chromecast |

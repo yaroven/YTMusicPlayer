@@ -437,6 +437,14 @@ Domain terms are defined in `CONTEXT.md`.
   reordering inside a playlist stays local on both (no
   `ACTION_MOVE_VIDEO_BEFORE` yet).
 
+- **Stopping downloads**: a download batch is one task
+  (`Session::download_task`); cancelling aborts it, and yt-dlp dies with it
+  (`kill_on_drop`). yt-dlp runs with `--no-part`, so a killed download leaves
+  a truncated `<id>.m4a` that no record points at: `TrackSource::clean_downloads`
+  deletes everything in the folder the library doesn't know, right after a
+  cancel. "Delete all" (`remove_all_downloads`) removes the files and the
+  records; the GUI asks first, the TUI has it in the `m` menu.
+
 ## Open TODOs
 
 - iPhone: verify signed-in age-restricted playback on a real account,

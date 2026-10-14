@@ -22,9 +22,9 @@ expression: s
 │            │u / R / w              play next / start radio / artist's page          │            │
 │            │f / d                  like / dislike                                   │            │
 │            │a / x                  add to / remove from playlist                    │            │
-│            │D                      download for offline                             │            │
+│            │D                      download for offline (again: delete it)          │            │
 │            │S                      save album / follow artist                       │            │
-│            │m                      playlist menu (new, rename, delete)              │            │
+│            │m                      menu (playlists, downloads)                      │            │
 │            │t                      lyrics                                           │            │
 │            │z / C                  sleep timer / play on a Chromecast               │            │
 └────────────│r / L                  sync library / sign in                           │────────────┘

@@ -247,6 +247,20 @@ impl Session {
                     Err(err) => self.set_error(format!("Download failed: {err:#}")),
                 }
             }
+            Background::DownloadsStopped { stopped } => {
+                changes.downloads = true;
+                self.set_info(match stopped {
+                    1 => "Stopped the download".to_owned(),
+                    n => format!("Stopped {n} downloads"),
+                });
+            }
+            Background::DownloadsCleared(result) => {
+                changes.downloads = true;
+                match result {
+                    Ok(n) => self.set_info(format!("Deleted {n} downloaded song(s)")),
+                    Err(err) => self.set_error(format!("{err:#}")),
+                }
+            }
             Background::DownloadRemoved { video_id, result } => {
                 changes.downloads = true;
                 if let Err(err) = result {
@@ -543,12 +557,13 @@ impl Session {
         }
         self.set_info(format!("Downloading {} track(s)…", todo.len()));
         let (source, tx) = (self.deps.source.clone(), self.tx.clone());
-        tokio::spawn(async move {
+        // One task for the batch, so stopping it stops the rest as well.
+        self.download_task = Some(tokio::spawn(async move {
             for track in todo {
                 let result = source.download(&track).await;
                 let _ = tx.send(Background::Downloaded { track, result });
             }
-        });
+        }));
     }
 
     pub fn remove_download(&mut self, video_id: Arc<str>) {
@@ -556,6 +571,36 @@ impl Session {
         tokio::spawn(async move {
             let result = source.remove_download(&video_id).await;
             let _ = tx.send(Background::DownloadRemoved { video_id, result });
+        });
+    }
+
+    /// Stops the downloads that are queued or running (yt-dlp is killed with
+    /// its task) and throws away the half-written file.
+    pub fn cancel_downloads(&mut self) {
+        if self.downloading.is_empty() {
+            return;
+        }
+        if let Some(task) = self.download_task.take() {
+            task.abort();
+        }
+        let stopped = self.downloading.len();
+        self.downloading.clear();
+        let (source, tx) = (self.deps.source.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            if let Err(err) = source.clean_downloads().await {
+                tracing::warn!(%err, "cleaning up after cancelled downloads");
+            }
+            let _ = tx.send(Background::DownloadsStopped { stopped });
+        });
+    }
+
+    /// Deletes every downloaded song (stopping downloads that still run).
+    pub fn remove_all_downloads(&mut self) {
+        self.cancel_downloads();
+        let (source, tx) = (self.deps.source.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            let result = source.remove_all_downloads().await;
+            let _ = tx.send(Background::DownloadsCleared(result));
         });
     }
 

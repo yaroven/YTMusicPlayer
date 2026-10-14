@@ -382,6 +382,43 @@ impl TrackSource {
         store.remove_download(video_id)
     }
 
+    /// Deletes every downloaded track; returns how many went.
+    pub async fn remove_all_downloads(&self) -> Result<usize> {
+        let Some(store) = &self.options.store else {
+            return Ok(0);
+        };
+        let downloads = store.downloads()?;
+        for download in &downloads {
+            let _ = tokio::fs::remove_file(&download.path).await;
+        }
+        store.clear_downloads()?;
+        Ok(downloads.len())
+    }
+
+    /// Deletes files in the downloads folder that no record points at: what
+    /// a cancelled download leaves behind (yt-dlp writes straight to the
+    /// final file, `--no-part`).
+    pub async fn clean_downloads(&self) -> Result<usize> {
+        let (Some(dir), Some(store)) = (&self.options.downloads, &self.options.store) else {
+            return Ok(0);
+        };
+        let kept: std::collections::HashSet<PathBuf> =
+            store.downloads()?.into_iter().map(|d| d.path).collect();
+        let mut entries = match tokio::fs::read_dir(dir).await {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(err) => return Err(err.into()),
+        };
+        let mut removed = 0;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if !kept.contains(&path) && tokio::fs::remove_file(&path).await.is_ok() {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
     /// The media URL alone (`ytm resolve`, for debugging).
     pub async fn resolve(&self, video_id: &str) -> Result<AudioStream> {
         Ok(self.resolver.resolve(video_id).await?)
@@ -562,6 +599,27 @@ mod tests {
         (source, scripted)
     }
 
+    /// A source with a real downloads folder and library behind it.
+    fn downloading_source(dir: &Path) -> (TrackSource, Arc<crate::storage::Library>) {
+        let store = Arc::new(crate::storage::Library::open_in_memory().unwrap());
+        let options = SourceOptions {
+            downloads: Some(dir.to_path_buf()),
+            store: Some(store.clone()),
+            ..SourceOptions::default()
+        };
+        let source = TrackSource::new(
+            Arc::new(Scripted {
+                urls: Vec::new(),
+                calls: AtomicUsize::new(0),
+            }),
+            reqwest::Client::new(),
+            std::env::temp_dir(),
+            JsPolicy::Never,
+            options,
+        );
+        (source, store)
+    }
+
     fn track(duration_secs: Option<u32>) -> Track {
         Track {
             video_id: "dQw4w9WgXcQ".into(),
@@ -630,5 +688,36 @@ mod tests {
             1,
             "in-flight/cached share one run"
         );
+    }
+
+    /// Stopping a download leaves a half-written file (yt-dlp writes
+    /// straight to it): the next cleanup throws it away, and "delete all"
+    /// takes the finished ones with their records.
+    #[tokio::test]
+    async fn cleans_leftovers_and_deletes_every_download() {
+        let dir = std::env::temp_dir().join(format!("ytm-downloads-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (source, store) = downloading_source(&dir);
+
+        let done = dir.join("dQw4w9WgXcQ.m4a");
+        let half = dir.join("YkLLcIKhJ64.m4a");
+        std::fs::write(&done, b"audio").unwrap();
+        std::fs::write(&half, b"half").unwrap();
+        store
+            .add_download(&Download {
+                track: track(Some(213)),
+                path: done.clone(),
+                bytes: 5,
+            })
+            .unwrap();
+
+        assert_eq!(source.clean_downloads().await.unwrap(), 1);
+        assert!(done.exists() && !half.exists(), "only the leftover goes");
+
+        assert_eq!(source.remove_all_downloads().await.unwrap(), 1);
+        assert!(!done.exists());
+        assert!(store.downloads().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

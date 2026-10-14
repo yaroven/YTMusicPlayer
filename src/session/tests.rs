@@ -159,3 +159,28 @@ async fn the_youtube_sign_in_can_edit_the_library() {
     assert!(s.can_edit());
     std::fs::remove_file(cookies_file).ok();
 }
+
+/// Downloads can be stopped while they run, and the lot deleted afterwards.
+#[tokio::test]
+async fn downloads_stop_and_can_be_deleted() {
+    let (mut s, _, _) = session(Resolves::Fail).await;
+    s.download(tracks("d", 3).to_vec());
+    assert_eq!(s.downloading.len(), 3, "queued for download");
+
+    s.cancel_downloads();
+    assert!(s.downloading.is_empty(), "nothing left to download");
+    settle(&mut s).await;
+    let status = s.status.as_ref().unwrap();
+    assert!(
+        !status.is_error && status.text.contains("Stopped"),
+        "{}",
+        status.text
+    );
+
+    // Nothing was downloaded, so deleting them all is a no-op that still
+    // reports itself.
+    s.remove_all_downloads();
+    settle(&mut s).await;
+    let status = s.status.as_ref().unwrap();
+    assert!(status.text.starts_with("Deleted 0"), "{}", status.text);
+}

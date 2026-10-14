@@ -1063,6 +1063,8 @@ slint::slint! {
         in property <string> status-text;
         in property <bool> status-error;
         in property <bool> syncing;
+        // Songs still being downloaded (0: none).
+        in property <int> downloading;
         in property <string> memory-text;
         in-out property <bool> account-open;
         in-out property <bool> oauth-expanded;
@@ -1109,6 +1111,8 @@ slint::slint! {
         // Playlist name dialog: 0 closed, 1 new, 2 rename.
         property <int> name-dialog;
         property <bool> delete-dialog;
+        // "Delete all downloaded songs?"
+        property <bool> downloads-dialog;
 
         callback select-playlist(int);
         callback select-track(int);
@@ -1144,6 +1148,8 @@ slint::slint! {
         callback go-back();
         callback toggle-saved();
         callback download-all();
+        callback stop-downloads();
+        callback remove-all-downloads();
         callback new-playlist(string);
         callback rename-playlist(string);
         callback delete-playlist();
@@ -1410,7 +1416,21 @@ slint::slint! {
                                     y: (parent.height - self.height) / 2;
                                     clicked => { root.toggle-saved(); }
                                 }
-                                if root.list-mode != 1 && root.tracks.length > 0 && !root.tiny: IconButton {
+                                if root.downloading > 0: Pill {
+                                    text: root.downloading > 1 ? "Stop (" + root.downloading + ")" : "Stop";
+                                    icon: "close";
+                                    compact: root.compact;
+                                    y: (parent.height - self.height) / 2;
+                                    clicked => { root.stop-downloads(); keys.focus(); }
+                                }
+                                if root.nav == 3 && root.tracks.length > 0 && !root.tiny: Pill {
+                                    text: "Delete all";
+                                    icon: "delete";
+                                    compact: root.compact;
+                                    y: (parent.height - self.height) / 2;
+                                    clicked => { root.downloads-dialog = true; }
+                                }
+                                if root.list-mode != 1 && root.tracks.length > 0 && !root.tiny && root.nav != 3: IconButton {
                                     icon: "download";
                                     y: (parent.height - self.height) / 2;
                                     clicked => { root.download-all(); }
@@ -2039,6 +2059,27 @@ slint::slint! {
                         root.name-dialog = 0;
                         keys.focus();
                     }
+                }
+            }
+        }
+
+        if root.downloads-dialog: Dialog {
+            title: "Delete all downloaded songs?";
+            close => { root.downloads-dialog = false; keys.focus(); }
+            Text {
+                text: "Their files are removed from this computer; the songs stay in your library and play online.";
+                color: Yt.secondary;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                Pill { text: "Cancel"; clicked => { root.downloads-dialog = false; keys.focus(); } }
+                Pill {
+                    text: "Delete all";
+                    icon: "delete";
+                    filled: true;
+                    clicked => { root.remove-all-downloads(); root.downloads-dialog = false; keys.focus(); }
                 }
             }
         }

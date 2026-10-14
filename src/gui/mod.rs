@@ -89,6 +89,8 @@ enum Cmd {
     ToggleSaved(Item, Option<String>),
     Download(Vec<Track>),
     RemoveDownload(Arc<str>),
+    StopDownloads,
+    RemoveAllDownloads,
     Sync,
     Search(String, SearchKind),
     OpenPage(String),
@@ -1073,6 +1075,7 @@ impl View {
         ui.set_updating(view.updating);
         ui.set_syncing(view.syncing);
         ui.set_searching(view.searching);
+        ui.set_downloading(view.downloading as i32);
         ui.set_signed_in(view.signed_in);
         ui.set_signing_in(view.signing_in);
         ui.set_yt_signed_in(view.youtube_signed_in);
@@ -1850,6 +1853,14 @@ fn wire_callbacks(
             send(Cmd::ToggleSaved(item, channel), tx);
         }
     });
+    on!(on_stop_downloads, [tx, view, ui], || send(
+        Cmd::StopDownloads,
+        tx
+    ));
+    on!(on_remove_all_downloads, [tx, view, ui], || send(
+        Cmd::RemoveAllDownloads,
+        tx
+    ));
     on!(on_download_all, [tx, view, ui], || {
         let tracks = view.borrow().library.borrow().all_tracks();
         if let Some(tracks) = tracks {
@@ -2153,6 +2164,8 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::ToggleSaved(item, channel) => session.toggle_saved(item, channel),
         Cmd::Download(tracks) => session.download(tracks),
         Cmd::RemoveDownload(id) => session.remove_download(id),
+        Cmd::StopDownloads => session.cancel_downloads(),
+        Cmd::RemoveAllDownloads => session.remove_all_downloads(),
         Cmd::Sync => session.start_sync(),
         Cmd::Search(query, kind) => session.search(&query, kind),
         Cmd::OpenPage(id) => session.open_page(&id),
