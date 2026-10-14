@@ -58,6 +58,10 @@ struct NowPlayingView: View {
                 .scaleEffect(player.isPlaying ? 1 : 0.86)
                 .animation(.spring(response: 0.45, dampingFraction: 0.7), value: player.isPlaying)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // The cover itself plays and pauses.
+                .contentShape(Rectangle())
+                .onTapGesture { player.togglePlay() }
+                .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
         }
         .transition(.opacity)
     }

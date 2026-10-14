@@ -23,8 +23,11 @@ func resized(_ url: URL, _ pixels: Int) -> URL {
     return URL(string: s[..<cut.lowerBound] + "=w\(pixels)-h\(pixels)-l90-rj") ?? url
 }
 
-/// Square cover art. Video thumbnails are 16:9 (`mqdefault`) or 16:9 inside
-/// a letterboxed 4:3 picture (`hqdefault`); both show the centre square.
+/// Square cover art. Video thumbnails are 16:9 (`mqdefault`,
+/// `maxresdefault`) or 16:9 inside a letterboxed 4:3 picture (`hqdefault`);
+/// both show the centre square. Big covers ask for `maxresdefault` (720 px
+/// of square, nothing upscaled) and drop to `hqdefault` where YouTube has
+/// no such picture.
 struct Artwork: View {
     let source: ArtworkSource
     var size: CGFloat
@@ -36,10 +39,12 @@ struct Artwork: View {
             if let url {
                 AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.25))) { phase in
                     if let image = phase.image {
-                        if letterboxed {
-                            image.resizable().frame(width: size * 16 / 9, height: size * 4 / 3)
-                        } else {
-                            image.resizable().scaledToFill()
+                        picture(image, letterboxed: letterboxed)
+                    } else if phase.error != nil, let fallback {
+                        AsyncImage(url: fallback) { image in
+                            picture(image, letterboxed: true)
+                        } placeholder: {
+                            EmptyView()
                         }
                     }
                 }
@@ -51,12 +56,26 @@ struct Artwork: View {
         .clipShape(round ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: size > 100 ? 10 : 5)))
     }
 
+    private func picture(_ image: Image, letterboxed: Bool) -> some View {
+        letterboxed
+            ? AnyView(image.resizable().frame(width: size * 16 / 9, height: size * 4 / 3))
+            : AnyView(image.resizable().scaledToFill())
+    }
+
     private var url: URL? {
         switch source {
-        case let .video(id): URL(string: "https://i.ytimg.com/vi/\(id)/\(size > 120 ? "hqdefault" : "mqdefault").jpg")
-        case let .url(url): resized(url, Int(size * 3))
-        case .none: nil
+        case let .video(id):
+            let name = size > 240 ? "maxresdefault" : size > 120 ? "hqdefault" : "mqdefault"
+            return URL(string: "https://i.ytimg.com/vi/\(id)/\(name).jpg")
+        case let .url(url): return resized(url, Int(size * 3))
+        case .none: return nil
         }
+    }
+
+    /// Where a missing `maxresdefault` falls back to.
+    private var fallback: URL? {
+        guard case let .video(id) = source else { return nil }
+        return URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg")
     }
 
     private var letterboxed: Bool {

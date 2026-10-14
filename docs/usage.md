@@ -27,7 +27,8 @@ Open **ytm-player** from your applications, or run `ytm gui`.
 - **Player bar:** progress (click to seek), previous / play / next, the
   current track with dislike, like and ⋮, volume, repeat, shuffle, **Cast**,
   **sleep timer** and the full-screen view.
-- **Now playing** (click the track or ▲): big cover with **Up next**
+- **Now playing** (click the track or ▲): big cover — click it to play or
+  pause — with **Up next**
   (reorder, remove, clear, autoplay switch), **Lyrics** and **Related**, over
   a blurred copy of the cover. Synced lyrics play karaoke style: the sung line
   lights up letter by letter, instrumental breaks show three dots, and a click

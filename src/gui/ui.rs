@@ -618,11 +618,14 @@ slint::slint! {
     }
 
     // Big square cover for the now-playing view, centred in its area.
+    // Clicking it plays or pauses, like the cover on YouTube Music.
     component BigCover inherits Rectangle {
         in property <image> art;
         in property <bool> has-art;
         in property <string> initial;
         in property <float> hue;
+        in property <bool> playing;
+        callback clicked();
         property <length> side: min(self.width, self.height);
         Rectangle {
             width: root.side;
@@ -651,6 +654,30 @@ slint::slint! {
                 vertical-alignment: center;
                 width: parent.width;
                 height: parent.height;
+            }
+            // Shown while the pointer is over the cover, so it's clear the
+            // picture itself is the button.
+            Rectangle {
+                width: 76px;
+                height: 76px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                border-radius: self.width / 2;
+                background: #000000b3;
+                opacity: cover-touch.has-hover ? 1 : 0;
+                animate opacity { duration: 140ms; easing: ease-out; }
+                Icon {
+                    name: root.playing ? "pause" : "play";
+                    color: Yt.text;
+                    width: 34px;
+                    height: 34px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+            }
+            cover-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.clicked(); }
             }
         }
     }
@@ -1588,6 +1615,8 @@ slint::slint! {
                                 has-art: root.now-has-art;
                                 initial: root.now-initial;
                                 hue: root.now-hue;
+                                playing: root.playing;
+                                clicked => { root.toggle-pause(); keys.focus(); }
                             }
                             QueuePanel {
                                 horizontal-stretch: 2;
@@ -1619,6 +1648,8 @@ slint::slint! {
                                 has-art: root.now-has-art;
                                 initial: root.now-initial;
                                 hue: root.now-hue;
+                                playing: root.playing;
+                                clicked => { root.toggle-pause(); keys.focus(); }
                             }
                             QueuePanel {
                                 vertical-stretch: 1;

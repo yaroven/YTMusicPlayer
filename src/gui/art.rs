@@ -1,9 +1,10 @@
 //! Album art from YouTube thumbnails, cropped to a square like YT Music.
 //!
-//! Thumbnails are 16:9 frames (`mqdefault`, 320x180) or 4:3 with letterbox
-//! bars (`sddefault` 640x480, `hqdefault` 480x360); the square in the middle
-//! of the 16:9 picture is the album cover for music tracks. Pixels are
-//! scaled down to what the UI shows, so memory stays at a few KB per row.
+//! Thumbnails are 16:9 frames (`mqdefault` 320x180, `maxresdefault`
+//! 1280x720) or 4:3 with letterbox bars (`sddefault` 640x480, `hqdefault`
+//! 480x360); the square in the middle of the 16:9 picture is the album cover
+//! for music tracks. Pixels are scaled down to what the UI shows, so memory
+//! stays at a few KB per row.
 
 use anyhow::{Context, Result, bail};
 use image::{RgbaImage, imageops::FilterType};
@@ -27,7 +28,9 @@ impl ArtSize {
     fn pixels(self) -> u32 {
         match self {
             Self::Thumb => 96,
-            Self::Large => 480,
+            // The now-playing cover fills half a window: 640 keeps it sharp
+            // on HiDPI screens (1.6 MB for the one image that lives).
+            Self::Large => 640,
             Self::Card | Self::Round => 160,
         }
     }
@@ -35,8 +38,9 @@ impl ArtSize {
     fn sources(self) -> &'static [&'static str] {
         match self {
             Self::Thumb => &["mqdefault"],
-            // sddefault is missing for some videos; hqdefault always exists.
-            Self::Large => &["sddefault", "hqdefault"],
+            // maxresdefault's square is 720 px (nothing to upscale); it and
+            // sddefault are missing for some videos, hqdefault always exists.
+            Self::Large => &["maxresdefault", "sddefault", "hqdefault"],
             Self::Card | Self::Round => &[],
         }
     }
@@ -181,7 +185,14 @@ pub fn decode_square(jpeg: &[u8], edge: u32, alpha: bool) -> Result<Art> {
     let y = (h - side) / 2;
     let square = image::imageops::crop_imm(&img, x, y, side, side).to_image();
     drop(img);
-    let mut out = image::imageops::resize(&square, edge, edge, FilterType::Triangle);
+    // Lanczos keeps the detail of a big cover being scaled down; rows are
+    // tiny and get the cheap filter.
+    let filter = if edge >= 256 && side > edge {
+        FilterType::Lanczos3
+    } else {
+        FilterType::Triangle
+    };
+    let mut out = image::imageops::resize(&square, edge, edge, filter);
     let tint = average(&out);
     let backdrop = (edge >= 256).then(|| {
         let small = image::imageops::resize(&out, BACKDROP, BACKDROP, FilterType::Triangle);
@@ -302,6 +313,18 @@ mod tests {
         assert_eq!((art.pixels.width(), art.pixels.height()), (96, 96));
         // No black bars made it into the crop.
         assert!(art.tint.0 > 230, "tint {:?}", art.tint);
+    }
+
+    /// The now-playing cover comes from the biggest thumbnail there is, so
+    /// it is scaled down, never up.
+    #[test]
+    fn the_big_cover_starts_from_maxresdefault() {
+        assert_eq!(ArtSize::Large.sources()[0], "maxresdefault");
+        let edge = ArtSize::Large.pixels();
+        let art = decode_square(&jpeg(1280, 720), edge, true).unwrap();
+        assert_eq!((art.pixels.width(), art.pixels.height()), (edge, edge));
+        assert_eq!(art.pixels.bytes(), (edge * edge * 4) as usize);
+        assert!(edge <= 720, "no upscaling of the 720 px square");
     }
 
     #[test]

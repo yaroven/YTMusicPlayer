@@ -539,11 +539,17 @@ final class Player {
 
     private func loadArtwork(_ track: Track) {
         Task {
-            guard let url = track.largeThumbnailURL,
-                  let (data, _) = try? await URLSession.shared.data(from: url),
-                  let image = squareCover(data), current?.videoId == track.videoId else { return }
-            artwork = (track.videoId, image)
-            updateNowPlaying()
+            // maxresdefault is the sharpest, but not every video has one.
+            let urls = [track.largeThumbnailURL, track.fallbackThumbnailURL].compactMap { $0 }
+            for url in urls {
+                guard let (data, response) = try? await URLSession.shared.data(from: url),
+                      (response as? HTTPURLResponse)?.statusCode == 200,
+                      let image = squareCover(data) else { continue }
+                guard current?.videoId == track.videoId else { return }
+                artwork = (track.videoId, image)
+                updateNowPlaying()
+                return
+            }
         }
     }
 

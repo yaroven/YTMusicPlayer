@@ -25,7 +25,14 @@ public struct Track: Codable, Hashable, Identifiable, Sendable {
         URL(string: "https://i.ytimg.com/vi/\(videoId)/mqdefault.jpg")
     }
 
+    /// The sharpest thumbnail (1280x720, so a 720 px square); missing for
+    /// some videos — fall back to `fallbackThumbnailURL`.
     public var largeThumbnailURL: URL? {
+        URL(string: "https://i.ytimg.com/vi/\(videoId)/maxresdefault.jpg")
+    }
+
+    /// Always there: 480x360 with letterbox bars.
+    public var fallbackThumbnailURL: URL? {
         URL(string: "https://i.ytimg.com/vi/\(videoId)/hqdefault.jpg")
     }
 }

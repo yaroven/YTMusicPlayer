@@ -186,10 +186,15 @@ Domain terms are defined in `CONTEXT.md`.
   Accessory) while closed. Windows only hides (SMTC needs the HWND).
   Linux: without a StatusNotifier host closing quits.
 - **GUI album art**: `i.ytimg.com` thumbnails (`mqdefault` for rows,
-  `sddefault`→`hqdefault` for the big cover), centre-square crop of the 16:9
-  picture, decoded with `image` (jpeg + png) off the UI thread; thumb cache
-  capped at 80 (96x96 RGBA), one large cover. Window memory still dominates:
+  `maxresdefault`→`sddefault`→`hqdefault` for the big cover), centre-square
+  crop of the 16:9 picture, decoded with `image` (jpeg + png) off the UI
+  thread; one large cover lives at a time. Window memory still dominates:
   ~46 MB at 1280x760 idle, up to ~90 MB with art while playing.
+  The now-playing cover is 640 px (1.6 MB, was 480 px / 0.9 MB): its source
+  square is 720 px from `maxresdefault` (checked 2026-10-14: present for the
+  music videos tried, ~90 KB), so it is scaled down with Lanczos instead of
+  up from `sddefault`'s 360 px. The phone does the same (`largeThumbnailURL`,
+  `fallbackThumbnailURL` when a video has no maxres).
 - **Slint responsive layout**: breakpoints read `win-width`, copied from
   `width` in `changed` handlers — binding to `root.width` makes a layout
   binding loop. A `max-width` on a child of a VerticalLayout caps the whole

@@ -13,7 +13,7 @@ setup.
 - Playback that keeps going with the screen locked, gapless track changes,
   lock screen and Control Center controls, AirPlay.
 - Karaoke lyrics: the sung line lights up letter by letter, a tap on a line
-  seeks there.
+  seeks there. A tap on the big cover plays or pauses.
 - Your YouTube Music library once you sign in: liked music, playlists,
   saved albums and followed artists, with likes and playlist changes written
   back to YouTube. History and the editable queue stay on the phone.
