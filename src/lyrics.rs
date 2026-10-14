@@ -279,8 +279,12 @@ async fn lrclib(
         let secs = d.as_secs().to_string();
         let mut exact = query.to_vec();
         exact.push(("duration", secs.as_str()));
-        if let Some(entry) = lrclib_get::<LrclibEntry>(http, LRCLIB_GET, &exact).await? {
-            entries.push(entry);
+        match lrclib_get::<LrclibEntry>(http, LRCLIB_GET, &exact).await {
+            Ok(Some(entry)) => entries.push(entry),
+            Ok(None) => {}
+            // Only a shortcut (LRCLIB caches it): when it fails — 503s are
+            // common — the search below still has a chance.
+            Err(err) => tracing::debug!(%err, "LRCLIB exact lookup"),
         }
     }
     if !entries
