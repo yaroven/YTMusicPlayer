@@ -372,14 +372,15 @@ fn the_video_button_switches_to_the_clip() {
     h.absorb(snapshot(view, Changes::default()));
     h.ui.invoke_watch_video();
     let cmds = h.commands();
-    if cfg!(any(target_os = "macos", windows)) {
+    #[cfg(any(target_os = "macos", windows))]
+    {
         assert!(h.ui.get_expanded(), "the video needs the full-screen view");
         // Opening the web view itself needs a window on screen; here only
         // the command matters (a failure switches back on its own).
         assert!(matches!(cmds.first(), Some(Cmd::VideoOn)));
-    } else {
-        assert!(matches!(&cmds[..], [Cmd::WatchVideo]));
     }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    assert!(matches!(&cmds[..], [Cmd::WatchVideo]));
 }
 
 #[test]

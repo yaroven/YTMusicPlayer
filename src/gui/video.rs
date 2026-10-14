@@ -60,7 +60,6 @@ pub struct VideoView {
     webview: WebView,
     /// Last position the page reported.
     position: Arc<Mutex<Option<f64>>>,
-    pub video_id: Arc<str>,
 }
 
 impl VideoView {
@@ -109,11 +108,7 @@ impl VideoView {
                 .context("the window isn't on screen yet")?
                 .context("opening the video view")?
         };
-        Ok(Self {
-            webview,
-            position,
-            video_id,
-        })
+        Ok(Self { webview, position })
     }
 
     /// Moves the video with the window / layout.

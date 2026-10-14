@@ -92,10 +92,13 @@ enum Cmd {
     Download(Vec<Track>),
     RemoveDownload(Arc<str>),
     /// Switch the window to the video: the audio pauses.
+    #[cfg(any(target_os = "macos", windows))]
     VideoOn,
     /// Back to audio, at the second the video stopped (when it reported one).
+    #[cfg(any(target_os = "macos", windows))]
     VideoOff(Option<Duration>),
     /// No web view here (Linux): open the clip in the browser.
+    #[cfg(not(any(target_os = "macos", windows)))]
     WatchVideo,
     StopDownloads,
     RemoveAllDownloads,
@@ -792,6 +795,7 @@ struct View {
     #[cfg(any(target_os = "macos", windows))]
     video: Option<video::VideoView>,
     /// Where the video goes (window coordinates, logical pixels).
+    #[cfg(any(target_os = "macos", windows))]
     video_rect: (f32, f32, f32, f32),
     /// Art URL of the page header.
     header_art: Option<Arc<str>>,
@@ -1442,6 +1446,7 @@ fn new_view(
         suggestion_rows: Rc::new(VecModel::default()),
         #[cfg(any(target_os = "macos", windows))]
         video: None,
+        #[cfg(any(target_os = "macos", windows))]
         video_rect: (0.0, 0.0, 0.0, 0.0),
         header_art: None,
         pending_add: None,
@@ -2246,8 +2251,11 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::ToggleSaved(item, channel) => session.toggle_saved(item, channel),
         Cmd::Download(tracks) => session.download(tracks),
         Cmd::RemoveDownload(id) => session.remove_download(id),
+        #[cfg(any(target_os = "macos", windows))]
         Cmd::VideoOn => session.pause_for_video(),
+        #[cfg(any(target_os = "macos", windows))]
         Cmd::VideoOff(at) => session.resume_from_video(at),
+        #[cfg(not(any(target_os = "macos", windows)))]
         Cmd::WatchVideo => session.watch_video(),
         Cmd::StopDownloads => session.cancel_downloads(),
         Cmd::RemoveAllDownloads => session.remove_all_downloads(),
