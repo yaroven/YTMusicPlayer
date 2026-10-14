@@ -67,6 +67,7 @@ each ask once — that, the install scripts and building from source are in
 | [configuration.md](docs/configuration.md) | `config.toml`, Chromecast, Last.fm, Discord, offline |
 | [iphone.md](docs/iphone.md) | the iPhone app: install, sign in, limits |
 | [troubleshooting.md](docs/troubleshooting.md) | age-restricted songs, sound, sign-in, playback |
+| [internals.md](docs/internals.md) | how the player works inside, flow by flow |
 
 ## Notes and limits
 

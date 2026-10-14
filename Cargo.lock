@@ -8787,7 +8787,7 @@ dependencies = [
 
 [[package]]
 name = "ytm-player"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "anyhow",
  "chrono",
