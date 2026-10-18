@@ -158,6 +158,11 @@ Domain terms are defined in `CONTEXT.md`.
   repaint (softbuffer on macOS hands out a new buffer each frame, ~15 MB at
   Retina size). GUI CPU 2026-10-01: idle 1.7% → 0.4% (0 fps), playing
   7.6% → 4.2%.
+- **Play / pause shows at once**: the player thread sends
+  `PlayerEvent::StateChanged` when playing / paused / idle flips, which
+  wakes the frontends' loop; before, the button waited for the 500 ms
+  status tick. Measured 2026-10-18 (TUI in a pty, sandbox HOME, 6 presses):
+  293–464 ms → 9–25 ms from the key to the new icon.
 - **Startup must not wait on yt-dlp**: `YtDlp::find` (no probe);
   `yt-dlp --version` costs 3–4 s.
 - **Sync never runs on a timer** to save quota.

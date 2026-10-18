@@ -58,6 +58,10 @@ pub enum PlayerEvent {
         generation: u64,
         message: String,
     },
+    /// Playing / paused / idle changed. Nothing to act on: it only wakes the
+    /// frontends so the play button follows at once instead of at their
+    /// next periodic refresh (up to 500 ms later).
+    StateChanged,
 }
 
 /// A track to play.
@@ -447,11 +451,16 @@ impl Engine {
             duration: self.current.as_ref().and_then(|s| s.duration),
             volume: self.volume,
         };
+        let mut state_changed = false;
         self.status_tx.send_if_modified(|old| {
+            state_changed = old.state != status.state;
             let changed = *old != status;
             *old = status;
             changed
         });
+        if state_changed {
+            let _ = self.events.send(PlayerEvent::StateChanged);
+        }
     }
 
     /// Moves to the preloaded track when the current one ends (gapless) or
