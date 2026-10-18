@@ -164,8 +164,7 @@ public struct LyricLine: Hashable, Sendable {
 public struct LyricsProgress: Equatable, Sendable {
     public var line: Int
     public var words: Int
-    /// Characters lit: the sung words and a share of the word being sung,
-    /// so it fills letter by letter.
+    /// Characters lit: every word that has started, whole.
     public var chars: Int
 
     public init(line: Int, words: Int, chars: Int? = nil) {
@@ -235,16 +234,8 @@ public struct Lyrics: Sendable {
         let times = wordTimes(line)
         let words = current.words
         let sung = times.filter { $0 <= position }.count
-        var chars = words.prefix(max(0, sung - 1)).reduce(0) { $0 + $1.count }
-        if sung > 0, sung <= words.count {
-            // The word being sung fills over its time.
-            let word = words[sung - 1]
-            let letters = word.trimmingCharacters(in: .whitespaces).count
-            let start = times[sung - 1]
-            let end = sung < times.count ? times[sung] : start + Self.perChar * Double(max(letters, 1)) + Self.lineExtra
-            let share = min(1, (position - start) / max(end - start, 0.05))
-            chars += share >= 1 ? word.count : max(1, Int((Double(letters) * share).rounded(.up)))
-        }
+        // Every word that has started lights up whole (not letter by letter).
+        let chars = words.prefix(min(sung, words.count)).reduce(0) { $0 + $1.count }
         return LyricsProgress(line: line, words: sung, chars: chars)
     }
 }

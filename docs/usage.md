@@ -37,7 +37,7 @@ Open **ytm-player** from your applications, or run `ytm gui`.
   pause — with **Up next**
   (reorder, remove, clear, autoplay switch), **Lyrics** and **Related**, over
   a blurred copy of the cover. Synced lyrics play karaoke style: the sung line
-  lights up letter by letter, instrumental breaks show three dots, and a click
+  lights up word by word, instrumental breaks show three dots, and a click
   on a line seeks there. `Esc` or ▼ closes it.
 - **Settings:** language (English / Українська), autoplay, volume
   normalization, crossfade (0 = gapless), notifications, tray icon, the

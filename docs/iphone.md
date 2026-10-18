@@ -12,7 +12,7 @@ setup.
 - Songs with explicit lyrics carry YouTube Music's **E** badge.
 - Playback that keeps going with the screen locked, gapless track changes,
   lock screen and Control Center controls, AirPlay.
-- Karaoke lyrics: the sung line lights up letter by letter, a tap on a line
+- Karaoke lyrics: the sung line lights up word by word, a tap on a line
   seeks there. A tap on the big cover plays or pauses.
 - Your YouTube Music library once you sign in: liked music, playlists,
   saved albums and followed artists, with likes and playlist changes written

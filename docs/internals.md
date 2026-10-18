@@ -115,7 +115,7 @@ own.
 `lyrics` asks LRCLIB for the song (exact match by duration first, then a
 search, retried on 5xx), and falls back to YouTube Music's plain text. Word
 times come from Enhanced LRC when the file has them, else they're spread by
-word length. The window lights the sung line letter by letter from a 60 ms
+word length. The window lights the sung line word by word from a 60 ms
 timer; the phone does the same at 10 Hz.
 
 ## Downloads

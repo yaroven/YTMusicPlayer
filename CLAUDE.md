@@ -374,8 +374,9 @@ Domain terms are defined in `CONTEXT.md`.
   blocks (user's screenshot, 2026-10-18); there's no blur filter in Slint's
   software renderer. iPhone: TimelineView at
   10 Hz while on screen, `Player.exactPosition`.
-  The sung word fills letter by letter (`Progress::chars`), like
-  better-lyrics' wipe. LRCLIB answers 503 at times, and an error fell back
+  Words light up whole as they start (`Progress::chars` = the started
+  words; the user asked for this 2026-10-18 over the letter-by-letter
+  wipe better-lyrics does). LRCLIB answers 503 at times, and an error fell back
   to YouTube's untimed text (what the user saw as "no progress"): now
   `/api/get` with the duration first, then the search, 3 attempts on
   5xx / 429 / network errors.

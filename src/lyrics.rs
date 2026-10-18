@@ -73,8 +73,9 @@ pub struct Progress {
     pub line: usize,
     /// Words sung so far (instrumental lines: dots lit, 0..=3).
     pub words: usize,
-    /// Characters of the line lit so far: the sung words and a share of
-    /// the word being sung, so it fills letter by letter.
+    /// Characters of the line lit so far: every word that has started,
+    /// whole (a word lights up at once, not letter by letter — the user's
+    /// choice, 2026-10-18).
     pub chars: usize,
 }
 
@@ -155,28 +156,10 @@ impl Lyrics {
         let times = self.word_times(line);
         let words = current.split_words();
         let sung = times.iter().filter(|at| **at <= position).count();
-        let mut chars: usize = words[..sung.saturating_sub(1)]
+        let chars: usize = words[..sung.min(words.len())]
             .iter()
             .map(|w| w.chars().count())
             .sum();
-        if let Some(word) = sung.checked_sub(1).and_then(|i| words.get(i)) {
-            // The word being sung fills over its time (to the next word's
-            // start, or as long as its letters take).
-            let i = sung - 1;
-            let letters = word.trim_end().chars().count();
-            let start = times[i];
-            let end = times
-                .get(i + 1)
-                .copied()
-                .unwrap_or(start + PER_CHAR * letters.max(1) as u32 + LINE_EXTRA);
-            let span = end.saturating_sub(start).as_secs_f64().max(0.05);
-            let share = (position.saturating_sub(start).as_secs_f64() / span).min(1.0);
-            chars += if share >= 1.0 {
-                word.chars().count()
-            } else {
-                ((letters as f64 * share).ceil() as usize).max(1)
-            };
-        }
         Some(Progress {
             line,
             words: sung,
@@ -462,8 +445,8 @@ mod tests {
         assert!(times[2] > times[1] && times[2] < at(12.0), "{times:?}");
         let p = lyrics.progress(at(10.1)).unwrap();
         assert_eq!((p.line, p.words), (0, 1));
-        // "One" fills letter by letter.
-        assert!((1..=3).contains(&p.chars), "{p:?}");
+        // "One " lights up whole as soon as it starts.
+        assert_eq!(p.chars, 4, "{p:?}");
         let p = lyrics.progress(at(15.0)).unwrap();
         assert_eq!((p.words, p.chars), (3, 13), "the whole line");
         // The empty line is an instrumental break: dots light up over it.
@@ -488,7 +471,7 @@ mod tests {
         };
         assert_eq!(exact.word_times(0), [at(5.0), at(7.0)]);
         let p = exact.progress(at(6.0)).unwrap();
-        assert_eq!((p.words, p.chars), (1, 3), "half of \"Hello\"");
+        assert_eq!((p.words, p.chars), (1, 6), "all of \"Hello \" at once");
     }
 
     #[test]

@@ -466,7 +466,7 @@ fn playing_lyrics_light_up_word_by_word() {
     h.absorb(snap);
     let words = || h.view.borrow().lyrics.progress.map(|(_, w)| w);
     let start = words().unwrap();
-    assert!((1..=6).contains(&start), "letters of \"Caught\": {start}");
+    assert_eq!(start, 7, "\"Caught \" lights up whole");
     // No new snapshot: the window's own timer moves on with the song.
     std::thread::sleep(Duration::from_millis(1500));
     i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(1500));
