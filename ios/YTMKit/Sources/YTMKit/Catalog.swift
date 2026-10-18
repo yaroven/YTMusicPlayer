@@ -240,6 +240,14 @@ public final class Catalog: Sendable {
         return findFirst(data, "setVideoId") as? String ?? ""
     }
 
+    /// Moves the entry `setVideoId` in front of `before` (another entry's
+    /// set id), or to the end when `before` is nil.
+    public func moveInPlaylist(_ playlistId: String, setVideoId: String, before: String?) async throws {
+        var action: [String: Any] = ["action": "ACTION_MOVE_VIDEO_BEFORE", "setVideoId": setVideoId]
+        if let before { action["movedSetVideoIdSuccessor"] = before }
+        _ = try await editPlaylist(playlistId, action)
+    }
+
     /// Removes one entry from a playlist (`setVideoId` identifies it: the
     /// same song can sit in a playlist more than once).
     public func removeFromPlaylist(_ playlistId: String, _ videoId: String, setVideoId: String) async throws {

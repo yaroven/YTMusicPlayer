@@ -13,7 +13,7 @@ struct HomeView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 28) {
                 if !library.history.isEmpty {
-                    ShelfView(shelf: Shelf(title: "Listen again", items: library.history.prefix(20).map(\.item)))
+                    ShelfView(shelf: Shelf(title: String(localized: "Listen again"), items: library.history.prefix(20).map(\.item)))
                 }
                 ForEach(shelves) { ShelfView(shelf: $0) }
             }
@@ -110,7 +110,7 @@ struct SearchView: View {
     private var resultsList: some View {
         List {
             Picker("Kind", selection: $kind) {
-                ForEach(SearchKind.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(SearchKind.allCases) { Text(LocalizedStringKey($0.rawValue)).tag($0) }
             }
             .pickerStyle(.segmented)
             .listRowSeparator(.hidden)
@@ -296,6 +296,10 @@ struct LibraryView: View {
                 NavigationLink { TrackListView(list: .history) } label: {
                     Label("History", systemImage: "clock")
                 }
+                NavigationLink { TrackListView(list: .downloads) } label: {
+                    Label("Downloads", systemImage: "arrow.down.circle")
+                        .badge(library.downloads.count)
+                }
             }
             Section("Playlists") {
                 ForEach(library.playlists) { playlist in
@@ -351,14 +355,36 @@ struct LibraryView: View {
                 if library.syncing {
                     Text("Syncing your library…")
                 } else if account.signedIn {
-                    Text("Signed in\(account.name.map { " as \($0)" } ?? ""). Your liked music, playlists and followed artists are this account's, and changes here go back to YouTube.")
+                    if let name = account.name {
+                        Text("Signed in as \(name). Your liked music, playlists and followed artists are this account's, and changes here go back to YouTube.")
+                    } else {
+                        Text("Signed in. Your liked music, playlists and followed artists are this account's, and changes here go back to YouTube.")
+                    }
                 } else {
                     Text("Needed for your library, age-restricted songs and your own YouTube Music. The password goes only to Google.")
                 }
             }
+            #if os(iOS)
+            Section {
+                // iOS keeps each app's language in its own Settings page.
+                Link(destination: URL(string: UIApplication.openSettingsURLString)!) {
+                    Label("Language", systemImage: "globe")
+                }
+            } footer: {
+                Text("English or Ukrainian: Settings → YTM Player → Language.")
+            }
+            #endif
             Section("Playback") {
                 Toggle("Autoplay similar songs", isOn: $player.autoplay)
                 Toggle("Normalize volume", isOn: $player.normalize)
+                VStack(alignment: .leading) {
+                    if player.crossfade < 0.5 {
+                        Text("Crossfade: off (gapless)")
+                    } else {
+                        Text("Crossfade: \(Int(player.crossfade)) s")
+                    }
+                    Slider(value: $player.crossfade, in: 0...12, step: 1)
+                }
             }
             Section {
                 LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-")

@@ -15,8 +15,18 @@ setup.
 - Karaoke lyrics: the sung line lights up word by word, a tap on a line
   seeks there. A tap on the big cover plays or pauses.
 - Your YouTube Music library once you sign in: liked music, playlists,
-  saved albums and followed artists, with likes and playlist changes written
-  back to YouTube. History and the editable queue stay on the phone.
+  saved albums and followed artists, with likes, dislikes, playlist changes
+  (reordering too) written back to YouTube. History and the editable queue
+  stay on the phone.
+- **Offline:** long-press a song → **Download**; **Library → Downloads**
+  lists them, swipe to delete. Downloaded songs play without network.
+- **Song / video switch** over the cover (♪ / ▶): the clip plays in place
+  of the cover and the song carries on where it stopped when you switch
+  back.
+- Sleep timer (🌙 in Now Playing: 15 / 30 / 60 min or end of song),
+  crossfade (Library → Playback), **Related** next to the lyrics.
+- English or Ukrainian: **Settings → YTM Player → Language** (or Library →
+  Language).
 - No yt-dlp and no server: the app asks YouTube for the audio link itself.
 
 ## Requirements
@@ -81,8 +91,9 @@ SideStore refreshes it; nothing is lost.
 
 ## Limits compared to the desktop player
 
-- No offline downloads, crossfade, sleep timer, Chromecast, Last.fm or
-  Discord yet.
+- No Chromecast (AirPlay works), Last.fm or Discord yet.
+- Age-restricted songs can't be downloaded (YouTube serves them only as a
+  stream the app converts while playing).
 - Reordering songs inside a playlist stays on the phone (as on the desktop
   player).
 - Age-restricted songs need the Google sign-in, and start a few seconds

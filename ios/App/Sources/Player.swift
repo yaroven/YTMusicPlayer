@@ -44,6 +44,15 @@ final class Player {
     var autoplay = UserDefaults.standard.object(forKey: "autoplay") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoplay, forKey: "autoplay") }
     }
+    /// Seconds the end of a song and the start of the next overlap
+    /// (0 = gapless, back to back).
+    var crossfade = UserDefaults.standard.object(forKey: "crossfade") as? Double ?? 0 {
+        didSet {
+            UserDefaults.standard.set(crossfade, forKey: "crossfade")
+            // The preloaded song sits in the queue (gapless) or waits (fade).
+            queueChanged()
+        }
+    }
     /// Turn loud masters down to YouTube's loudness target.
     var normalize = UserDefaults.standard.object(forKey: "normalize") as? Bool ?? true {
         didSet {
@@ -51,6 +60,10 @@ final class Player {
             av.volume = loaded.map(gain) ?? 1
         }
     }
+
+    /// Sleep timer: pause at this moment, or at the end of the song.
+    private(set) var sleepUntil: Date?
+    private(set) var sleepAtEndOfSong = false
 
     var current: Track? { queue.indices.contains(index) ? queue[index] : nil }
     /// The player's own clock, between the half-second `position` updates
@@ -70,7 +83,12 @@ final class Player {
     }
 
     @ObservationIgnored private let library: Library
-    @ObservationIgnored private let av = AVQueuePlayer()
+    /// The player of the song being heard. During a crossfade the next song
+    /// plays in `incoming`, which then takes this place.
+    @ObservationIgnored private var av = AVQueuePlayer()
+    @ObservationIgnored private var incoming: AVQueuePlayer?
+    @ObservationIgnored private var fadeTask: Task<Void, Never>?
+    @ObservationIgnored private let muted: Bool
     @ObservationIgnored private var loaded: Loaded?
     @ObservationIgnored private var preloaded: Loaded?
     @ObservationIgnored private var loadTask: Task<Void, Never>?
@@ -88,6 +106,7 @@ final class Player {
     /// `muted`: for the macOS player check (`ios/player-check.sh`).
     init(library: Library, muted: Bool = false) {
         self.library = library
+        self.muted = muted
         av.isMuted = muted
         restoreQueue()
         setUpPlayer()
@@ -148,6 +167,7 @@ final class Player {
     }
 
     func togglePlay() {
+        settleFade()
         if resolving {
             playWhenReady.toggle()
             isPlaying = playWhenReady
@@ -163,6 +183,7 @@ final class Player {
     }
 
     func next() {
+        settleFade()
         guard let n = nextIndex() else { return }
         if let preloaded, preloaded.index == n, av.items().count > 1 {
             av.advanceToNextItem()
@@ -173,6 +194,7 @@ final class Player {
     }
 
     func previous() {
+        settleFade()
         if position > 3 || index == 0 {
             seek(to: 0)
         } else {
@@ -182,11 +204,50 @@ final class Player {
     }
 
     func seek(to seconds: TimeInterval) {
+        settleFade()
         position = seconds
         av.seek(to: CMTime(seconds: seconds, preferredTimescale: 600)) { [weak self] _ in
             Task { @MainActor in self?.updateNowPlaying() }
         }
         updateNowPlaying()
+    }
+
+    /// Pauses in `minutes`, or at the end of this song when `nil`.
+    func setSleep(minutes: Int?) {
+        if let minutes {
+            sleepUntil = Date().addingTimeInterval(TimeInterval(minutes * 60))
+            sleepAtEndOfSong = false
+        } else {
+            sleepUntil = nil
+            sleepAtEndOfSong = true
+        }
+    }
+
+    func cancelSleep() {
+        sleepUntil = nil
+        sleepAtEndOfSong = false
+    }
+
+    /// The clip is on screen: the audio waits.
+    func pauseForVideo() -> TimeInterval {
+        let at = exactPosition
+        if resolving { playWhenReady = false }
+        av.pause()
+        return at
+    }
+
+    /// Back from the clip: the song carries on where the video stopped.
+    func resumeAfterVideo(at seconds: TimeInterval?) {
+        guard loaded != nil else { return load(resumeAt: seconds ?? position) }
+        if let seconds { seek(to: seconds) }
+        activateAudioSession()
+        av.play()
+    }
+
+    /// Dislikes the song (YouTube learns from it) and moves on if it plays.
+    func dislike(_ track: Track) {
+        library.dislike(track)
+        if current?.videoId == track.videoId { next() }
     }
 
     // MARK: Loading
@@ -246,6 +307,17 @@ final class Player {
     }
 
     private func makeItem(_ track: Track, index: Int) async throws -> Loaded {
+        if let (url, saved) = library.download(of: track.videoId) {
+            // On the phone: no network at all.
+            let item = AVPlayerItem(url: url)
+            let duration = saved.duration ?? track.durationSecs.map(Double.init)
+            if let duration {
+                item.forwardPlaybackEndTime = CMTime(seconds: duration, preferredTimescale: 1000)
+            }
+            watch(item)
+            return Loaded(index: index, videoId: track.videoId, item: item, loudnessDb: saved.loudnessDb,
+                          duration: duration)
+        }
         let stream = try await Services.resolver.stream(track.videoId)
         try Task.checkCancellation()
         let item = AVPlayerItem(url: stream.url)
@@ -308,12 +380,14 @@ final class Player {
             guard let next = try? await makeItem(track, index: n), !Task.isCancelled,
                   let loaded, av.items().last === loaded.item else { return }
             preloaded = next
-            av.insert(next.item, after: loaded.item)
+            // Crossfading, the next song starts in its own player instead.
+            if crossfade == 0 { av.insert(next.item, after: loaded.item) }
         }
     }
 
     private func dropPreload() {
         preloadTask?.cancel()
+        cancelFade()
         if let preloaded {
             av.remove(preloaded.item)
             forgetItem(preloaded.item)
@@ -350,6 +424,21 @@ final class Player {
     // MARK: AVPlayer events
 
     private func setUpPlayer() {
+        attach(av)
+        let center = NotificationCenter.default
+        center.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] note in
+            let item = note.object as? AVPlayerItem
+            MainActor.assumeIsolated { self?.itemEnded(item) }
+        }
+        center.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] note in
+            let item = note.object as? AVPlayerItem
+            let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
+            MainActor.assumeIsolated { self?.itemFailed(item, error) }
+        }
+    }
+
+    /// Listens to the player whose song is being heard.
+    private func attach(_ av: AVQueuePlayer) {
         av.automaticallyWaitsToMinimizeStalling = true
         observations.append(av.observe(\.timeControlStatus, options: [.new]) { [weak self] av, _ in
             let status = av.timeControlStatus
@@ -363,16 +452,83 @@ final class Player {
                                                   queue: .main) { [weak self] time in
             MainActor.assumeIsolated { self?.tick(time) }
         }
-        let center = NotificationCenter.default
-        center.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] note in
-            let item = note.object as? AVPlayerItem
-            MainActor.assumeIsolated { self?.itemEnded(item) }
+    }
+
+    private func detach(_ av: AVQueuePlayer) {
+        observations.forEach { $0.invalidate() }
+        observations = []
+        if let timeObserver { av.removeTimeObserver(timeObserver) }
+        timeObserver = nil
+    }
+
+    // MARK: Crossfade
+
+    /// The song is `crossfade` seconds from its end and the next one is
+    /// ready: start the next in its own player and swap the volumes over.
+    private func startFadeIfDue() {
+        guard crossfade > 0, incoming == nil, isPlaying, let loaded, let next = preloaded,
+              let length = loaded.duration ?? (duration > 0 ? duration : nil),
+              length - position <= crossfade else { return }
+        let player = AVQueuePlayer(items: [next.item])
+        player.isMuted = muted
+        player.volume = 0
+        player.play()
+        incoming = player
+        let (from, to) = (gain(loaded), gain(next))
+        let span = max(0.5, min(crossfade, length - position))
+        let start = Date()
+        fadeTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let t = min(1, Date().timeIntervalSince(start) / span)
+                guard let self else { return }
+                self.av.volume = from * Float(1 - t)
+                player.volume = to * Float(t)
+                if t >= 1 { break }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard !Task.isCancelled else { return }
+            self?.finishFade()
         }
-        center.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: nil, queue: .main) { [weak self] note in
-            let item = note.object as? AVPlayerItem
-            let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
-            MainActor.assumeIsolated { self?.itemFailed(item, error) }
-        }
+    }
+
+    /// The incoming song becomes the one being heard.
+    private func finishFade() {
+        guard let player = incoming, let next = preloaded else { return }
+        fadeTask?.cancel()
+        fadeTask = nil
+        incoming = nil
+        let old = av
+        detach(old)
+        old.pause()
+        old.removeAllItems()
+        forgetItem(loaded?.item)
+        av = player
+        attach(av)
+        loaded = next
+        preloaded = nil
+        index = next.index
+        av.volume = gain(next)
+        let t = av.currentTime().seconds
+        position = t.isFinite ? t : 0
+        duration = next.duration ?? Double(current?.durationSecs ?? 0)
+        retried.remove(next.videoId)
+        saveQueue()
+        if let track = current { started(track) }
+    }
+
+    /// Something else happened mid-fade (pause, seek, another song): finish
+    /// the swap at once so there is one player again.
+    private func settleFade() {
+        if incoming != nil { finishFade() }
+    }
+
+    /// The fade is abandoned (a new song loads): the incoming player stops.
+    private func cancelFade() {
+        fadeTask?.cancel()
+        fadeTask = nil
+        incoming?.pause()
+        incoming?.removeAllItems()
+        incoming = nil
     }
 
     private func watch(_ item: AVPlayerItem) {
@@ -404,6 +560,12 @@ final class Player {
     /// AVQueuePlayer moved on to the preloaded song by itself.
     private func currentItemChanged(_ item: AVPlayerItem?) {
         guard let item, let next = preloaded, next.item === item else { return }
+        if sleepAtEndOfSong {
+            // The next song already started (gapless): stop it at its start.
+            sleepAtEndOfSong = false
+            av.pause()
+            av.seek(to: .zero)
+        }
         forgetItem(loaded?.item)
         loaded = next
         preloaded = nil
@@ -418,6 +580,14 @@ final class Player {
 
     private func itemEnded(_ item: AVPlayerItem?) {
         guard let item, let loaded, loaded.item === item else { return }
+        if incoming != nil { return finishFade() }
+        if sleepAtEndOfSong, preloaded == nil {
+            sleepAtEndOfSong = false
+            av.pause()
+            isPlaying = false
+            updateNowPlaying()
+            return
+        }
         if repeatMode == .one {
             seek(to: 0)
             av.play()
@@ -461,6 +631,11 @@ final class Player {
     private func tick(_ time: CMTime) {
         guard loaded != nil else { return }
         position = time.seconds.isFinite ? time.seconds : 0
+        if let until = sleepUntil, Date() >= until {
+            sleepUntil = nil
+            av.pause()
+        }
+        startFadeIfDue()
     }
 
     // MARK: System integration

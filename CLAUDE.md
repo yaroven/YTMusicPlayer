@@ -509,10 +509,31 @@ Domain terms are defined in `CONTEXT.md`.
   without a `setVideoId` (never synced) move only here, and the player says
   so. "Save as playlist" is one `playlist/create` with `videoIds`.
 
+- **iPhone parity, 2026-10-18** (user's request): offline downloads
+  (`Library.download`: the stream URL fetched in 1 MB ranges — what
+  googlevideo answers reliably — into Application Support/downloads; played
+  with the stored real duration as `forwardPlaybackEndTime`; HLS songs
+  refuse), sleep timer (`Player.setSleep`; "end of song" pauses the next
+  song at its start, since gapless already began it), dislike, Related pane,
+  playlist reordering written back (`Catalog.moveInPlaylist`), the clip in
+  place of the cover (WKWebView with the desktop's page script, desktop
+  Safari UA so YouTube doesn't switch to m.youtube.com), Ukrainian
+  (`App/Resources/uk.lproj/Localizable.strings`, keys = the English texts;
+  `CFBundleLocalizations: [en, uk]`, so iOS's per-app language setting
+  picks it; Library → Language opens that page). **Crossfade**: with a
+  fade set, the next song isn't queued in `av`: `startFadeIfDue` plays it
+  in its own `AVQueuePlayer` `crossfade` s before the end and ramps both
+  volumes every 50 ms, then `finishFade` makes it `av` (observers move
+  with `attach` / `detach`); any command mid-fade finishes the swap first.
+  Verified by `ios/player-check.sh` (27 checks, live, muted: sleep at the
+  end of a song, a 3.7 MB download played from the file, the handover at
+  5.8 s into the next song with a 6 s fade).
+
 ## Open TODOs
 
 - iPhone: verify signed-in age-restricted playback on a real account,
-  offline downloads, memory measurement on a real device.
+  memory measurement on a real device; the video pane and crossfade on a
+  real device (checked on macOS only).
 
 - Windows media keys in the TUI (needs a hidden window for SMTC).
 - Chromecast verified only against the simulated receiver in

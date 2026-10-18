@@ -7,19 +7,30 @@ struct NowPlayingView: View {
     @Environment(Library.self) private var library
     @Environment(Router.self) private var router
     @State private var pane: Pane?
+    /// The clip instead of the cover; where it started and where it got.
+    @State private var video = false
+    @State private var videoStart: TimeInterval = 0
+    @State private var videoAt: TimeInterval?
 
     enum Pane {
-        case lyrics, queue
+        case lyrics, queue, related
     }
 
     var body: some View {
         VStack(spacing: 18) {
             if let track = player.current {
+                if pane == nil {
+                    MediaSwitch(video: $video)
+                }
                 Group {
                     switch pane {
+                    case nil where video:
+                        VideoPane(videoId: track.videoId, start: videoStart) { videoAt = $0 }
+                            .id(track.videoId)
                     case nil: cover(track)
                     case .lyrics: LyricsPane(track: track)
                     case .queue: QueuePane()
+                    case .related: RelatedPane(track: track)
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -35,6 +46,24 @@ struct NowPlayingView: View {
         .padding(.horizontal, 24)
         .padding(.top, 28)
         .padding(.bottom, 8)
+        .onChange(of: video) { _, on in
+            if on {
+                videoAt = nil
+                videoStart = player.pauseForVideo()
+            } else {
+                player.resumeAfterVideo(at: videoAt)
+            }
+        }
+        .onChange(of: player.current?.videoId) { _, _ in
+            // Another song: back to its audio, from its start.
+            if video {
+                videoAt = 0
+                video = false
+            }
+        }
+        .onDisappear {
+            if video { video = false; player.resumeAfterVideo(at: videoAt) }
+        }
         .background {
             ZStack {
                 Color.black
@@ -89,6 +118,13 @@ struct NowPlayingView: View {
                 }
             }
             Spacer()
+            Button { player.dislike(track) } label: {
+                Image(systemName: "hand.thumbsdown")
+                    .font(.title2)
+                    .foregroundStyle(Color.primary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dislike")
             let liked = library.isLiked(track)
             Button { library.toggleLike(track) } label: {
                 Image(systemName: liked ? "heart.fill" : "heart")
@@ -141,12 +177,36 @@ struct NowPlayingView: View {
         HStack {
             toggle(.lyrics, icon: "quote.bubble")
             Spacer()
+            toggle(.related, icon: "square.stack")
+            Spacer()
             #if os(iOS)
             AirPlayButton().frame(width: 44, height: 44)
             #endif
             Spacer()
+            sleepMenu
+            Spacer()
             toggle(.queue, icon: "list.bullet")
         }
+    }
+
+    /// Sleep timer: pause after a while, or when the song ends.
+    private var sleepMenu: some View {
+        let on = player.sleepUntil != nil || player.sleepAtEndOfSong
+        return Menu {
+            ForEach([15, 30, 60], id: \.self) { minutes in
+                Button("\(minutes) min") { player.setSleep(minutes: minutes) }
+            }
+            Button("End of song") { player.setSleep(minutes: nil) }
+            if on {
+                Button("Turn off", role: .destructive) { player.cancelSleep() }
+            }
+        } label: {
+            Image(systemName: on ? "moon.zzz.fill" : "moon.zzz")
+                .font(.title3)
+                .foregroundStyle(on ? Color.accentColor : Color.secondary)
+                .frame(width: 44, height: 44)
+        }
+        .accessibilityLabel("Sleep timer")
     }
 
     private func toggle(_ target: Pane, icon: String) -> some View {
@@ -368,3 +428,28 @@ private struct AirPlayButton: UIViewRepresentable {
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
 #endif
+
+/// Songs, albums and artists YouTube Music relates to the playing song.
+private struct RelatedPane: View {
+    let track: Track
+    @State private var shelves: [Shelf]?
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 18) {
+                ForEach(shelves ?? []) { ShelfView(shelf: $0) }
+            }
+        }
+        .overlay {
+            if shelves == nil {
+                ProgressView()
+            } else if shelves?.isEmpty == true {
+                ContentUnavailableView("Nothing related", systemImage: "square.stack")
+            }
+        }
+        .task(id: track.videoId) {
+            shelves = nil
+            shelves = (try? await Services.catalog.related(track.videoId)) ?? []
+        }
+    }
+}

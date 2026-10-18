@@ -5,6 +5,7 @@ options:
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
+  developmentLanguage: en
 packages:
   YTMKit:
     path: YTMKit
@@ -22,6 +23,9 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: YTM Player
+        # English and Ukrainian: iOS offers the choice in Settings → YTM Player.
+        CFBundleDevelopmentRegion: en
+        CFBundleLocalizations: [en, uk]
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         ITSAppUsesNonExemptEncryption: false

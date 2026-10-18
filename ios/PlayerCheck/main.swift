@@ -42,6 +42,40 @@ import YTMKit
     player.repeatMode = .one
     player.seek(to: 355)
     await wait("repeat one restarts", 12) { player.index == 1 && player.position < 3 && player.position > 0 }
+    player.repeatMode = .off
+
+    // Sleep timer, end of song: the next song is reached but doesn't play.
+    player.setSleep(minutes: nil)
+    player.seek(to: 354)
+    await wait("sleep at the end of the song", 15) { player.index == 2 && !player.isPlaying }
+    await wait("sleep timer cleared") { !player.sleepAtEndOfSong }
+
+    // Offline: download, then play from the file.
+    library.download(a)
+    await wait("download", 60) { library.isDownloaded(a.videoId) }
+    let size = library.downloads.first?.bytes ?? 0
+    print(size > 3_000_000 ? "ok  " : "FAIL", "downloaded size", size)
+    player.play([a])
+    await wait("plays the downloaded file") { player.isPlaying && player.position > 0.5 }
+    await wait("its real duration") { abs(player.duration - 230.4) < 1 }
+    library.removeDownload(a)
+    await wait("download removed") { !library.isDownloaded(a.videoId) }
+
+    // Crossfade: the next song starts 6 s before the end of this one, and
+    // takes over once the fade is done (so it is ~6 s in by then).
+    player.crossfade = 6
+    player.play([a, b])
+    await wait("plays (crossfade on)") { player.isPlaying && player.position > 0.5 }
+    await wait("next one ready") { player.queue.count > 1 }
+    try await Task.sleep(for: .seconds(4))
+    player.seek(to: 220)
+    await wait("crossfade hands over", 20) { player.index == 1 && player.position > 4 }
+    print(player.position < 12 ? "ok  " : "FAIL", "the second song started during the fade, now at",
+          String(format: "%.1f", player.position))
+    await wait("keeps playing after the fade") { player.isPlaying && player.position > 7 }
+    player.togglePlay()
+    await wait("pause after a fade") { !player.isPlaying }
+    player.crossfade = 0
 }
 try await run()
 exit(0)

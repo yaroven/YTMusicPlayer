@@ -22,8 +22,19 @@ struct SavedPage: Codable, Identifiable, Hashable {
     var synced = false
 }
 
+/// A song saved on the phone for offline play.
+struct Downloaded: Codable, Hashable {
+    var track: Track
+    /// File name inside `Library.downloadsDirectory`.
+    var file: String
+    var bytes: Int
+    /// The real length (AVFoundation reads YouTube's fMP4 as twice as long).
+    var duration: TimeInterval?
+    var loudnessDb: Double?
+}
+
 enum LocalList: Hashable {
-    case liked, history
+    case liked, history, downloads
     case playlist(UUID)
 }
 
@@ -39,6 +50,10 @@ final class Library {
     private(set) var history: [Track] = []
     private(set) var playlists: [LocalPlaylist] = []
     private(set) var saved: [SavedPage] = []
+    /// Songs on the phone, newest first.
+    private(set) var downloads: [Downloaded] = []
+    /// Songs being downloaded now.
+    private(set) var downloading: Set<String> = []
     /// A sync is running.
     private(set) var syncing = false
     /// Last failure of a sync or of a write back to YouTube.
@@ -53,6 +68,7 @@ final class Library {
         var history: [Track]?
         var playlists: [LocalPlaylist]?
         var saved: [SavedPage]?
+        var downloads: [Downloaded]?
     }
 
     init(file: URL? = nil, catalog: Catalog = Services.catalog) {
@@ -64,6 +80,10 @@ final class Library {
             history = stored.history ?? []
             playlists = stored.playlists ?? []
             saved = stored.saved ?? []
+            // Keep only what is still on disk.
+            downloads = (stored.downloads ?? []).filter {
+                FileManager.default.fileExists(atPath: Self.downloadsDirectory.appendingPathComponent($0.file).path)
+            }
         }
     }
 
@@ -74,7 +94,8 @@ final class Library {
     }
 
     private func save() {
-        let stored = Stored(liked: liked, history: history, playlists: playlists, saved: saved)
+        let stored = Stored(liked: liked, history: history, playlists: playlists, saved: saved,
+                            downloads: downloads)
         guard let data = try? JSONEncoder().encode(stored) else { return }
         try? data.write(to: file, options: .atomic)
     }
@@ -115,7 +136,7 @@ final class Library {
             save()
             error = nil
         } catch {
-            self.error = "Sync failed: \(error.localizedDescription)"
+            self.error = String(localized: "Sync failed: \(error.localizedDescription)")
         }
     }
 
@@ -138,7 +159,7 @@ final class Library {
             do {
                 try await body()
             } catch {
-                self.error = "\(what) failed: \(error.localizedDescription)"
+                self.error = String(localized: "\(what) failed: \(error.localizedDescription)")
                 undo?()
             }
         }
@@ -164,7 +185,7 @@ final class Library {
             liked.removeAll { $0.videoId == track.videoId }
         }
         save()
-        write("\(liking ? "Liking" : "Unliking") \(track.title)") { [catalog] in
+        write(liking ? String(localized: "Liking \(track.title)") : String(localized: "Unliking \(track.title)")) { [catalog] in
             try await catalog.rate(track.videoId, liking ? .like : .none)
         } undo: { [weak self] in
             guard let self else { return }
@@ -181,7 +202,7 @@ final class Library {
     func dislike(_ track: Track) {
         liked.removeAll { $0.videoId == track.videoId }
         save()
-        write("Disliking \(track.title)") { [catalog] in
+        write(String(localized: "Disliking \(track.title)")) { [catalog] in
             try await catalog.rate(track.videoId, .dislike)
         }
     }
@@ -204,15 +225,17 @@ final class Library {
         switch list {
         case .liked: liked
         case .history: history
+        case .downloads: downloads.map(\.track)
         case let .playlist(id): playlists.first { $0.id == id }?.tracks ?? []
         }
     }
 
     func title(_ list: LocalList) -> String {
         switch list {
-        case .liked: "Liked songs"
-        case .history: "History"
-        case let .playlist(id): playlists.first { $0.id == id }?.name ?? "Playlist"
+        case .liked: String(localized: "Liked songs")
+        case .history: String(localized: "History")
+        case .downloads: String(localized: "Downloads")
+        case let .playlist(id): playlists.first { $0.id == id }?.name ?? String(localized: "Playlist")
         }
     }
 
@@ -223,13 +246,15 @@ final class Library {
             liked.remove(atOffsets: offsets)
             save()
             for track in removed {
-                write("Unliking \(track.title)") { [catalog] in
+                write(String(localized: "Unliking \(track.title)")) { [catalog] in
                     try await catalog.rate(track.videoId, .none)
                 }
             }
         case .history:
             history.remove(atOffsets: offsets)
             save()
+        case .downloads:
+            for download in offsets.map({ downloads[$0] }) { removeDownload(download.track) }
         case let .playlist(id):
             guard let i = playlists.firstIndex(where: { $0.id == id }) else { return }
             let remoteId = playlists[i].remoteId
@@ -246,7 +271,7 @@ final class Library {
             save()
             guard let remoteId else { return }
             for entry in entries where !entry.setVideoId.isEmpty {
-                write("Removing \(entry.track.title)") { [catalog] in
+                write(String(localized: "Removing \(entry.track.title)")) { [catalog] in
                     try await catalog.removeFromPlaylist(remoteId, entry.track.videoId,
                                                          setVideoId: entry.setVideoId)
                 }
@@ -254,22 +279,40 @@ final class Library {
         }
     }
 
+    /// Reorders a playlist here and, for the account's own, on YouTube too
+    /// (one move per song; a refusal puts the old order back).
     func move(from source: IndexSet, to destination: Int, in list: LocalList) {
         guard case let .playlist(id) = list, let i = playlists.firstIndex(where: { $0.id == id }) else { return }
+        let before = playlists[i]
         playlists[i].tracks.move(fromOffsets: source, toOffset: destination)
+        while playlists[i].setVideoIds.count < before.tracks.count { playlists[i].setVideoIds.append("") }
+        playlists[i].setVideoIds.move(fromOffsets: source, toOffset: destination)
         save()
+        guard let remoteId = before.remoteId, source.count == 1, let from = source.first else { return }
+        let ids = playlists[i].setVideoIds
+        let to = destination > from ? destination - 1 : destination
+        guard ids.indices.contains(to), !ids[to].isEmpty else { return }
+        let moved = ids[to]
+        let successor = ids.indices.contains(to + 1) && !ids[to + 1].isEmpty ? ids[to + 1] : nil
+        write(String(localized: "Moving the song")) { [catalog] in
+            try await catalog.moveInPlaylist(remoteId, setVideoId: moved, before: successor)
+        } undo: { [self] in
+            guard let j = playlists.firstIndex(where: { $0.id == id }) else { return }
+            playlists[j] = before
+            save()
+        }
     }
 
     @discardableResult
     func createPlaylist(_ name: String, with track: Track? = nil) -> UUID {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
-        let title = trimmed.isEmpty ? "Playlist \(playlists.count + 1)" : trimmed
+        let title = trimmed.isEmpty ? String(localized: "Playlist \(playlists.count + 1)") : trimmed
         let playlist = LocalPlaylist(name: title, tracks: track.map { [$0] } ?? [],
                                      setVideoIds: track.map { _ in [""] } ?? [])
         playlists.append(playlist)
         save()
         let id = playlist.id
-        write("Creating \(title)") { [self] in
+        write(String(localized: "Creating \(title)")) { [self] in
             let remoteId = try await catalog.createPlaylist(title)
             var setVideoId: String?
             if let track {
@@ -293,7 +336,7 @@ final class Library {
         save()
         for playlist in removed {
             guard let remoteId = playlist.remoteId else { continue }
-            write("Deleting \(playlist.name)") { [catalog] in
+            write(String(localized: "Deleting \(playlist.name)")) { [catalog] in
                 try await catalog.deletePlaylist(remoteId)
             }
         }
@@ -307,7 +350,7 @@ final class Library {
         save()
         guard let remoteId = playlists[i].remoteId else { return }
         let id = playlist
-        write("Adding \(track.title)") { [self] in
+        write(String(localized: "Adding \(track.title)")) { [self] in
             let setVideoId = try await catalog.addToPlaylist(remoteId, track.videoId)
             guard let i = playlists.firstIndex(where: { $0.id == id }),
                   let at = playlists[i].tracks.lastIndex(where: { $0.videoId == track.videoId })
@@ -323,6 +366,93 @@ final class Library {
             if playlists[i].setVideoIds.indices.contains(at) { playlists[i].setVideoIds.remove(at: at) }
             save()
         }
+    }
+
+    // MARK: Downloads
+
+    static var downloadsDirectory: URL {
+        let dir = directory.appendingPathComponent("downloads", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    func isDownloaded(_ videoId: String) -> Bool {
+        downloads.contains { $0.track.videoId == videoId }
+    }
+
+    /// The song's file and what playing it needs, when it is on the phone.
+    func download(of videoId: String) -> (url: URL, item: Downloaded)? {
+        guard let item = downloads.first(where: { $0.track.videoId == videoId }) else { return nil }
+        return (Self.downloadsDirectory.appendingPathComponent(item.file), item)
+    }
+
+    /// Saves the song's audio on the phone, in 1 MB ranges (what YouTube's
+    /// servers answer reliably).
+    func download(_ track: Track) {
+        guard !isDownloaded(track.videoId), downloading.insert(track.videoId).inserted else { return }
+        Task {
+            defer { downloading.remove(track.videoId) }
+            do {
+                let stream = try await Services.resolver.stream(track.videoId)
+                guard !stream.hls else {
+                    throw DownloadError.notADownloadableFile
+                }
+                let file = "\(track.videoId).m4a"
+                let target = Self.downloadsDirectory.appendingPathComponent(file)
+                let bytes = try await Self.fetch(stream.url, length: stream.contentLength, to: target)
+                downloads.removeAll { $0.track.videoId == track.videoId }
+                downloads.insert(Downloaded(track: track, file: file, bytes: bytes,
+                                            duration: stream.duration, loudnessDb: stream.loudnessDb), at: 0)
+                save()
+            } catch {
+                self.error = String(localized: "Download failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func removeDownload(_ track: Track) {
+        guard let (url, _) = download(of: track.videoId) else { return }
+        try? FileManager.default.removeItem(at: url)
+        downloads.removeAll { $0.track.videoId == track.videoId }
+        save()
+    }
+
+    enum DownloadError: LocalizedError {
+        case notADownloadableFile
+        var errorDescription: String? {
+            String(localized: "Age-restricted songs can't be saved for offline play")
+        }
+    }
+
+    /// Fetches `url` to `target` range by range; returns its size.
+    nonisolated private static func fetch(_ url: URL, length: Int?, to target: URL) async throws -> Int {
+        let chunk = 1 << 20
+        let partial = target.appendingPathExtension("part")
+        FileManager.default.createFile(atPath: partial.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: partial)
+        defer { try? handle.close() }
+        var offset = 0
+        while true {
+            try Task.checkCancellation()
+            var request = URLRequest(url: url)
+            let end = length.map { min(offset + chunk, $0) - 1 } ?? offset + chunk - 1
+            request.setValue("bytes=\(offset)-\(end)", forHTTPHeaderField: "Range")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard status == 206 || status == 200 else { throw YTMError.http("Download", status) }
+            try handle.write(contentsOf: data)
+            offset += data.count
+            // Done: the known length reached, or (length unknown) a short range.
+            if data.isEmpty { break }
+            if let length {
+                if offset >= length { break }
+            } else if data.count < chunk {
+                break
+            }
+        }
+        try? FileManager.default.removeItem(at: target)
+        try FileManager.default.moveItem(at: partial, to: target)
+        return offset
     }
 
     // MARK: Saved pages
@@ -347,7 +477,7 @@ final class Library {
         // subscription needs.
         guard page.kind == .artist else { return }
         let channel = page.id
-        write("\(saving ? "Following" : "Unfollowing") \(page.title)") { [catalog] in
+        write(saving ? String(localized: "Following \(page.title)") : String(localized: "Unfollowing \(page.title)")) { [catalog] in
             try await catalog.subscribe(channel, on: saving)
         }
     }
@@ -357,7 +487,7 @@ final class Library {
         saved.remove(atOffsets: offsets)
         save()
         for page in removed where page.kind == .artist {
-            write("Unfollowing \(page.title)") { [catalog] in
+            write(String(localized: "Unfollowing \(page.title)")) { [catalog] in
                 try await catalog.subscribe(page.id, on: false)
             }
         }

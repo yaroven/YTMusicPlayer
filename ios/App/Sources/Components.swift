@@ -70,6 +70,14 @@ struct TrackMenu: ViewModifier {
                 }
                 Button("New playlist", systemImage: "plus") { library.createPlaylist("", with: track) }
             }
+            if library.isDownloaded(track.videoId) {
+                Button("Remove download", systemImage: "trash") { library.removeDownload(track) }
+            } else if library.downloading.contains(track.videoId) {
+                Button("Downloading…", systemImage: "arrow.down.circle") {}.disabled(true)
+            } else {
+                Button("Download", systemImage: "arrow.down.circle") { library.download(track) }
+            }
+            Button("Dislike", systemImage: "hand.thumbsdown") { player.dislike(track) }
             Button("Go to artist", systemImage: "person") {
                 player.showNowPlaying = false
                 router.openArtist(of: track)
@@ -97,6 +105,7 @@ struct TrackRow: View {
     /// Album pages number their songs instead of showing art.
     var number: Int?
     @Environment(Player.self) private var player
+    @Environment(Library.self) private var library
 
     var body: some View {
         Button { player.play(list, at: index) } label: {
@@ -122,6 +131,11 @@ struct TrackRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
+                if library.isDownloaded(track.videoId) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if let seconds = track.durationSecs {
                     Text(formatTime(Double(seconds)))
                         .font(.caption.monospacedDigit())
