@@ -368,8 +368,11 @@ Domain terms are defined in `CONTEXT.md`.
   it via parley), a 60 ms `slint::Timer` changes the model only when a
   word starts. One full repaint 0.8 ms (release, 1100x720,
   `gui::tests::lyrics_png`, which also writes `target/lyrics.png` with the
-  real renderer, headless). Blurred cover = a 12 px copy stretched with
-  smooth scaling (no blur filter in the renderer). iPhone: TimelineView at
+  real renderer, headless). Blurred cover: the cover shrunk to 32 px,
+  Gaussian-blurred and scaled back to 160 px in Rust (77 KB), then stretched
+  by the window — a 12 px copy stretched by the renderer showed big pixel
+  blocks (user's screenshot, 2026-10-18); there's no blur filter in Slint's
+  software renderer. iPhone: TimelineView at
   10 Hz while on screen, `Player.exactPosition`.
   The sung word fills letter by letter (`Progress::chars`), like
   better-lyrics' wipe. LRCLIB answers 503 at times, and an error fell back

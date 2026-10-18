@@ -167,7 +167,13 @@ fn card_url(url: &str, edge: u32) -> String {
     }
 }
 
-const BACKDROP: u32 = 12;
+/// The blurred backdrop: the cover shrunk to `BACKDROP_SAMPLE` px, blurred,
+/// and scaled back up to `BACKDROP` px here, so the window only stretches an
+/// already smooth picture. (A 12 px copy stretched by the renderer showed
+/// its pixels as big blocks — the user's screenshot, 2026-10-18.)
+const BACKDROP_SAMPLE: u32 = 32;
+const BACKDROP: u32 = 160;
+const BACKDROP_BLUR: f32 = 3.0;
 
 /// Decodes a JPEG (or PNG), crops the centre square of its 16:9 picture area
 /// and scales it to `edge` px. With `alpha` the pixels keep their alpha byte
@@ -195,7 +201,10 @@ pub fn decode_square(jpeg: &[u8], edge: u32, alpha: bool) -> Result<Art> {
     let mut out = image::imageops::resize(&square, edge, edge, filter);
     let tint = average(&out);
     let backdrop = (edge >= 256).then(|| {
-        let small = image::imageops::resize(&out, BACKDROP, BACKDROP, FilterType::Triangle);
+        let sample =
+            image::imageops::resize(&out, BACKDROP_SAMPLE, BACKDROP_SAMPLE, FilterType::Triangle);
+        let blurred = image::imageops::blur(&sample, BACKDROP_BLUR);
+        let small = image::imageops::resize(&blurred, BACKDROP, BACKDROP, FilterType::CatmullRom);
         let rgb: Vec<u8> = small.pixels().flat_map(|p| [p[0], p[1], p[2]]).collect();
         SharedPixelBuffer::clone_from_slice(&rgb, BACKDROP, BACKDROP)
     });
