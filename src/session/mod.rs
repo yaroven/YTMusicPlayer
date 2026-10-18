@@ -146,6 +146,8 @@ pub struct Changes {
     pub saved: bool,
     /// Downloads changed.
     pub downloads: bool,
+    /// The history was edited (entries removed, cleared).
+    pub history: bool,
     /// OAuth client or sign-in state changed.
     pub account: bool,
     /// Cast devices or the cast target changed.
@@ -263,6 +265,22 @@ enum Background {
     },
     /// Every downloaded track was deleted (or it failed).
     DownloadsCleared(Result<usize>),
+    /// The queue was saved as a new playlist.
+    QueueSaved {
+        title: String,
+        tracks: Vec<Track>,
+        result: Result<String>,
+    },
+    /// A song moved inside one of the user's playlists (the local copy
+    /// moved already; on an error it moves back).
+    Moved {
+        playlist_id: String,
+        from: usize,
+        to: usize,
+        result: Result<()>,
+    },
+    /// History entries were removed.
+    HistoryEdited(Result<()>),
     Searched {
         generation: u64,
         query: String,
@@ -697,6 +715,9 @@ impl Session {
             | Background::VideoClosed { .. }
             | Background::DownloadsStopped { .. }
             | Background::DownloadsCleared(_)
+            | Background::QueueSaved { .. }
+            | Background::Moved { .. }
+            | Background::HistoryEdited(_)
             | Background::SignedIn { .. }
             | Background::SignedOut(_) => self.library_event(event, &mut changes),
             Background::YouTubeSignedIn(_) | Background::YouTubeSignedOut(_) => {

@@ -194,3 +194,57 @@ async fn watching_needs_a_playing_song() {
     let status = s.status.as_ref().unwrap();
     assert!(status.is_error && status.text.contains("Nothing is playing"));
 }
+
+/// Moving a song in a playlist that was never synced moves it here (there
+/// is no YouTube id for the entry yet) and says so.
+#[tokio::test]
+async fn songs_move_in_a_playlist_and_history_entries_go() {
+    use crate::{api::models::Playlist, storage::SyncedPlaylist};
+
+    let library = Arc::new(crate::storage::Library::open_in_memory().unwrap());
+    let playlist = Playlist {
+        id: "PLmine".into(),
+        title: "Mine".into(),
+        item_count: 3,
+        etag: None,
+    };
+    library
+        .replace_synced(&[SyncedPlaylist {
+            playlist: playlist.clone(),
+            tracks: tracks("m", 3),
+            item_ids: Vec::new(),
+        }])
+        .unwrap();
+    let (mut s, _, _) = session_with(Resolves::Fail, library.clone()).await;
+
+    s.move_in_playlist(playlist, 2, 0);
+    let ids: Vec<_> = library
+        .tracks("PLmine")
+        .unwrap()
+        .iter()
+        .map(|t| t.video_id.to_string())
+        .collect();
+    assert_eq!(ids, ["m0000000002", "m0000000000", "m0000000001"]);
+    let changes = s.next_event().await;
+    assert_eq!(changes.playlist.as_deref(), Some("PLmine"));
+
+    library.add_history(&tracks("h", 2)[0]).unwrap();
+    library.add_history(&tracks("h", 2)[1]).unwrap();
+    s.remove_from_history("h0000000000".into());
+    let changes = s.next_event().await;
+    assert!(changes.history);
+    assert_eq!(library.history().unwrap().len(), 1);
+    s.clear_history();
+    assert!(s.next_event().await.history);
+    assert!(library.history().unwrap().is_empty());
+}
+
+/// Saving the queue needs an account; without one it says so.
+#[tokio::test]
+async fn saving_the_queue_needs_an_account() {
+    let (mut s, _, _) = session(Resolves::Hang).await;
+    s.play(tracks("q", 3), 0);
+    s.save_queue_as_playlist("Road mix");
+    let status = s.status.as_ref().unwrap();
+    assert!(status.is_error, "{}", status.text);
+}

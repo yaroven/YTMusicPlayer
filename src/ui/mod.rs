@@ -95,6 +95,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             let title = match purpose {
                 Prompt::NewPlaylist(_) => tr!(lang, " New playlist name ", " Назва плейлиста "),
                 Prompt::Rename(_) => tr!(lang, " Rename playlist ", " Перейменувати плейлист "),
+                Prompt::SaveQueue => tr!(lang, " Save the queue as ", " Зберегти чергу як "),
             };
             let area = centered(frame.area(), 50, 3);
             let input = Paragraph::new(format!("{text}▏")).block(

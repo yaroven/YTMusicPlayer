@@ -14,14 +14,14 @@ expression: s
 │            │Space   n / p          play / pause · next / previous                   │            │
 │            │← / →  click bar       seek                                             │            │
 │            │+ / -                  volume                                           │            │
-│            │/                      filter the list (Esc clears)                     │            │
+│            │/   O                  filter the list (Esc clears) · sort it           │            │
 │            │o   [ ]                search YouTube Music · other category            │            │
 │            │i                      albums / artists on this page                    │            │
 │            │s / e / A              shuffle / repeat / autoplay                      │            │
 │            │v                      queue (x remove, J/K move, X clear)              │            │
 │            │u / R / w              play next / start radio / artist's page          │            │
 │            │f / d                  like / dislike                                   │            │
-│            │a / x                  add to / remove from playlist                    │            │
+│            │a / x   J / K          add / remove (playlist, history) · move          │            │
 │            │D                      download for offline (again: delete it)          │            │
 │            │S                      save album / follow artist                       │            │
 │            │m                      menu (playlists, downloads)                      │            │

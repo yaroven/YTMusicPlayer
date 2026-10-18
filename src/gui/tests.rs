@@ -772,3 +772,20 @@ fn the_window_can_speak_ukrainian() {
         "the core has the say"
     );
 }
+
+/// Sorting, saving the queue and clearing the history from the window.
+#[test]
+fn sorting_saving_the_queue_and_clearing_history() {
+    let mut h = harness();
+    h.absorb(snapshot(session_view(), Changes::default()));
+    assert_eq!(h.ui.get_sort_label(), "", "the list's own order");
+    h.ui.invoke_cycle_sort();
+    assert_eq!(h.ui.get_sort_label(), "Title");
+    h.ui.invoke_cycle_sort();
+    assert_eq!(h.ui.get_sort_label(), "Artist");
+
+    h.ui.invoke_save_queue_as("Road mix".into());
+    h.ui.invoke_clear_history();
+    let cmds = h.commands();
+    assert!(matches!(&cmds[..], [Cmd::SaveQueue(name), Cmd::ClearHistory] if name == "Road mix"));
+}

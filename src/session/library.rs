@@ -65,6 +65,36 @@ impl Writer {
         }
     }
 
+    /// A new private playlist holding `tracks`; returns its id.
+    async fn create_playlist_with(&self, title: &str, tracks: &[Track]) -> Result<String> {
+        match self {
+            Self::Session(catalog) => {
+                let ids: Vec<&str> = tracks.iter().map(|t| &*t.video_id).collect();
+                catalog.create_playlist_with(title, &ids).await
+            }
+            Self::Api(yt) => {
+                let id = yt.create_playlist(title).await?;
+                for track in tracks {
+                    yt.add_to_playlist(&id, &track.video_id).await?;
+                }
+                Ok(id)
+            }
+        }
+    }
+
+    /// Moves the entry `item_id` before `before` (to the end when `None`).
+    async fn move_in_playlist(
+        &self,
+        playlist_id: &str,
+        item_id: &str,
+        before: Option<&str>,
+    ) -> Result<()> {
+        match self {
+            Self::Session(catalog) => catalog.move_in_playlist(playlist_id, item_id, before).await,
+            Self::Api(_) => anyhow::bail!("reordering on YouTube needs Sign in with Google"),
+        }
+    }
+
     async fn rename_playlist(&self, playlist_id: &str, title: &str) -> Result<()> {
         match self {
             Self::Session(catalog) => catalog.rename_playlist(playlist_id, title).await,
@@ -296,6 +326,57 @@ impl Session {
                     }
                     Ok(_) => {}
                     Err(err) => self.set_error(trf!(self.lang, "Video: {err:#}", "Відео: {err:#}")),
+                }
+            }
+            Background::QueueSaved {
+                title,
+                tracks,
+                result,
+            } => match result {
+                Ok(id) => {
+                    let playlist = Playlist {
+                        id: id.clone(),
+                        title: title.clone(),
+                        item_count: 0,
+                        etag: None,
+                    };
+                    let stored = lib.add_playlist(&playlist).and_then(|()| {
+                        tracks
+                            .iter()
+                            .try_for_each(|t| lib.add_item(&id, t, false, None))
+                    });
+                    if let Err(err) = stored {
+                        tracing::warn!(%err, "storing the saved queue");
+                    }
+                    changes.library = true;
+                    self.set_info(trf!(
+                        self.lang,
+                        "Saved {} songs as {title}",
+                        "Збережено пісень: {} — плейлист «{title}»",
+                        tracks.len()
+                    ));
+                }
+                Err(err) => self.set_error(format!("{err:#}")),
+            },
+            Background::Moved {
+                playlist_id,
+                from,
+                to,
+                result,
+            } => {
+                if let Err(err) = result {
+                    // YouTube kept the old order: so does the library.
+                    if let Err(undo) = lib.move_track(&playlist_id, to, from) {
+                        tracing::warn!(%undo, "moving the song back");
+                    }
+                    self.set_error(format!("{err:#}"));
+                }
+                changes.playlist = Some(playlist_id);
+            }
+            Background::HistoryEdited(result) => {
+                changes.history = true;
+                if let Err(err) = result {
+                    self.set_error(format!("{err:#}"));
                 }
             }
             Background::DownloadsStopped { stopped } => {
@@ -580,6 +661,109 @@ impl Session {
             let result = yt.delete_playlist(&playlist.id).await;
             Background::PlaylistDeleted { playlist, result }
         });
+    }
+
+    /// Saves what is playing and up next as a new private playlist.
+    pub fn save_queue_as_playlist(&mut self, title: &str) {
+        let title = title.trim().to_owned();
+        if title.is_empty() {
+            return;
+        }
+        let tracks: Vec<Track> = self
+            .queue
+            .current()
+            .into_iter()
+            .chain(self.queue.upcoming())
+            .cloned()
+            .collect();
+        if tracks.is_empty() {
+            self.set_error(tr!(self.lang, "The queue is empty", "Черга порожня"));
+            return;
+        }
+        let busy = trf!(
+            self.lang,
+            "Saving the queue as {title}…",
+            "Зберігаю чергу як «{title}»…"
+        );
+        self.with_youtube(busy, move |yt| async move {
+            let result = yt.create_playlist_with(&title, &tracks).await;
+            Background::QueueSaved {
+                title,
+                tracks,
+                result,
+            }
+        });
+    }
+
+    /// Moves the song at `from` to `to` in one of the user's playlists: here
+    /// at once, then on YouTube (back again if YouTube refuses).
+    pub fn move_in_playlist(&mut self, playlist: Playlist, from: usize, to: usize) {
+        if playlist.id == LIKED_PLAYLIST_ID || from == to {
+            return;
+        }
+        let lib = self.deps.library.clone();
+        let mut ids = lib.item_ids(&playlist.id).unwrap_or_default();
+        if from >= ids.len() || to >= ids.len() {
+            return;
+        }
+        if let Err(err) = lib.move_track(&playlist.id, from, to) {
+            return self.set_error(format!("{err:#}"));
+        }
+        let moved = ids.remove(from);
+        ids.insert(to, moved.clone());
+        let before = ids.get(to + 1).cloned().filter(|id| !id.is_empty());
+        let tx = self.tx.clone();
+        let playlist_id = playlist.id.clone();
+        if moved.is_empty() {
+            // Not synced yet: YouTube's id for this entry is unknown.
+            self.set_info(tr!(
+                self.lang,
+                "Moved here; sync the library to move it on YouTube too",
+                "Переміщено тут; синхронізуй бібліотеку, щоб і на YouTube"
+            ));
+            let _ = tx.send(Background::Moved {
+                playlist_id,
+                from,
+                to,
+                result: Ok(()),
+            });
+            return;
+        }
+        let Some(writer) = self.writer() else {
+            let _ = tx.send(Background::Moved {
+                playlist_id,
+                from,
+                to,
+                result: Ok(()),
+            });
+            return;
+        };
+        tokio::spawn(async move {
+            let result = writer
+                .move_in_playlist(&playlist_id, &moved, before.as_deref())
+                .await;
+            let _ = tx.send(Background::Moved {
+                playlist_id,
+                from,
+                to,
+                result,
+            });
+        });
+    }
+
+    /// Takes a song out of the history (and forgets how often it played).
+    pub fn remove_from_history(&mut self, video_id: Arc<str>) {
+        let result = self.deps.library.remove_history(&video_id);
+        let _ = self.tx.send(Background::HistoryEdited(result));
+    }
+
+    /// Forgets every play.
+    pub fn clear_history(&mut self) {
+        let result = self.deps.library.clear_history();
+        if result.is_ok() {
+            self.set_info(tr!(self.lang, "History cleared", "Історію очищено"));
+        }
+        let _ = self.tx.send(Background::HistoryEdited(result));
     }
 
     // --- followed artists, saved albums -------------------------------------------

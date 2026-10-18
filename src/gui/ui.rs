@@ -15,6 +15,15 @@ slint::slint! {
 
     // Every label the window shows, in the chosen language (`i18n`).
     export global L {
+        in property <string> sort: "Sort";
+        in property <string> move-up: "Move up";
+        in property <string> move-down: "Move down";
+        in property <string> remove-from-history: "Remove from history";
+        in property <string> save-queue: "Save as playlist";
+        in property <string> save-queue-title: "Save the queue as a playlist";
+        in property <string> clear-history: "Clear history";
+        in property <string> clear-history-q: "Clear the history?";
+        in property <string> clear-history-note: "Play counts are forgotten too.";
         in property <string> home: "Home";
         in property <string> explore: "Explore";
         in property <string> library: "Library";
@@ -905,6 +914,7 @@ slint::slint! {
         callback jump(int);
         callback queue-action(int, string);
         callback clear-queue();
+        callback save-queue();
         callback toggle-autoplay();
         callback related-open(int, int);
         callback lyrics-seek(int);
@@ -952,6 +962,7 @@ slint::slint! {
                     if root.source != "": Text { text: root.source; color: Yt.text; font-weight: 600; font-size: 16px; overflow: elide; }
                 }
                 Toggle { text: L.autoplay; on: root.autoplay; width: 140px; toggled => { root.toggle-autoplay(); } }
+                IconButton { icon: "playlist-add"; size: 36px; icon-size: 20px; y: (parent.height - self.height) / 2; clicked => { root.save-queue(); } }
                 IconButton { icon: "delete"; size: 36px; icon-size: 20px; y: (parent.height - self.height) / 2; clicked => { root.clear-queue(); } }
             }
             ListView {
@@ -1240,6 +1251,13 @@ slint::slint! {
         in property <int> page-songs;
         // A playlist of the user's (not Liked music): rename / delete.
         in property <bool> own-playlist;
+        // How the list is sorted ("" = its own order) and the next press.
+        in property <string> sort-label;
+        callback cycle-sort();
+        callback save-queue-as(string);
+        callback clear-history();
+        // "Clear the history?"
+        property <bool> history-dialog;
         in property <bool> can-back;
         in property <bool> searching;
         in property <string> search-query;
@@ -1673,6 +1691,20 @@ slint::slint! {
                                     y: (parent.height - self.height) / 2;
                                     clicked => { root.toggle-saved(); }
                                 }
+                                if root.list-mode != 1 && root.tracks.length > 1 && !root.tiny: Pill {
+                                    text: root.sort-label != "" ? root.sort-label : L.sort;
+                                    icon: "dropdown";
+                                    compact: root.compact;
+                                    y: (parent.height - self.height) / 2;
+                                    clicked => { root.cycle-sort(); }
+                                }
+                                if root.nav == 2 && root.tracks.length > 0 && !root.tiny: Pill {
+                                    text: L.clear-history;
+                                    icon: "delete";
+                                    compact: root.compact;
+                                    y: (parent.height - self.height) / 2;
+                                    clicked => { root.history-dialog = true; }
+                                }
                                 if root.downloading > 0: Pill {
                                     text: root.downloading > 1 ? L.stop-open + root.downloading + ")" : L.stop;
                                     icon: "close";
@@ -1888,6 +1920,7 @@ slint::slint! {
                                 jump(i) => { root.jump(i); }
                                 queue-action(i, a) => { root.queue-action(i, a); }
                                 clear-queue => { root.clear-queue(); }
+                                save-queue => { root.name-dialog = 3; }
                                 toggle-autoplay => { root.toggle-autoplay(); }
                                 related-open(s, c) => { root.open-related(s, c); }
                                 lyrics-seek(ms) => { root.lyrics-seek(ms); }
@@ -1933,6 +1966,7 @@ slint::slint! {
                                 jump(i) => { root.jump(i); }
                                 queue-action(i, a) => { root.queue-action(i, a); }
                                 clear-queue => { root.clear-queue(); }
+                                save-queue => { root.name-dialog = 3; }
                                 toggle-autoplay => { root.toggle-autoplay(); }
                                 related-open(s, c) => { root.open-related(s, c); }
                                 lyrics-seek(ms) => { root.lyrics-seek(ms); }
@@ -2363,20 +2397,39 @@ slint::slint! {
 
         // --- new / rename playlist ---
         if root.name-dialog != 0: Dialog {
-            title: root.name-dialog == 1 ? L.new-playlist : L.rename-playlist;
+            title: root.name-dialog == 1 ? L.new-playlist : root.name-dialog == 3 ? L.save-queue-title : L.rename-playlist;
             close => { root.name-dialog = 0; keys.focus(); }
             name-field := Field { placeholder: L.name; text: root.name-dialog == 2 ? root.tracks-title : ""; }
             HorizontalLayout {
                 alignment: end;
                 Pill {
-                    text: root.name-dialog == 1 ? L.create : L.rename;
+                    text: root.name-dialog == 2 ? L.rename : L.create;
                     filled: true;
                     icon: "check";
                     clicked => {
-                        if (root.name-dialog == 1) { root.new-playlist(name-field.text); } else { root.rename-playlist(name-field.text); }
+                        if (root.name-dialog == 1) { root.new-playlist(name-field.text); }
+                        else if (root.name-dialog == 3) { root.save-queue-as(name-field.text); }
+                        else { root.rename-playlist(name-field.text); }
                         root.name-dialog = 0;
                         keys.focus();
                     }
+                }
+            }
+        }
+
+        if root.history-dialog: Dialog {
+            title: L.clear-history-q;
+            close => { root.history-dialog = false; keys.focus(); }
+            Text { text: L.clear-history-note; color: Yt.secondary; wrap: word-wrap; }
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+                Pill { text: L.cancel; clicked => { root.history-dialog = false; keys.focus(); } }
+                Pill {
+                    text: L.clear-history;
+                    icon: "delete";
+                    filled: true;
+                    clicked => { root.clear-history(); root.history-dialog = false; keys.focus(); }
                 }
             }
         }
@@ -2419,7 +2472,7 @@ slint::slint! {
             x: min(root.menu-x - 200px, root.win-width - 252px);
             y: min(root.menu-y, root.win-height - 300px);
             width: 240px;
-            height: 296px;
+            height: root.own-playlist && root.sort-label == "" ? 376px : 296px;
             Rectangle {
                 background: #282828;
                 opacity: 0;
@@ -2436,7 +2489,13 @@ slint::slint! {
                     MenuItem { icon: "playlist-add"; text: L.save-to-playlist; clicked => { root.row-action(root.menu-row, "add"); add-popup.show(); } }
                     MenuItem { icon: "download"; text: L.download; clicked => { root.row-action(root.menu-row, "download"); } }
                     MenuItem { icon: "dislike"; text: L.dislike; clicked => { root.row-action(root.menu-row, "dislike"); } }
-                    MenuItem { icon: "delete"; text: root.nav == 3 ? L.remove-download : L.remove-from-playlist; clicked => { root.row-action(root.menu-row, "remove"); } }
+                    if root.own-playlist && root.sort-label == "": MenuItem { icon: "up"; text: L.move-up; clicked => { root.row-action(root.menu-row, "up"); } }
+                    if root.own-playlist && root.sort-label == "": MenuItem { icon: "down"; text: L.move-down; clicked => { root.row-action(root.menu-row, "down"); } }
+                    MenuItem {
+                        icon: "delete";
+                        text: root.nav == 3 ? L.remove-download : root.nav == 2 ? L.remove-from-history : L.remove-from-playlist;
+                        clicked => { root.row-action(root.menu-row, "remove"); }
+                    }
                 }
             }
         }

@@ -14,6 +14,7 @@
 //!
 //! Rows are indices into a shared `Arc<[Track]>`: no track is copied.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -26,6 +27,37 @@ use crate::{
     storage::Library,
     tr,
 };
+
+/// How the shown songs are ordered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortBy {
+    /// The list's own order (playlist order, newest first for liked music).
+    #[default]
+    Default,
+    Title,
+    Artist,
+    /// Most played first ([`crate::storage::Library::play_counts`]).
+    MostPlayed,
+}
+
+impl SortBy {
+    pub const ALL: [SortBy; 4] = [Self::Default, Self::Title, Self::Artist, Self::MostPlayed];
+
+    pub fn label(self, lang: Lang) -> &'static str {
+        match self {
+            Self::Default => tr!(lang, "Default order", "Звичайний порядок"),
+            Self::Title => tr!(lang, "Title", "Назва"),
+            Self::Artist => tr!(lang, "Artist", "Виконавець"),
+            Self::MostPlayed => tr!(lang, "Most played", "Найчастіше"),
+        }
+    }
+
+    /// The next one, for a key that cycles through them.
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|s| *s == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+}
 
 /// The playlist's name as the user should see it: the account's "Liked
 /// music" is ours, so it follows the language.
@@ -124,6 +156,10 @@ pub struct LibraryView {
     selected: Option<usize>,
     /// The language its titles are in.
     lang: Lang,
+    /// Order of the shown songs (applies to every list).
+    sort: SortBy,
+    /// Plays per song, read when sorting by them.
+    plays: HashMap<String, u32>,
 }
 
 impl LibraryView {
@@ -156,6 +192,8 @@ impl LibraryView {
             visible: Vec::new(),
             selected: None,
             lang: Lang::default(),
+            sort: SortBy::Default,
+            plays: HashMap::new(),
         };
         let last = view.library.get_meta(LAST_PLAYLIST).ok().flatten();
         view.load_playlists(last.as_deref())?;
@@ -311,8 +349,25 @@ impl LibraryView {
     /// The queue for playing from `row` (`None`: the first row): the whole
     /// shown list and the index to start at.
     pub fn play_from(&self, row: Option<usize>) -> Option<(Arc<[Track]>, usize)> {
-        let (index, _) = self.row(row.unwrap_or(0))?;
-        Some((self.shown.tracks.clone(), index))
+        let row = row.unwrap_or(0);
+        let (index, _) = self.row(row)?;
+        if self.sort == SortBy::Default {
+            return Some((self.shown.tracks.clone(), index));
+        }
+        // Sorted: the queue follows what is on screen (the filter aside).
+        let mut order: Vec<u32> = (0..self.shown.tracks.len() as u32).collect();
+        let shown_rank: HashMap<u32, usize> = self
+            .visible
+            .iter()
+            .enumerate()
+            .map(|(r, i)| (*i, r))
+            .collect();
+        order.sort_by_key(|i| shown_rank.get(i).copied().unwrap_or(usize::MAX));
+        let tracks: Arc<[Track]> = order
+            .iter()
+            .map(|i| self.shown.tracks[*i as usize].clone())
+            .collect();
+        Some((tracks, row))
     }
 
     /// The whole shown list (for shuffle-play), unless empty.
@@ -539,6 +594,25 @@ impl LibraryView {
         }
     }
 
+    pub fn sort(&self) -> SortBy {
+        self.sort
+    }
+
+    /// Orders the shown songs (the list's own order, by title, by artist or
+    /// most played first); playing from the list follows the shown order.
+    pub fn set_sort(&mut self, sort: SortBy) {
+        if self.sort != sort {
+            self.sort = sort;
+            self.selected = None;
+            self.refilter();
+        }
+    }
+
+    /// Times `video_id` was played (0 when never).
+    pub fn plays(&self, video_id: &str) -> u32 {
+        self.plays.get(video_id).copied().unwrap_or(0)
+    }
+
     pub fn select_row(&mut self, row: Option<usize>) {
         self.selected = row.filter(|&r| r < self.visible.len());
     }
@@ -598,6 +672,7 @@ impl LibraryView {
         let refresh = match &self.shown.source {
             Source::Saved(_) => changes.saved,
             Source::Downloads => changes.downloads,
+            Source::History => changes.history,
             _ => false,
         };
         if refresh {
@@ -692,6 +767,10 @@ impl LibraryView {
                     .collect();
             }
             Source::Saved(kind) => self.shown.items = self.library.saved(kind)?.into(),
+            Source::History => {
+                self.shown.tracks = self.library.history()?;
+                self.shown.subtitle = songs_count(self.lang, self.shown.tracks.len());
+            }
             _ => {}
         }
         let selected = self.selected;
@@ -702,6 +781,28 @@ impl LibraryView {
 
     fn refilter(&mut self) {
         filter_indices(&self.shown.tracks, &self.filter, &mut self.visible);
+        let tracks = &self.shown.tracks;
+        let key = |i: &u32| &tracks[*i as usize];
+        match self.sort {
+            SortBy::Default => {}
+            SortBy::Title => self
+                .visible
+                .sort_by_cached_key(|i| key(i).title.to_lowercase()),
+            SortBy::Artist => self.visible.sort_by_cached_key(|i| {
+                (key(i).artist.to_lowercase(), key(i).title.to_lowercase())
+            }),
+            SortBy::MostPlayed => {
+                // Counts move with every play: read them for each list.
+                self.plays = self.library.play_counts().unwrap_or_default();
+                let tracks = &self.shown.tracks;
+                let plays = &self.plays;
+                // Stable: equal counts keep the list's own order.
+                self.visible.sort_by_key(|i| {
+                    let id = &*tracks[*i as usize].video_id;
+                    std::cmp::Reverse(plays.get(id).copied().unwrap_or(0))
+                });
+            }
+        }
     }
 }
 
@@ -812,6 +913,33 @@ mod tests {
         v.save();
         let v = LibraryView::new(lib).unwrap();
         assert_eq!(v.title(), "Road trip");
+        assert_eq!(titles(&v), ["Gamma", "Delta", "Echo"]);
+    }
+
+    #[test]
+    fn sorting_reorders_the_list_and_what_plays() {
+        let lib = library();
+        // "Echo" played twice, "Gamma" once.
+        for id in ["eeeeeeeeeee", "ccccccccccc", "eeeeeeeeeee"] {
+            lib.add_history(&track(id, "")).unwrap();
+        }
+        let mut v = LibraryView::new(lib).unwrap();
+        v.select_playlist(Some(1)).unwrap();
+        v.set_sort(SortBy::Title);
+        assert_eq!(titles(&v), ["Delta", "Echo", "Gamma"]);
+        let (tracks, start) = v.play_from(Some(1)).unwrap();
+        assert_eq!(start, 1);
+        let order: Vec<_> = tracks.iter().map(|t| t.title.to_string()).collect();
+        assert_eq!(
+            order,
+            ["Delta", "Echo", "Gamma"],
+            "the queue follows the screen"
+        );
+
+        v.set_sort(SortBy::MostPlayed);
+        assert_eq!(titles(&v), ["Echo", "Gamma", "Delta"]);
+        assert_eq!(v.plays("eeeeeeeeeee"), 2);
+        v.set_sort(SortBy::Default);
         assert_eq!(titles(&v), ["Gamma", "Delta", "Echo"]);
     }
 

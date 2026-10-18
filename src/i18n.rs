@@ -125,6 +125,15 @@ macro_rules! trf {
 
 /// Every label the window shows.
 pub struct Text {
+    pub sort: &'static str,
+    pub move_up: &'static str,
+    pub move_down: &'static str,
+    pub remove_from_history: &'static str,
+    pub save_queue: &'static str,
+    pub save_queue_title: &'static str,
+    pub clear_history: &'static str,
+    pub clear_history_q: &'static str,
+    pub clear_history_note: &'static str,
     pub home: &'static str,
     pub explore: &'static str,
     pub library: &'static str,
@@ -259,6 +268,15 @@ pub struct Text {
 }
 
 pub static EN: Text = Text {
+    sort: "Sort",
+    move_up: "Move up",
+    move_down: "Move down",
+    remove_from_history: "Remove from history",
+    save_queue: "Save as playlist",
+    save_queue_title: "Save the queue as a playlist",
+    clear_history: "Clear history",
+    clear_history_q: "Clear the history?",
+    clear_history_note: "Play counts are forgotten too.",
     home: "Home",
     explore: "Explore",
     library: "Library",
@@ -393,6 +411,15 @@ pub static EN: Text = Text {
 };
 
 pub static UK: Text = Text {
+    sort: "Сортувати",
+    move_up: "Вище",
+    move_down: "Нижче",
+    remove_from_history: "Прибрати з історії",
+    save_queue: "Зберегти як плейлист",
+    save_queue_title: "Зберегти чергу як плейлист",
+    clear_history: "Очистити історію",
+    clear_history_q: "Очистити історію?",
+    clear_history_note: "Лічильники прослуховувань теж скинуться.",
     home: "Головна",
     explore: "Огляд",
     library: "Бібліотека",

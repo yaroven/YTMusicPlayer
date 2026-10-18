@@ -16,7 +16,7 @@ use crate::{
     catalog::{Item, ItemKind},
 };
 
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 /// Plays kept in the history (older ones are dropped).
 const HISTORY_CAP: i64 = 500;
 
@@ -168,6 +168,39 @@ impl Library {
         Ok(())
     }
 
+    /// Moves the song at `from` to `to` (indices in playlist order) and
+    /// renumbers the playlist.
+    pub fn move_track(&self, playlist_id: &str, from: usize, to: usize) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let mut rows: Vec<(String, Option<String>)> = {
+            let mut stmt = tx.prepare(
+                "SELECT video_id, item_id FROM playlist_tracks
+                 WHERE playlist_id = ?1 ORDER BY position",
+            )?;
+            let rows = stmt.query_map([playlist_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        if from >= rows.len() || to >= rows.len() {
+            return Ok(());
+        }
+        let row = rows.remove(from);
+        rows.insert(to, row);
+        tx.execute(
+            "DELETE FROM playlist_tracks WHERE playlist_id = ?1",
+            [playlist_id],
+        )?;
+        for (position, (video_id, item_id)) in rows.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO playlist_tracks (playlist_id, position, video_id, item_id)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![playlist_id, position as i64, video_id, item_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Playlist item ids in track order ("" where unknown).
     pub fn item_ids(&self, playlist_id: &str) -> Result<Vec<String>> {
         let conn = self.conn();
@@ -235,7 +268,36 @@ impl Library {
             "DELETE FROM history WHERE id <= (SELECT MAX(id) FROM history) - ?1",
             [HISTORY_CAP],
         )?;
+        conn.execute(
+            "INSERT INTO plays (video_id, count, last_played) VALUES (?1, 1, ?2)
+             ON CONFLICT(video_id) DO UPDATE SET count = count + 1,
+               last_played = excluded.last_played",
+            params![&*track.video_id, chrono::Utc::now().timestamp()],
+        )?;
         Ok(())
+    }
+
+    /// Forgets a song's plays: out of the history and its play count.
+    pub fn remove_history(&self, video_id: &str) -> Result<()> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM history WHERE video_id = ?1", [video_id])?;
+        conn.execute("DELETE FROM plays WHERE video_id = ?1", [video_id])?;
+        Ok(())
+    }
+
+    /// Forgets every play.
+    pub fn clear_history(&self) -> Result<()> {
+        self.conn()
+            .execute_batch("DELETE FROM history; DELETE FROM plays;")?;
+        Ok(())
+    }
+
+    /// How many times each song was played (songs never played are absent).
+    pub fn play_counts(&self) -> Result<HashMap<String, u32>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT video_id, count FROM plays")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// Played tracks, most recent first, each once.
@@ -630,6 +692,18 @@ fn migrate(conn: &Connection) -> Result<()> {
              COMMIT;",
         )?;
     }
+    if version < 5 {
+        // Plays per song, kept apart from the capped history (it forgets).
+        conn.execute_batch(
+            "BEGIN;
+             CREATE TABLE plays (
+               video_id TEXT PRIMARY KEY, count INTEGER NOT NULL,
+               last_played INTEGER NOT NULL);
+             INSERT INTO plays (video_id, count, last_played)
+               SELECT video_id, COUNT(*), MAX(played_at) FROM history GROUP BY video_id;
+             COMMIT;",
+        )?;
+    }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
 }
@@ -711,6 +785,56 @@ mod tests {
             .map(|t| t.video_id.to_string())
             .collect();
         assert_eq!(ids, ["aaaaaaaaaaa", "bbbbbbbbbbb"]);
+    }
+
+    #[test]
+    fn plays_are_counted_and_can_be_forgotten() {
+        let lib = Library::open_in_memory().unwrap();
+        for id in ["aaaaaaaaaaa", "bbbbbbbbbbb", "aaaaaaaaaaa"] {
+            lib.add_history(&track(id, None)).unwrap();
+        }
+        let counts = lib.play_counts().unwrap();
+        assert_eq!(counts["aaaaaaaaaaa"], 2);
+        assert_eq!(counts["bbbbbbbbbbb"], 1);
+
+        lib.remove_history("aaaaaaaaaaa").unwrap();
+        assert_eq!(lib.history().unwrap().len(), 1);
+        assert!(!lib.play_counts().unwrap().contains_key("aaaaaaaaaaa"));
+        lib.clear_history().unwrap();
+        assert!(lib.history().unwrap().is_empty() && lib.play_counts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn songs_move_inside_a_playlist() {
+        let lib = Library::open_in_memory().unwrap();
+        let tracks: Vec<Track> = ["aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"]
+            .into_iter()
+            .map(|id| track(id, None))
+            .collect();
+        lib.replace_synced(&[SyncedPlaylist {
+            playlist: Playlist {
+                id: "PL1".into(),
+                title: "Road trip".into(),
+                item_count: 3,
+                etag: None,
+            },
+            tracks: tracks.into(),
+            item_ids: vec!["s1".into(), "s2".into(), "s3".into()],
+        }])
+        .unwrap();
+        lib.move_track("PL1", 2, 0).unwrap();
+        let ids: Vec<_> = lib
+            .tracks("PL1")
+            .unwrap()
+            .iter()
+            .map(|t| t.video_id.to_string())
+            .collect();
+        assert_eq!(ids, ["ccccccccccc", "aaaaaaaaaaa", "bbbbbbbbbbb"]);
+        assert_eq!(
+            lib.item_ids("PL1").unwrap(),
+            ["s3", "s1", "s2"],
+            "ids move along"
+        );
     }
 
     #[test]

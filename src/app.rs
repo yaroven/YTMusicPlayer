@@ -48,6 +48,7 @@ pub enum TracksView {
 pub enum Prompt {
     NewPlaylist(Option<Track>),
     Rename(Playlist),
+    SaveQueue,
 }
 
 /// Entries of the playlist menu (`m`) and the cast menu (`C`).
@@ -59,6 +60,8 @@ pub enum MenuEntry {
     DownloadAll,
     StopDownloads,
     RemoveAllDownloads,
+    SaveQueue,
+    ClearHistory,
     /// Play on this computer (`None`) or on a found Cast device.
     CastTo(Option<usize>, String),
     /// A line that does nothing ("Looking for devices…").
@@ -78,6 +81,12 @@ impl MenuEntry {
                 "Delete all downloaded songs",
                 "Видалити всі завантажені пісні"
             ),
+            Self::SaveQueue => tr!(
+                lang,
+                "Save the queue as a playlist…",
+                "Зберегти чергу як плейлист…"
+            ),
+            Self::ClearHistory => tr!(lang, "Clear history", "Очистити історію"),
             Self::CastTo(_, name) => name,
             Self::Note(text) => text,
         }
@@ -540,7 +549,36 @@ impl App {
                     self.queue_selected = to;
                 }
             }
-            Action::MoveUp | Action::MoveDown => {}
+            Action::MoveUp | Action::MoveDown => {
+                // In one of the user's playlists (its own order): move the
+                // selected song.
+                let Some(playlist) = self
+                    .library
+                    .shown_playlist()
+                    .filter(|p| p.id != LIKED_PLAYLIST_ID)
+                    .cloned()
+                else {
+                    return;
+                };
+                if self.library.sort() != crate::library_view::SortBy::Default {
+                    return;
+                }
+                let Some(row) = self.library.selected_row() else {
+                    return;
+                };
+                let Some((from, _)) = self.library.row(row) else {
+                    return;
+                };
+                let to = if action == Action::MoveUp {
+                    from.checked_sub(1)
+                } else {
+                    Some(from + 1).filter(|&t| t < self.library.total())
+                };
+                if let Some(to) = to {
+                    self.session.move_in_playlist(playlist, from, to);
+                    self.library.select_row(Some(to));
+                }
+            }
             Action::ClearQueue => {
                 self.session.clear_queue();
                 self.queue_selected = 0;
@@ -556,6 +594,21 @@ impl App {
                 }
             }
             Action::Video => self.session.watch_video(),
+            Action::Sort => {
+                let next = self.library.sort().next();
+                self.library.set_sort(next);
+                let lang = self.session.lang;
+                self.session.set_info(match next {
+                    crate::library_view::SortBy::Default => {
+                        tr!(lang, "Sorted: the list's own order", "Порядок: як у списку").to_owned()
+                    }
+                    sort => format!(
+                        "{} {}",
+                        tr!(lang, "Sorted by", "Сортування:"),
+                        sort.label(lang)
+                    ),
+                });
+            }
             Action::SaveOrFollow => {
                 let item = if self.showing_cards() {
                     self.card(self.card_selected)
@@ -594,6 +647,12 @@ impl App {
                 }
                 if *self.library.source() == Source::Downloads && self.library.total() > 0 {
                     entries.push(MenuEntry::RemoveAllDownloads);
+                }
+                if self.session.queue.current().is_some() {
+                    entries.push(MenuEntry::SaveQueue);
+                }
+                if *self.library.source() == Source::History && self.library.total() > 0 {
+                    entries.push(MenuEntry::ClearHistory);
                 }
                 let mut state = ListState::default();
                 state.select(Some(0));
@@ -689,6 +748,8 @@ impl App {
             self.session.remove_from_playlist(playlist, track);
         } else if *self.library.source() == Source::Downloads {
             self.session.remove_download(track.video_id);
+        } else if *self.library.source() == Source::History {
+            self.session.remove_from_history(track.video_id);
         }
     }
 
@@ -924,6 +985,13 @@ impl App {
             }
             (MenuEntry::StopDownloads, _) => self.session.cancel_downloads(),
             (MenuEntry::RemoveAllDownloads, _) => self.session.remove_all_downloads(),
+            (MenuEntry::SaveQueue, _) => {
+                self.mode = Mode::Prompt {
+                    purpose: Prompt::SaveQueue,
+                    text: String::new(),
+                }
+            }
+            (MenuEntry::ClearHistory, _) => self.session.clear_history(),
             (MenuEntry::CastTo(index, _), _) => {
                 let device = index.and_then(|i| self.session.cast_devices.get(i).cloned());
                 self.session.cast_to(device);
@@ -939,6 +1007,7 @@ impl App {
         match purpose {
             Prompt::NewPlaylist(track) => self.session.create_playlist(&text, track),
             Prompt::Rename(playlist) => self.session.rename_playlist(playlist, &text),
+            Prompt::SaveQueue => self.session.save_queue_as_playlist(&text),
         }
     }
 }

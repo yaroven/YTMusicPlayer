@@ -355,12 +355,17 @@ impl Catalog {
 
     /// Creates a private playlist; returns its id (`PL…`).
     pub async fn create_playlist(&self, title: &str) -> Result<String> {
-        let data = self
-            .write(
-                "playlist/create",
-                json!({ "title": title, "privacyStatus": "PRIVATE" }),
-            )
-            .await?;
+        self.create_playlist_with(title, &[]).await
+    }
+
+    /// Creates a private playlist holding `video_ids` (in that order) in one
+    /// request; returns its id.
+    pub async fn create_playlist_with(&self, title: &str, video_ids: &[&str]) -> Result<String> {
+        let mut body = json!({ "title": title, "privacyStatus": "PRIVATE" });
+        if !video_ids.is_empty() {
+            body["videoIds"] = json!(video_ids);
+        }
+        let data = self.write("playlist/create", body).await?;
         let id = data
             .get("playlistId")
             .or_else(|| find_first(&data, "playlistId"))
@@ -419,6 +424,23 @@ impl Catalog {
             }),
         )
         .await?;
+        Ok(())
+    }
+
+    /// Moves the entry `set_video_id` in front of `before` (another entry's
+    /// `setVideoId`), or to the end when `before` is `None`.
+    pub async fn move_in_playlist(
+        &self,
+        playlist_id: &str,
+        set_video_id: &str,
+        before: Option<&str>,
+    ) -> Result<()> {
+        let mut action =
+            json!({ "action": "ACTION_MOVE_VIDEO_BEFORE", "setVideoId": set_video_id });
+        if let Some(before) = before {
+            action["movedSetVideoIdSuccessor"] = json!(before);
+        }
+        self.edit_playlist(playlist_id, action).await?;
         Ok(())
     }
 

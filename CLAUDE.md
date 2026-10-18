@@ -498,6 +498,17 @@ Domain terms are defined in `CONTEXT.md`.
   user can read needs both languages; the CLI and the log stay English (they
   are read by scripts and in bug reports).
 
+- **Play counts, sorting, playlist moves, history editing** (user's request
+  2026-10-18): schema v5 adds `plays` (video id, count, last played) next to
+  the capped `history`, so counts survive the 500-row cap; filled from the
+  history on migration. `LibraryView::set_sort` orders the visible rows
+  (`SortBy`: own order, title, artist, most played) and `play_from` hands
+  the queue the shown order. Moving a song is local first, then InnerTube
+  `ACTION_MOVE_VIDEO_BEFORE` with the entry's `setVideoId` and its new
+  successor's (none = to the end); YouTube refusing moves it back. Entries
+  without a `setVideoId` (never synced) move only here, and the player says
+  so. "Save as playlist" is one `playlist/create` with `videoIds`.
+
 ## Open TODOs
 
 - iPhone: verify signed-in age-restricted playback on a real account,

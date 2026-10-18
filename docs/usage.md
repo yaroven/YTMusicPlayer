@@ -21,6 +21,14 @@ Open **ytm-player** from your applications, or run `ytm gui`.
   for start radio, play next, add to queue, download (again: delete the
   download), dislike and remove from playlist. ↓ marks downloaded songs,
   **E** explicit lyrics (18+).
+- **Your playlists:** ⋮ → **Move up / Move down** reorders a song (on
+  YouTube too, once the library has been synced). The **Up next** panel has
+  **Save as playlist** for the whole queue.
+- **Sort:** the **Sort** button over a list cycles through its own order,
+  title, artist and **most played** (which shows ▶ and the count next to
+  the artist). Playing from a sorted list follows what you see.
+- **History:** ⋮ → **Remove from history**, or **Clear history** at the top
+  (play counts are forgotten with it).
 - **Downloads:** while songs are being saved a **Stop** button appears in the
   header (it also drops the half-written file); the Downloads list has
   **Delete all**, and ⋮ → Remove deletes a single song's file.
@@ -83,10 +91,12 @@ Run `ytm` in a terminal.
 | `v` | queue (`x` remove, `J`/`K` move, `X` clear) |
 | `u` / `R` / `w` | play next / start radio / the artist's page |
 | `f` / `d` | like / dislike |
-| `a` / `x` | add to / remove from a playlist |
+| `a` / `x` | add to / remove from a playlist (`x` in History: remove the entry) |
 | `D` | download for offline (again: delete the download) |
 | `S` | save album / follow artist |
-| `m` | menu: new / rename / delete playlist, download all, stop downloading, delete all downloads |
+| `m` | menu: new / rename / delete playlist, download all, stop downloading, delete all downloads, save the queue as a playlist, clear history |
+| `O` | sort the list: own order → title → artist → most played |
+| `J` / `K` | in your own playlist: move the selected song (in the queue view: move it in the queue) |
 | `t` | lyrics |
 | `z` | sleep timer (15 / 30 / 60 min, end of song, off) |
 | `C` | play on a Chromecast |

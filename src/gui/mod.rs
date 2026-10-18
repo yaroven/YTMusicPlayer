@@ -93,6 +93,10 @@ enum Cmd {
     ToggleSaved(Item, Option<String>),
     Download(Vec<Track>),
     RemoveDownload(Arc<str>),
+    SaveQueue(String),
+    MoveInPlaylist(Playlist, usize, usize),
+    RemoveFromHistory(Arc<str>),
+    ClearHistory,
     /// Switch the window to the video: the audio pauses.
     #[cfg(any(target_os = "macos", windows))]
     VideoOn,
@@ -371,18 +375,22 @@ impl Model for TracksModel {
     }
 
     fn row_data(&self, row: usize) -> Option<TrackRow> {
-        let (t, liked, downloaded) = match &self.rows {
+        let (t, liked, downloaded, plays) = match &self.rows {
             Rows::Library(view) => {
                 let view = view.borrow();
                 let (_, t) = view.row(row)?;
+                // Sorted by plays: the count shows next to the artist.
+                let plays = (view.sort() == crate::library_view::SortBy::MostPlayed)
+                    .then(|| view.plays(&t.video_id));
                 (
                     t.clone(),
                     view.is_liked(&t.video_id),
                     view.is_downloaded(&t.video_id),
+                    plays,
                 )
             }
             // Queue rows show no like button.
-            Rows::Queue(tracks) => (tracks.borrow().get(row)?.clone(), false, false),
+            Rows::Queue(tracks) => (tracks.borrow().get(row)?.clone(), false, false, None),
         };
         let playing = self.playing.borrow().as_ref() == Some(&t.video_id);
         let art = self.art.borrow_mut().thumb(&t.video_id);
@@ -393,7 +401,10 @@ impl Model for TracksModel {
             initial: initial(&t.title),
             hue: hue(&t.artist),
             title: SharedString::from(&*t.title),
-            artist: SharedString::from(&*t.artist),
+            artist: match plays {
+                Some(n) if n > 0 => format!("{} · ▶ {n}", t.artist).into(),
+                _ => SharedString::from(&*t.artist),
+            },
             time: t
                 .duration_secs
                 .map(|s| fmt_time(Duration::from_secs(s.into())))
@@ -878,6 +889,10 @@ impl View {
             lib.shown_playlist()
                 .is_some_and(|p| p.id != LIKED_PLAYLIST_ID),
         );
+        ui.set_sort_label(match lib.sort() {
+            crate::library_view::SortBy::Default => SharedString::new(),
+            sort => sort.label(self.lang).into(),
+        });
         if lib.filter().is_empty() {
             // A new list starts unfiltered: empty the search field too.
             ui.set_clear_search(ui.get_clear_search().wrapping_add(1));
@@ -1317,6 +1332,15 @@ fn downloaded_client_name() -> String {
 fn apply_language(ui: &MainWindow, lang: Lang) {
     let t = lang.text();
     let l = ui.global::<L>();
+    l.set_sort(t.sort.into());
+    l.set_move_up(t.move_up.into());
+    l.set_move_down(t.move_down.into());
+    l.set_remove_from_history(t.remove_from_history.into());
+    l.set_save_queue(t.save_queue.into());
+    l.set_save_queue_title(t.save_queue_title.into());
+    l.set_clear_history(t.clear_history.into());
+    l.set_clear_history_q(t.clear_history_q.into());
+    l.set_clear_history_note(t.clear_history_note.into());
     l.set_home(t.home.into());
     l.set_explore(t.explore.into());
     l.set_library(t.library.into());
@@ -1981,9 +2005,24 @@ fn wire_callbacks(
                 let lib = v.library.borrow();
                 match (lib.source(), lib.shown_playlist()) {
                     (Source::Downloads, _) => Cmd::RemoveDownload(track.video_id),
+                    (Source::History, _) => Cmd::RemoveFromHistory(track.video_id),
                     (_, Some(p)) if row >= 0 => Cmd::RemoveFrom(p.clone(), track),
                     _ => return,
                 }
+            }
+            "up" | "down" => {
+                let lib = v.library.borrow();
+                let (Some(playlist), Ok(r)) = (lib.shown_playlist(), usize::try_from(row)) else {
+                    return;
+                };
+                let Some((from, _)) = lib.row(r) else { return };
+                let to = if action == "up" {
+                    from.checked_sub(1)
+                } else {
+                    Some(from + 1).filter(|&t| t < lib.total())
+                };
+                let Some(to) = to else { return };
+                Cmd::MoveInPlaylist(playlist.clone(), from, to)
             }
             "add" => {
                 // The save-to popup acts on the selection (or the playing track).
@@ -2039,6 +2078,22 @@ fn wire_callbacks(
     });
     // The clip plays in the window on macOS / Windows; elsewhere the
     // browser gets it (`Session::watch_video`).
+    on!(on_save_queue_as, [tx, view, ui], |name| {
+        send(Cmd::SaveQueue(name.to_string()), tx)
+    });
+    on!(on_clear_history, [tx, view, ui], || send(
+        Cmd::ClearHistory,
+        tx
+    ));
+    on!(on_cycle_sort, [tx, view, ui], || {
+        let mut v = view.borrow_mut();
+        {
+            let mut lib = v.library.borrow_mut();
+            let next = lib.sort().next();
+            lib.set_sort(next);
+        }
+        v.sync_list(ui);
+    });
     on!(on_set_language, [tx, view, ui], |code| {
         let lang = Lang::from_code(&code);
         {
@@ -2420,6 +2475,10 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::ToggleSaved(item, channel) => session.toggle_saved(item, channel),
         Cmd::Download(tracks) => session.download(tracks),
         Cmd::RemoveDownload(id) => session.remove_download(id),
+        Cmd::SaveQueue(title) => session.save_queue_as_playlist(&title),
+        Cmd::MoveInPlaylist(playlist, from, to) => session.move_in_playlist(playlist, from, to),
+        Cmd::RemoveFromHistory(id) => session.remove_from_history(id),
+        Cmd::ClearHistory => session.clear_history(),
         #[cfg(any(target_os = "macos", windows))]
         Cmd::VideoOn => session.pause_for_video(),
         #[cfg(any(target_os = "macos", windows))]
