@@ -451,6 +451,20 @@ impl LibraryView {
         true
     }
 
+    /// Shows a page before it has loaded: the card's title, subtitle and
+    /// art at once, its songs when [`Self::show_page`] replaces it.
+    pub fn show_preview(&mut self, item: &Item) {
+        let shown = Shown {
+            source: Source::Page(crate::catalog::page_id(&item.id)),
+            title: item.title.to_string(),
+            subtitle: item.subtitle.to_string(),
+            thumbnail: item.thumbnail.as_deref().map(str::to_owned),
+            kind: Some(item.kind),
+            ..Shown::empty()
+        };
+        self.navigate(shown);
+    }
+
     /// Shows a loaded album / artist / playlist page.
     pub fn show_page(&mut self, page: &Page) {
         let shown = Shown {
@@ -1065,6 +1079,32 @@ mod tests {
         assert!(v.back());
         assert_eq!(v.title(), "Liked music");
         assert!(!v.back());
+    }
+
+    #[test]
+    fn a_preview_shows_at_once_and_the_page_takes_its_place() {
+        let mut v = LibraryView::new(library()).unwrap();
+        let before = v.title();
+        let card = Item {
+            kind: ItemKind::Playlist,
+            id: "PLroad".into(),
+            title: "Road trip".into(),
+            subtitle: "Playlist • Jane".into(),
+            thumbnail: Some("https://a/art".into()),
+            track: None,
+            explicit: false,
+        };
+        v.show_preview(&card);
+        assert_eq!(v.title(), "Road trip");
+        assert_eq!(v.total(), 0);
+        // The page (its id with the `VL` prefix) replaces the preview: one
+        // step back still returns to where the card was.
+        let mut loaded = page("VLPLroad", ItemKind::Playlist);
+        loaded.title = "Road trip".into();
+        v.show_page(&loaded);
+        assert_eq!(v.total(), 1);
+        assert!(v.back());
+        assert_eq!(v.title(), before);
     }
 
     #[test]

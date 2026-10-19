@@ -113,8 +113,11 @@ fun LibraryScreen() {
                     item { SectionTitle(stringResource(R.string.saved_pages)) }
                     items(library.saved, key = { it.id }) { s ->
                         var menu by remember { mutableStateOf(false) }
+                        val item = dev.ytmplayer.core.Item(s.kind, s.id, s.title, s.subtitle, s.thumbnail)
+                        LaunchedEffect(s.id) { PageCache.note(item) }
                         Row(
-                            Modifier.fillMaxWidth().clickable { Router.open(Route.Page(s.id)) }.padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
+                            Modifier.fillMaxWidth().prefetchOnPress(item).clickable { Router.open(Route.Page(s.id)) }
+                                .padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Artwork(s.thumbnail?.let { Art.Url(it) } ?: Art.None, 48.dp, round = s.kind == ItemKind.Artist)

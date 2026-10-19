@@ -70,6 +70,59 @@ async fn a_track_that_ran_dry_offline_continues_where_it_stopped() {
     drop(player);
 }
 
+fn page(id: &str) -> Page {
+    Page {
+        kind: crate::catalog::ItemKind::Playlist,
+        id: id.into(),
+        title: "Road trip".into(),
+        subtitle: String::new(),
+        thumbnail: None,
+        tracks: tracks("p", 3).to_vec(),
+        shelves: Vec::new(),
+        channel_id: None,
+    }
+}
+
+#[tokio::test]
+async fn a_page_opened_lately_opens_at_once() {
+    let (mut s, _, _) = session(Resolves::Hang).await;
+    s.remember_page("PLroad".into(), Arc::new(page("VLPLroad")));
+    s.open_page("PLroad");
+    let changes = s.next_event().await;
+    assert!(changes.page && !s.page_loading);
+    assert_eq!(s.page.as_ref().unwrap().tracks.len(), 3);
+}
+
+#[tokio::test]
+async fn a_page_pressed_then_opened_waits_for_the_prefetch() {
+    let (mut s, _, _) = session(Resolves::Hang).await;
+    // Pressed: loading (here never finishes on its own)...
+    s.prefetching.insert("PLroad".into());
+    // ...clicked: no second request, the prefetch's answer is the page.
+    s.open_page("PLroad");
+    assert!(s.awaiting_prefetch.is_some());
+    s.tx.send(Background::Prefetched {
+        id: "PLroad".into(),
+        result: Ok(page("VLPLroad")),
+    })
+    .unwrap();
+    let changes = s.next_event().await;
+    assert!(changes.page);
+    assert!(s.prefetching.is_empty() && s.awaiting_prefetch.is_none());
+    // And it's remembered for next time.
+    assert!(s.cached_page("PLroad").is_some());
+}
+
+#[tokio::test]
+async fn the_page_cache_is_bounded() {
+    let (mut s, _, _) = session(Resolves::Hang).await;
+    for i in 0..PAGE_CACHE + 5 {
+        s.remember_page(format!("PL{i}"), Arc::new(page("x")));
+    }
+    assert_eq!(s.page_cache.len(), PAGE_CACHE);
+    assert!(s.cached_page("PL0").is_none(), "oldest dropped");
+}
+
 #[tokio::test]
 async fn results_of_a_replaced_selection_are_ignored() {
     let (mut s, _, _) = session(Resolves::Fail).await;

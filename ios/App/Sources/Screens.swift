@@ -215,6 +215,12 @@ struct PageView: View {
     let id: String
     @State private var page: Page?
     @State private var error: Error?
+
+    init(id: String) {
+        self.id = id
+        // Opened lately (or prefetched while the finger was down): at once.
+        _page = State(initialValue: PageCache.shared.cached(id))
+    }
     @State private var showAll = false
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
@@ -226,13 +232,28 @@ struct PageView: View {
         Group {
             if let page {
                 content(page)
+            } else if let preview = PageCache.shared.preview(id) {
+                // The card's title and art at once, the songs when they come.
+                List {
+                    header(title: preview.title, subtitle: preview.subtitle,
+                           art: preview.thumbnail.map(ArtworkSource.url) ?? .none,
+                           round: preview.kind == .artist, tracks: [])
+                    if let error {
+                        ErrorView(error: error) { Task { await load() } }
+                            .listRowSeparator(.hidden)
+                    } else {
+                        ForEach(0..<8, id: \.self) { _ in SkeletonRow() }
+                            .listRowSeparator(.hidden)
+                    }
+                }
+                .listStyle(.plain)
             } else if let error {
                 ErrorView(error: error) { Task { await load() } }
             } else {
                 LoadingView()
             }
         }
-        .navigationTitle(page?.title ?? "")
+        .navigationTitle(page?.title ?? PageCache.shared.preview(id)?.title ?? "")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if let page {
@@ -244,8 +265,11 @@ struct PageView: View {
             }
         }
         .task {
-            guard page == nil else { return }
-            await load()
+            if page == nil {
+                await load()
+            } else {
+                await loadRest()
+            }
         }
         .onChange(of: Connectivity.shared.cameBack) {
             if page == nil { Task { await load() } }
@@ -257,7 +281,7 @@ struct PageView: View {
     private func load() async {
         error = nil
         do {
-            page = try await Services.catalog.page(id, full: false)
+            page = try await PageCache.shared.load(id)
         } catch {
             self.error = error
             return
@@ -266,11 +290,14 @@ struct PageView: View {
     }
 
     private func loadRest() async {
+        // Whatever arrived is what opening it again shows at once.
+        defer { if let page { PageCache.shared.remember(id, page) } }
         if let all = page?.allSongsId,
            let list = try? await Services.catalog.page(all),
            list.tracks.count > page?.tracks.count ?? 0 {
             page?.tracks = list.tracks
         }
+        page?.allSongsId = nil
         var parts = 0
         while let token = page?.continuation, parts < 50, !Task.isCancelled {
             parts += 1
@@ -280,34 +307,42 @@ struct PageView: View {
         }
     }
 
+    /// Art, title, subtitle, Play / Shuffle (also before the songs are in).
+    private func header(title: String, subtitle: String, art: ArtworkSource, round: Bool,
+                        tracks: [Track]) -> some View {
+        VStack(spacing: 12) {
+            Artwork(source: art, size: 220, round: round)
+                .shadow(radius: 16)
+            Text(title)
+                .font(.title2.bold())
+                .multilineTextAlignment(.center)
+            Text(subtitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            HStack {
+                Button { player.playFrom(tracks, at: 0) } label: {
+                    Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                Button { player.playFrom(tracks.shuffled(), at: 0) } label: {
+                    Label("Shuffle", systemImage: "shuffle").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+            .disabled(tracks.isEmpty)
+        }
+        .frame(maxWidth: .infinity)
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
+
     private func content(_ page: Page) -> some View {
         let shown = page.kind == .artist && !showAll ? Array(page.tracks.prefix(Self.topSongs)) : page.tracks
         return List {
-            VStack(spacing: 12) {
-                Artwork(source: page.thumbnail.map(ArtworkSource.url) ?? .none, size: 220, round: page.kind == .artist)
-                    .shadow(radius: 16)
-                Text(page.title)
-                    .font(.title2.bold())
-                    .multilineTextAlignment(.center)
-                Text(page.subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                HStack {
-                    Button { player.playFrom(page.tracks, at: 0) } label: {
-                        Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    Button { player.playFrom(page.tracks.shuffled(), at: 0) } label: {
-                        Label("Shuffle", systemImage: "shuffle").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .disabled(page.tracks.isEmpty)
-            }
-            .frame(maxWidth: .infinity)
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
+            header(title: page.title, subtitle: page.subtitle,
+                   art: page.thumbnail.map(ArtworkSource.url) ?? .none,
+                   round: page.kind == .artist, tracks: page.tracks)
 
             Section {
                 ForEach(Array(shown.enumerated()), id: \.offset) { i, track in
@@ -377,6 +412,8 @@ struct LibraryView: View {
             if !library.saved.isEmpty {
                 Section("Albums, artists, playlists") {
                     ForEach(library.saved) { saved in
+                        let item = Item(kind: saved.kind, browseId: saved.id, title: saved.title,
+                                        subtitle: saved.subtitle, thumbnail: saved.thumbnail)
                         NavigationLink(value: Route.page(saved.id)) {
                             HStack(spacing: 12) {
                                 Artwork(source: saved.thumbnail.map(ArtworkSource.url) ?? .none, size: 48,
@@ -390,6 +427,8 @@ struct LibraryView: View {
                                 }
                             }
                         }
+                        .buttonStyle(PrefetchOnPress(item: item))
+                        .onAppear { PageCache.shared.note(item) }
                     }
                     .onDelete { library.deleteSaved(at: $0) }
                 }

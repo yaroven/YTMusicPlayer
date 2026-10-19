@@ -1,6 +1,14 @@
 package dev.ytmplayer.android.ui
 
+import androidx.compose.animation.core.RepeatMode as AnimRepeat
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -258,16 +266,19 @@ fun PageScreen(id: String) {
     val app = App.instance
     // The first answer shows at once; a long playlist's other songs (or an
     // artist's full top songs) arrive behind it.
-    val page = rememberLoad(id) { app.catalog.page(id, full = false) }
+    // Opened lately, or prefetched while the finger was down: at once.
+    val page = rememberLoad(id) { PageCache.load(id) }
     var showAll by rememberSaveable(id) { mutableStateOf(false) }
     LaunchedEffect(page.value?.id) {
         var p = page.value ?: return@LaunchedEffect
         p.allSongsId?.let { all ->
             val list = runCatching { app.catalog.page(all) }.getOrNull()
             if (list != null && list.tracks.size > p.tracks.size) {
-                p = p.copy(tracks = list.tracks, allSongsId = null)
-                page.update(p)
+                p = p.copy(tracks = list.tracks)
             }
+            p = p.copy(allSongsId = null)
+            page.update(p)
+            PageCache.remember(id, p)
         }
         var parts = 0
         while (parts++ < 50) {
@@ -275,11 +286,13 @@ fun PageScreen(id: String) {
             val (more, next) = runCatching { app.catalog.moreTracks(token) }.getOrNull() ?: break
             p = p.copy(tracks = p.tracks + more, continuation = next)
             page.update(p)
+            PageCache.remember(id, p)
         }
     }
     Column(Modifier.fillMaxSize()) {
         val loaded = page.value
-        TopBar(loaded?.title ?: "", back = true) {
+        val preview = PageCache.preview(id)
+        TopBar(loaded?.title?.ifEmpty { null } ?: preview?.title ?: "", back = true) {
             if (loaded != null) {
                 val saved = app.library.isSaved(loaded.id)
                 IconButton(onClick = { app.library.toggleSaved(loaded) }) {
@@ -287,15 +300,75 @@ fun PageScreen(id: String) {
                 }
             }
         }
-        Loaded(page) { p -> PageContent(p, showAll) { showAll = true } }
+        when {
+            loaded != null -> PageContent(loaded, preview?.title.orEmpty(), showAll) { showAll = true }
+            // The card's title and art at once, the songs when they come.
+            preview != null -> PagePreview(preview, page)
+            else -> Loaded(page) {}
+        }
     }
 }
 
 @Composable
-private fun PageContent(page: Page, showAll: Boolean, onShowAll: () -> Unit) {
-    val shown = if (page.kind == ItemKind.Artist && !showAll) page.tracks.take(TOP_SONGS) else page.tracks
+private fun PagePreview(item: dev.ytmplayer.core.Item, page: Load<Page>) {
     LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
+            Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Artwork(item.thumbnail?.let { Art.Url(it) } ?: Art.None, 220.dp, round = item.kind == ItemKind.Artist)
+                Spacer(Modifier.height(12.dp))
+                Text(item.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                Text(
+                    item.subtitle, style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(12.dp))
+                PlayButtons(emptyList())
+            }
+        }
+        val error = page.error
+        if (error != null && !page.loading) {
+            item { ErrorState(error, Modifier.height(320.dp), page::retry) }
+        } else {
+            items(8) { SkeletonRow() }
+        }
+    }
+}
+
+/** A grey placeholder row while songs load. */
+@Composable
+private fun SkeletonRow() {
+    val pulse = rememberInfiniteTransition(label = "skeleton")
+    val alpha by pulse.animateFloat(
+        initialValue = 0.06f,
+        targetValue = 0.14f,
+        animationSpec = infiniteRepeatable(tween(800), AnimRepeat.Reverse),
+        label = "alpha",
+    )
+    val shade = Color.White.copy(alpha = alpha)
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(48.dp).background(shade, RoundedCornerShape(5.dp)))
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Box(Modifier.width(180.dp).height(12.dp).background(shade, RoundedCornerShape(6.dp)))
+            Spacer(Modifier.height(6.dp))
+            Box(Modifier.width(110.dp).height(10.dp).background(shade, RoundedCornerShape(5.dp)))
+        }
+    }
+}
+
+@Composable
+private fun PageContent(page: Page, cardTitle: String, showAll: Boolean, onShowAll: () -> Unit) {
+    val shown = if (page.kind == ItemKind.Artist && !showAll) page.tracks.take(TOP_SONGS) else page.tracks
+    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+        // Explore categories ("Chill") are only shelves: no art, no buttons.
+        if (page.tracks.isEmpty() && page.thumbnail == null) {
+            item {
+                Text(
+                    page.title.ifEmpty { cardTitle },
+                    Modifier.padding(16.dp), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                )
+            }
+        } else item {
             Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Artwork(page.thumbnail?.let { Art.Url(it) } ?: Art.None, 220.dp, round = page.kind == ItemKind.Artist)
                 Spacer(Modifier.height(12.dp))

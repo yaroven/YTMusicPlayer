@@ -48,6 +48,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -332,8 +333,10 @@ fun NameDialog(title: String, initial: String, onDismiss: () -> Unit, onDone: (S
 /** An album, artist or playlist in a list. */
 @Composable
 fun ItemRow(item: Item) {
+    LaunchedEffect(item.browseId) { PageCache.note(item) }
     Row(
-        Modifier.fillMaxWidth().clickable { Router.open(Route.Page(item.browseId)) }.padding(horizontal = 16.dp, vertical = 6.dp),
+        Modifier.fillMaxWidth().prefetchOnPress(item).clickable { Router.open(Route.Page(item.browseId)) }
+            .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Artwork(item.art, 56.dp, round = item.kind == ItemKind.Artist)
@@ -378,9 +381,11 @@ fun Card(item: Item, songs: List<Track>) {
     if (item.track == null && item.thumbnail == null && item.subtitle.isEmpty()) return Chip(item)
     var menu by remember { mutableStateOf(false) }
     val track = item.track
+    LaunchedEffect(item.browseId) { PageCache.note(item) }
     Column(
         Modifier
             .width(150.dp)
+            .prefetchOnPress(item)
             .combinedClickable(
                 onClick = {
                     if (track != null) {

@@ -5,12 +5,14 @@
 
 use std::{collections::HashSet, sync::Arc};
 
+use super::PAGE_CACHE;
+
 use anyhow::Result;
 
 use super::{Background, Changes, Session};
 use crate::{
     api::models::Track,
-    catalog::{Item, SearchKind},
+    catalog::{Item, Page, SearchKind},
     lyrics, net, tr, trf,
 };
 
@@ -91,7 +93,11 @@ impl Session {
                 match result {
                     Ok(page) => {
                         self.status = None;
-                        self.page = Some(Arc::new(page));
+                        let page = Arc::new(page);
+                        if let Some(id) = self.page_request.clone() {
+                            self.remember_page(id, page.clone());
+                        }
+                        self.page = Some(page);
                         changes.page = true;
                     }
                     Err(err) => {
@@ -108,6 +114,21 @@ impl Session {
                 }
             }
             Background::PageLoaded { .. } => {}
+            Background::Prefetched { id, result } => {
+                self.prefetching.remove(&id);
+                let wanted = self
+                    .awaiting_prefetch
+                    .take_if(|(want, _)| *want == id)
+                    .map(|(_, generation)| generation);
+                match (result, wanted) {
+                    // Opened while it was loading: this is that page.
+                    (result, Some(generation)) => {
+                        self.discover_event(Background::PageLoaded { generation, result }, changes)
+                    }
+                    (Ok(page), None) => self.remember_page(id, Arc::new(page)),
+                    (Err(err), None) => tracing::debug!(%err, "prefetch"),
+                }
+            }
             Background::Home(result) => match result {
                 Ok(shelves) => {
                     self.home = Some(shelves.into());
@@ -214,12 +235,26 @@ impl Session {
         });
     }
 
-    /// Opens an album, artist or playlist page.
+    /// Opens an album, artist or playlist page: at once when it was opened
+    /// (or prefetched) lately, else from YouTube Music.
     pub fn open_page(&mut self, browse_id: &str) {
         self.page_request = Some(browse_id.to_owned());
         self.page_generation += 1;
         self.page_loading = true;
+        self.awaiting_prefetch = None;
+        let generation = self.page_generation;
+        if let Some(page) = self.cached_page(browse_id) {
+            let _ = self.tx.send(Background::PageLoaded {
+                generation,
+                result: Ok((*page).clone()),
+            });
+            return;
+        }
         self.set_info(tr!(self.lang, "Loading…", "Завантажую…"));
+        if self.prefetching.contains(browse_id) {
+            self.awaiting_prefetch = Some((browse_id.to_owned(), generation));
+            return;
+        }
         let (catalog, tx, generation, id) = (
             self.deps.catalog.clone(),
             self.tx.clone(),
@@ -230,6 +265,40 @@ impl Session {
             let result = catalog.page(&id).await;
             let _ = tx.send(Background::PageLoaded { generation, result });
         });
+    }
+
+    /// A card was pressed: start loading its page before the click ends, so
+    /// opening it shows it sooner (or at once).
+    pub fn prefetch_page(&mut self, browse_id: &str) {
+        if self.cached_page(browse_id).is_some() || !self.prefetching.insert(browse_id.to_owned()) {
+            return;
+        }
+        let (catalog, tx, id) = (
+            self.deps.catalog.clone(),
+            self.tx.clone(),
+            browse_id.to_owned(),
+        );
+        tokio::spawn(async move {
+            let result = catalog.page(&id).await;
+            let _ = tx.send(Background::Prefetched { id, result });
+        });
+    }
+
+    pub(super) fn cached_page(&self, browse_id: &str) -> Option<Arc<Page>> {
+        self.page_cache
+            .iter()
+            .find(|(id, _)| id == browse_id)
+            .map(|(_, page)| page.clone())
+    }
+
+    /// Keeps the last [`PAGE_CACHE`] pages (a hundred songs and a few
+    /// shelves each: tens of KB).
+    pub(super) fn remember_page(&mut self, browse_id: String, page: Arc<Page>) {
+        self.page_cache.retain(|(id, _)| *id != browse_id);
+        self.page_cache.push_back((browse_id, page));
+        while self.page_cache.len() > PAGE_CACHE {
+            self.page_cache.pop_front();
+        }
     }
 
     /// Opens the page of `track`'s artist: the one YouTube Music links

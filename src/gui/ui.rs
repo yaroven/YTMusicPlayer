@@ -599,11 +599,15 @@ slint::slint! {
     component CardItem inherits Rectangle {
         in property <CardRow> card;
         callback clicked();
+        callback pressed();
         height: 72px;
         border-radius: 4px;
         background: touch.has-hover ? Yt.hover : transparent;
         animate background { duration: 140ms; easing: ease-out; }
-        touch := TouchArea { clicked => { root.clicked(); } }
+        touch := TouchArea {
+            clicked => { root.clicked(); }
+            pointer-event(e) => { if e.kind == PointerEventKind.down { root.pressed(); } }
+        }
         HorizontalLayout {
             padding-left: 8px;
             padding-right: 12px;
@@ -649,9 +653,14 @@ slint::slint! {
         in property <CardRow> card;
         in property <length> size: 150px;
         callback clicked();
+        // Mouse down: its page can start loading before the click ends.
+        callback pressed();
         width: root.size;
         height: root.size + 52px;
-        touch := TouchArea { clicked => { root.clicked(); } }
+        touch := TouchArea {
+            clicked => { root.clicked(); }
+            pointer-event(e) => { if e.kind == PointerEventKind.down { root.pressed(); } }
+        }
         Rectangle {
             y: 0;
             width: root.size;
@@ -697,6 +706,7 @@ slint::slint! {
         in property <ShelfRow> shelf;
         in property <length> card-size: 150px;
         callback open(int);
+        callback press(int);
         spacing: 10px;
         Text { text: root.shelf.title; color: Yt.text; font-size: 20px; font-weight: 700; }
         Flickable {
@@ -708,6 +718,7 @@ slint::slint! {
                     card: c;
                     size: root.card-size;
                     clicked => { root.open(i); }
+                    pressed => { root.press(i); }
                 }
             }
         }
@@ -920,6 +931,7 @@ slint::slint! {
         callback save-queue();
         callback toggle-autoplay();
         callback related-open(int, int);
+        callback related-press(int, int);
         callback lyrics-seek(int);
         spacing: 8px;
         tabs := Rectangle {
@@ -1082,6 +1094,7 @@ slint::slint! {
                     shelf: s;
                     card-size: 120px;
                     open(ci) => { root.related-open(si, ci); }
+                    press(ci) => { root.related-press(si, ci); }
                 }
             }
         }
@@ -1414,6 +1427,10 @@ slint::slint! {
         // "download", "dislike", "remove", "add".
         callback row-action(int, string);
         callback open-card(int);
+        // A card pressed (not yet clicked): prefetch its page.
+        callback prefetch-card(int);
+        callback prefetch-shelf-card(int, int);
+        callback prefetch-related(int, int);
         callback open-shelf-card(int, int);
         callback open-related(int, int);
         callback nav-to(int);
@@ -1838,6 +1855,7 @@ slint::slint! {
                                 for c[i] in root.cards: CardItem {
                                     card: c;
                                     clicked => { root.open-card(i); keys.focus(); }
+                                    pressed => { root.prefetch-card(i); }
                                 }
                             }
                             // Page: a few tracks, then shelves of cards.
@@ -1874,6 +1892,7 @@ slint::slint! {
                                         shelf: s;
                                         card-size: root.tiny ? 120px : 150px;
                                         open(ci) => { root.open-shelf-card(si, ci); keys.focus(); }
+                                        press(ci) => { root.prefetch-shelf-card(si, ci); }
                                     }
                                 }
                             }
@@ -1958,6 +1977,7 @@ slint::slint! {
                                 save-queue => { root.name-dialog = 3; }
                                 toggle-autoplay => { root.toggle-autoplay(); }
                                 related-open(s, c) => { root.open-related(s, c); }
+                                related-press(s, c) => { root.prefetch-related(s, c); }
                                 lyrics-seek(ms) => { root.lyrics-seek(ms); }
                             }
                         }
@@ -2004,6 +2024,7 @@ slint::slint! {
                                 save-queue => { root.name-dialog = 3; }
                                 toggle-autoplay => { root.toggle-autoplay(); }
                                 related-open(s, c) => { root.open-related(s, c); }
+                                related-press(s, c) => { root.prefetch-related(s, c); }
                                 lyrics-seek(ms) => { root.lyrics-seek(ms); }
                             }
                         }

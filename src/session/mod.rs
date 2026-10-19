@@ -16,7 +16,7 @@ mod youtube;
 
 use crate::youtube_session::YouTubeSession;
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},
 };
@@ -66,6 +66,8 @@ const MEMORY_STEP: u64 = 2 << 20;
 /// The next track is opened this long before the current one ends (plus
 /// the crossfade), so it starts without a gap.
 const PRELOAD_LEAD: Duration = Duration::from_secs(20);
+/// Pages kept for opening again at once.
+const PAGE_CACHE: usize = 12;
 /// A track that stops this long before its end ran dry (or failed).
 const EARLY_END: Duration = Duration::from_secs(8);
 /// Offline, YouTube Music is asked this often whether it answers again.
@@ -208,6 +210,11 @@ pub struct SessionView {
 enum Background {
     /// YouTube Music answers again (after `offline`), or still doesn't.
     Online(bool),
+    /// A prefetched page (a card was pressed) came in.
+    Prefetched {
+        id: String,
+        result: Result<Page>,
+    },
     /// The track stopped well before its end: if the connection is gone,
     /// it continues at `at` when it's back.
     EndedEarly {
@@ -432,6 +439,14 @@ pub struct Session {
     retry_page: Option<String>,
     /// The page being opened (by browse id), to open again after a failure.
     page_request: Option<String>,
+    /// The last pages opened or prefetched, by browse id (newest last):
+    /// opening one again is instant.
+    page_cache: VecDeque<(String, Arc<Page>)>,
+    /// Prefetches in flight (a card pressed, not yet released).
+    prefetching: HashSet<String>,
+    /// `open_page` found its page being prefetched: that result is the
+    /// answer for this page generation.
+    awaiting_prefetch: Option<(String, u64)>,
     /// A newer release (from the last check).
     pub update: Option<crate::update::Update>,
     checking_update: bool,
@@ -547,6 +562,9 @@ impl Session {
             retry_explore: false,
             retry_page: None,
             page_request: None,
+            page_cache: VecDeque::new(),
+            prefetching: HashSet::new(),
+            awaiting_prefetch: None,
             update: None,
             checking_update: false,
             updating: false,
@@ -806,6 +824,7 @@ impl Session {
             }
             Background::Searched { .. }
             | Background::PageLoaded { .. }
+            | Background::Prefetched { .. }
             | Background::Home(_)
             | Background::Explore(_)
             | Background::Suggestions { .. }

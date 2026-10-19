@@ -332,8 +332,9 @@ impl App {
                 self.session.start_radio(track);
             }
             None => {
-                let id = item.id.clone();
-                self.session.open_page(&id);
+                let item = item.clone();
+                self.library.show_preview(&item);
+                self.session.open_page(&item.id);
             }
         }
     }

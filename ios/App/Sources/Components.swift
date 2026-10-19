@@ -178,6 +178,8 @@ struct ItemRow: View {
                 }
             }
         }
+        .buttonStyle(PrefetchOnPress(item: item))
+        .onAppear { PageCache.shared.note(item) }
     }
 }
 
@@ -212,7 +214,8 @@ struct CardView: View {
                 .trackMenu(track)
         } else {
             NavigationLink(value: Route.page(item.browseId)) { content }
-                .buttonStyle(.plain)
+                .buttonStyle(PrefetchOnPress(item: item))
+                .onAppear { PageCache.shared.note(item) }
         }
     }
 }

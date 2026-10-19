@@ -199,16 +199,8 @@ impl Catalog {
     /// Album (`MPREb_…`), artist (`UC…`) or playlist (`VL…` / `PL…`) page.
     pub async fn page(&self, browse_id: &str) -> Result<Page> {
         // Explore chips carry their params after a `#` (see `nav_button`).
-        let (browse_id, params) = match browse_id.split_once('#') {
-            Some((id, params)) => (id, Some(params)),
-            None => (browse_id, None),
-        };
-        let id = match browse_id {
-            id if id.starts_with("PL") || id.starts_with("OLAK") || id.starts_with("RD") => {
-                format!("VL{id}")
-            }
-            id => id.to_owned(),
-        };
+        let params = browse_id.split_once('#').map(|(_, params)| params);
+        let id = page_id(browse_id);
         let mut body = json!({ "browseId": id });
         if let Some(params) = params {
             body["params"] = json!(params);
@@ -1082,6 +1074,17 @@ fn parse_loudness(data: &Value) -> Option<f32> {
         Some(absolute - target)
     };
     per_format.or_else(track).map(|db| db as f32)
+}
+
+/// The id the page for `browse_id` gets ([`Page::id`]): playlist ids with
+/// their `VL` prefix, an Explore chip's params dropped.
+pub fn page_id(browse_id: &str) -> String {
+    let id = browse_id.split_once('#').map_or(browse_id, |(id, _)| id);
+    if id.starts_with("PL") || id.starts_with("OLAK") || id.starts_with("RD") {
+        format!("VL{id}")
+    } else {
+        id.to_owned()
+    }
 }
 
 /// The next page of a track list. The list's own `continuationCommand`

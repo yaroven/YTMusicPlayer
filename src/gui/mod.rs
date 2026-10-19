@@ -114,6 +114,8 @@ enum Cmd {
     Sync,
     Search(String, SearchKind),
     OpenPage(String),
+    /// A card was pressed: load its page ahead of the click.
+    Prefetch(String),
     LoadHome,
     LoadExplore,
     /// What is being typed in the search box (for suggestions).
@@ -2041,41 +2043,83 @@ fn wire_callbacks(
         };
         send(cmd, tx);
     });
-    on!(on_open_card, [tx, view, ui], |i| {
-        let v = view.borrow();
-        let lib = v.library.borrow();
-        if let Some(cmd) = usize::try_from(i)
-            .ok()
-            .and_then(|i| lib.items().get(i))
-            .and_then(View::open_item)
-        {
-            send(cmd, tx);
+    // A card opens its page: the card's title and art show at once
+    // (`show_preview`), the songs when the page arrives.
+    let open = move |ui: &MainWindow,
+                     view: &RefCell<View>,
+                     tx: &UnboundedSender<Cmd>,
+                     item: Option<Item>| {
+        let Some(item) = item else { return };
+        let Some(cmd) = View::open_item(&item) else {
+            return;
+        };
+        if matches!(cmd, Cmd::OpenPage(_)) {
+            navigate(ui, view, &|lib, _| {
+                lib.show_preview(&item);
+                Ok(())
+            });
         }
-    });
-    on!(on_open_shelf_card, [tx, view, ui], |s, c| {
+        send(cmd, tx);
+    };
+    // Mouse down on a card: its page starts loading before the click ends.
+    let prefetch = move |tx: &UnboundedSender<Cmd>, item: Option<Item>| {
+        if let Some(item) = item.filter(|i| i.track.is_none() && i.kind != ItemKind::Song) {
+            send(Cmd::Prefetch(item.id.to_string()), tx);
+        }
+    };
+    let card = |view: &RefCell<View>, i: i32| {
         let v = view.borrow();
         let lib = v.library.borrow();
-        let item = usize::try_from(s)
+        usize::try_from(i)
+            .ok()
+            .and_then(|i| lib.items().get(i).cloned())
+    };
+    let shelf_card = |view: &RefCell<View>, s: i32, c: i32| {
+        let v = view.borrow();
+        let lib = v.library.borrow();
+        usize::try_from(s)
             .ok()
             .zip(usize::try_from(c).ok())
-            .and_then(|(s, c)| lib.shelves().get(s)?.items.get(c));
-        if let Some(cmd) = item.and_then(View::open_item) {
-            send(cmd, tx);
-        }
-    });
+            .and_then(|(s, c)| lib.shelves().get(s)?.items.get(c).cloned())
+    };
+    let related_card = |view: &RefCell<View>, s: i32, c: i32| {
+        let v = view.borrow();
+        usize::try_from(s)
+            .ok()
+            .zip(usize::try_from(c).ok())
+            .and_then(|(s, c)| v.related_data.get(s)?.items.get(c).cloned())
+    };
+    on!(on_open_card, [tx, view, ui], |i| open(
+        ui,
+        view,
+        tx,
+        card(view, i)
+    ));
+    on!(on_open_shelf_card, [tx, view, ui], |s, c| open(
+        ui,
+        view,
+        tx,
+        shelf_card(view, s, c)
+    ));
     on!(on_open_related, [tx, view, ui], |s, c| {
-        let v = view.borrow();
-        let item = usize::try_from(s)
-            .ok()
-            .zip(usize::try_from(c).ok())
-            .and_then(|(s, c)| v.related_data.get(s)?.items.get(c));
-        if let Some(cmd) = item.and_then(View::open_item) {
-            if matches!(cmd, Cmd::OpenPage(_)) {
-                ui.set_expanded(false);
-            }
-            send(cmd, tx);
+        let item = related_card(view, s, c);
+        if item.as_ref().is_some_and(|i| i.track.is_none()) {
+            ui.set_expanded(false);
         }
+        open(ui, view, tx, item);
     });
+    on!(on_prefetch_card, [tx, view, ui], |i| prefetch(
+        tx,
+        card(view, i)
+    ));
+    on!(on_prefetch_shelf_card, [tx, view, ui], |s, c| prefetch(
+        tx,
+        shelf_card(view, s, c)
+    ));
+    on!(on_prefetch_related, [tx, view, ui], |s, c| prefetch(
+        tx,
+        related_card(view, s, c)
+    ));
     on!(on_toggle_saved, [tx, view, ui], || {
         let item = view.borrow().library.borrow().page_item();
         if let Some((item, channel)) = item {
@@ -2499,6 +2543,7 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::Sync => session.start_sync(),
         Cmd::Search(query, kind) => session.search(&query, kind),
         Cmd::OpenPage(id) => session.open_page(&id),
+        Cmd::Prefetch(id) => session.prefetch_page(&id),
         Cmd::LoadHome => session.load_home(false),
         Cmd::LoadExplore => session.load_explore(false),
         Cmd::Suggest(query) => session.suggest(&query),
