@@ -9,6 +9,7 @@
 #   install.sh / install.ps1 downloads: ytm-<target>.tar.gz / .zip
 #   uninstall.sh / uninstall.ps1
 #   iPhone         ytm-player-<v>.ipa + sidestore.json (SideStore source)
+#   Android        ytm-player-<v>.apk
 #
 #   git tag v0.3.0 && git push origin v0.3.0
 #
@@ -191,8 +192,12 @@ jobs:
   ios:
     uses: ./.github/workflows/ios.yml
 
+  android:
+    uses: ./.github/workflows/android.yml
+    secrets: inherit
+
   release:
-    needs: [linux, arch, verify-linux, windows, macos, ios]
+    needs: [linux, arch, verify-linux, windows, macos, ios, android]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:

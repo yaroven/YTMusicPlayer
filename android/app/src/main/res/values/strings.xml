@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">YTM Player</string>
+    <string name="home">Home</string>
+    <string name="search">Search</string>
+    <string name="library">Library</string>
+    <string name="back">Back</string>
+    <string name="close">Close</string>
+    <string name="more">More</string>
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+    <string name="next">Next</string>
+    <string name="previous">Previous</string>
+    <string name="shuffle">Shuffle</string>
+    <string name="repeat">Repeat</string>
+    <string name="retry">Retry</string>
+    <string name="cancel">Cancel</string>
+    <string name="ok">OK</string>
+    <string name="name">Name</string>
+    <string name="clear">Clear</string>
+    <string name="save">Save</string>
+    <string name="delete">Delete</string>
+    <string name="remove">Remove</string>
+    <string name="rename">Rename</string>
+
+    <!-- Songs -->
+    <string name="play_next">Play next</string>
+    <string name="add_to_queue">Add to queue</string>
+    <string name="start_radio">Start radio</string>
+    <string name="like">Like</string>
+    <string name="remove_from_liked">Remove from liked</string>
+    <string name="add_to_playlist">Add to playlist</string>
+    <string name="new_playlist">New playlist</string>
+    <string name="download">Download</string>
+    <string name="downloading">Downloading…</string>
+    <string name="downloaded">Downloaded</string>
+    <string name="remove_download">Remove download</string>
+    <string name="dislike">Dislike</string>
+    <string name="go_to_artist">Go to artist</string>
+    <string name="move_up">Move up</string>
+    <string name="move_down">Move down</string>
+    <string name="remove_from_history">Remove from history</string>
+    <string name="remove_from_playlist">Remove from playlist</string>
+    <string name="artist_not_found">Couldn\'t find the artist\'s page</string>
+    <plurals name="songs">
+        <item quantity="one">%d song</item>
+        <item quantity="other">%d songs</item>
+    </plurals>
+
+    <!-- Screens -->
+    <string name="listen_again">Listen again</string>
+    <string name="search_prompt">Songs, albums, artists</string>
+    <string name="songs">Songs</string>
+    <string name="albums">Albums</string>
+    <string name="artists">Artists</string>
+    <string name="playlists">Playlists</string>
+    <string name="no_results">Nothing found for “%1$s”</string>
+    <string name="top_songs">Top songs</string>
+    <string name="show_all_songs">Show all %1$d songs</string>
+    <string name="liked_music">Liked music</string>
+    <string name="liked_songs">Liked songs</string>
+    <string name="history">History</string>
+    <string name="downloads">Downloads</string>
+    <string name="playlist">Playlist</string>
+    <string name="playlist_n">Playlist %1$d</string>
+    <string name="saved_pages">Albums, artists, playlists</string>
+    <string name="remove_from_library">Remove from library</string>
+    <string name="delete_playlist">Delete playlist</string>
+    <string name="delete_playlist_confirm">Delete “%1$s”?</string>
+    <string name="no_songs">No songs yet</string>
+    <string name="no_songs_hint">Long-press a song to like it or add it to a playlist.</string>
+    <string name="no_downloads_hint">Download songs from their menu to play them without the internet.</string>
+    <string name="stop_downloads">Stop</string>
+    <string name="downloading_n">Downloading %1$d…</string>
+
+    <!-- Account and settings -->
+    <string name="google_account">Google account</string>
+    <string name="sync_library">Sync library</string>
+    <string name="sign_out">Sign out</string>
+    <string name="sign_out_confirm">Sign out of Google?</string>
+    <string name="sign_in_google">Sign in with Google</string>
+    <string name="syncing">Syncing your library…</string>
+    <string name="signed_in_as">Signed in as %1$s. Your liked music, playlists and followed artists are this account\'s, and changes here go back to YouTube.</string>
+    <string name="signed_in">Signed in. Your liked music, playlists and followed artists are this account\'s, and changes here go back to YouTube.</string>
+    <string name="sign_in_why">Needed for your library, age-restricted songs and your own YouTube Music. The password goes only to Google.</string>
+    <string name="sign_in_offline">Signing in needs the internet.</string>
+    <string name="age_test_title">Test age-restricted playback</string>
+    <string name="age_test">Age-restricted test</string>
+    <string name="age_test_footer">The default video is age-restricted. Send a screenshot of the result to the developer.</string>
+    <string name="video_id">Video id or link</string>
+    <string name="run_test">Run test</string>
+    <string name="testing">Testing…</string>
+    <string name="playback">Playback</string>
+    <string name="autoplay">Autoplay similar songs</string>
+    <string name="normalize">Normalize volume</string>
+    <string name="crossfade_off">Crossfade: off (gapless)</string>
+    <string name="crossfade_seconds">Crossfade: %1$d s</string>
+    <string name="language">Language</string>
+    <string name="language_system">System</string>
+    <string name="about">About</string>
+    <string name="version">Version</string>
+    <string name="source_code">Source code</string>
+
+    <!-- Player -->
+    <string name="nothing_playing">Nothing playing</string>
+    <string name="video">Video</string>
+    <string name="song">Song</string>
+    <string name="lyrics">Lyrics</string>
+    <string name="related">Related</string>
+    <string name="up_next">Up next</string>
+    <string name="sleep_timer">Sleep timer</string>
+    <string name="minutes">%1$d min</string>
+    <string name="end_of_song">End of song</string>
+    <string name="turn_off">Turn off</string>
+    <string name="no_lyrics">No lyrics</string>
+    <string name="queue_empty">Queue is empty</string>
+    <string name="similar_will_follow">Similar songs will follow.</string>
+    <string name="nothing_related">Nothing related</string>
+    <string name="track_error">%1$s: %2$s</string>
+    <string name="player_waiting_offline">No internet connection. Playback continues when it\'s back.</string>
+    <string name="player_slow">Slow connection, buffering…</string>
+    <string name="video_offline">The video needs the internet. The song itself plays if it\'s downloaded.</string>
+
+    <!-- Connection and errors -->
+    <string name="offline_banner">No internet connection · downloaded songs still play</string>
+    <string name="back_online">Back online</string>
+    <string name="offline_title">You\'re offline</string>
+    <string name="offline_detail">Connect to the internet to see this. Downloaded songs still play.</string>
+    <string name="offline_downloads_hint">You\'re offline. Your downloaded songs still play.</string>
+    <string name="offline_not_downloaded">No internet: only downloaded songs play offline</string>
+    <string name="open_downloads">Downloads</string>
+    <string name="slow_title">Slow connection</string>
+    <string name="slow_detail">YouTube Music took too long to answer.</string>
+    <string name="server_title">YouTube Music isn\'t answering</string>
+    <string name="server_detail">Its servers have a problem right now. Try again in a minute.</string>
+    <string name="sign_in_title">Sign in needed</string>
+    <string name="error_title">Something went wrong</string>
+    <string name="waiting_for_connection">Waiting for the internet connection…</string>
+    <string name="slow_loading">Slow connection: still loading…</string>
+    <string name="error_offline">No internet connection</string>
+    <string name="error_slow">The connection is too slow</string>
+    <string name="error_server">YouTube Music isn\'t answering</string>
+    <string name="error_sign_in">Sign in with Google to play this</string>
+
+    <!-- Library messages -->
+    <string name="sync_failed">Sync failed: %1$s</string>
+    <string name="write_failed">%1$s failed: %2$s</string>
+    <string name="liking">Liking %1$s</string>
+    <string name="unliking">Unliking %1$s</string>
+    <string name="disliking">Disliking %1$s</string>
+    <string name="removing">Removing %1$s</string>
+    <string name="creating">Creating %1$s</string>
+    <string name="deleting">Deleting %1$s</string>
+    <string name="renaming">Renaming %1$s</string>
+    <string name="adding">Adding %1$s</string>
+    <string name="following">Following %1$s</string>
+    <string name="unfollowing">Unfollowing %1$s</string>
+    <string name="moving_song">Moving the song</string>
+    <string name="download_failed">Download failed: %1$s</string>
+    <string name="download_age_restricted">Age-restricted songs can\'t be saved for offline play</string>
+</resources>
