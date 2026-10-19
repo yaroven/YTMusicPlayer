@@ -489,10 +489,13 @@ private struct Dots: View {
 
 private struct QueuePane: View {
     @Environment(Player.self) private var player
+    @Environment(Library.self) private var library
+    @State private var naming = false
+    @State private var name = ""
 
     var body: some View {
         List {
-            Section("Up next") {
+            Section {
                 ForEach(Array(player.upNext.enumerated()), id: \.offset) { i, track in
                     Button { player.jump(to: player.index + 1 + i) } label: {
                         HStack(spacing: 12) {
@@ -512,8 +515,24 @@ private struct QueuePane: View {
                 }
                 .onDelete { player.removeUpcoming($0) }
                 .onMove { player.moveUpcoming($0, $1) }
+            } header: {
+                HStack {
+                    Text("Up next")
+                    Spacer()
+                    // The whole queue (what played, the song, what's next) as a playlist.
+                    Button("Save as playlist") {
+                        name = String(localized: "Queue \(Date().formatted(date: .abbreviated, time: .omitted))")
+                        naming = true
+                    }
+                    .textCase(nil)
+                }
             }
             .listRowBackground(Color.clear)
+        }
+        .alert("Save as playlist", isPresented: $naming) {
+            TextField("Name", text: $name)
+            Button("Save") { library.createPlaylist(name, tracks: player.queue) }
+            Button("Cancel", role: .cancel) {}
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)

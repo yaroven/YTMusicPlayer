@@ -36,7 +36,7 @@ use crate::{
         player::{PlayState, Playback, PlayerEvent, PlayerHandle, PlayerStatus},
         queue::{Queue, Repeat},
     },
-    catalog::{Catalog, Item, Page, SearchKind, Shelf},
+    catalog::{Catalog, HomeChip, HomeFeed, Item, Page, SearchKind, Shelf},
     config::settings::Settings,
     i18n::Lang,
     lyrics::Lyrics,
@@ -317,7 +317,12 @@ enum Background {
         generation: u64,
         result: Result<Page>,
     },
-    Home(Result<Vec<Shelf>>),
+    Home(Result<HomeFeed>),
+    /// More of Home's shelves, for the feed asked with `chip`.
+    MoreHome {
+        chip: Option<String>,
+        result: Result<(Vec<Shelf>, Option<String>)>,
+    },
     Explore(Result<Vec<Shelf>>),
     Suggestions {
         query: String,
@@ -368,6 +373,12 @@ pub struct Session {
     page_generation: u64,
     /// The home feed (YouTube Music's shelves).
     pub home: Option<Arc<[Shelf]>>,
+    /// Home's mood chips, and the one chosen (its params), if any.
+    pub home_chips: Arc<[HomeChip]>,
+    pub home_chip: Option<String>,
+    /// Where Home's next shelves are (token, visitor id); none at the end.
+    home_next: Option<(String, Option<String>)>,
+    home_loading_more: bool,
     /// Explore shelves (charts, new releases, moods), once asked for.
     pub explore: Option<Arc<[Shelf]>>,
     /// What YouTube Music suggests for the query being typed.
@@ -518,6 +529,10 @@ impl Session {
             page_loading: false,
             page_generation: 0,
             home: None,
+            home_chips: Arc::from([]),
+            home_chip: None,
+            home_next: None,
+            home_loading_more: false,
             explore: None,
             suggestions: Arc::from([]),
             suggesting: String::new(),
@@ -826,6 +841,7 @@ impl Session {
             | Background::PageLoaded { .. }
             | Background::Prefetched { .. }
             | Background::Home(_)
+            | Background::MoreHome { .. }
             | Background::Explore(_)
             | Background::Suggestions { .. }
             | Background::Related { .. }

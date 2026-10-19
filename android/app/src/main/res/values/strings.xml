@@ -165,4 +165,28 @@
     <string name="share">Share</string>
     <string name="signed_in_short">Signed in</string>
     <string name="not_signed_in">Not signed in</string>
+
+    <!-- Self-update -->
+    <string name="update_available">Version %1$s is available</string>
+    <string name="update">Update</string>
+    <string name="later">Later</string>
+    <string name="update_to">Update to %1$s</string>
+    <string name="check_updates">Check for updates</string>
+    <string name="up_to_date">Up to date</string>
+    <string name="update_failed">Update failed: %1$s</string>
+    <string name="update_bad_checksum">the download doesn\'t match its checksum</string>
+
+    <!-- Parity with the desktop player -->
+    <string name="download_all">Download all</string>
+    <string name="delete_all">Delete all</string>
+    <string name="delete_all_downloads_q">Delete all downloads?</string>
+    <string name="delete_all_downloads_note">The songs stay in your library; only the files on the phone go.</string>
+    <string name="downloading_of">Downloading %1$d of %2$d</string>
+    <string name="export_downloads">Also save downloads to Music</string>
+    <string name="sort_default">Default order</string>
+    <string name="sort_title">Title</string>
+    <string name="sort_artist">Artist</string>
+    <string name="sort_most_played">Most played</string>
+    <string name="save_queue">Save as playlist</string>
+    <string name="queue_playlist_name">Queue %1$s</string>
 </resources>

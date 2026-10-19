@@ -20,6 +20,11 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("normalize", true)
         set(value) = prefs.edit().putBoolean("normalize", value).apply()
 
+    /** Downloads also go to the phone's Music folder (Android 10+). */
+    var exportDownloads: Boolean
+        get() = prefs.getBoolean("exportDownloads", true)
+        set(value) = prefs.edit().putBoolean("exportDownloads", value).apply()
+
     /** "", "en" or "uk" (Android 12 and older; 13+ keeps it per app in the system). */
     var language: String
         get() = prefs.getString("language", "") ?: ""

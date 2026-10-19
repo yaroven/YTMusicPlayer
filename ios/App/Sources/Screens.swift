@@ -425,7 +425,7 @@ struct PageView: View {
                     .foregroundStyle(YT.secondary)
                     .multilineTextAlignment(.center)
             }
-            HStack(spacing: 28) {
+            HStack(spacing: 22) {
                 if let page {
                     CircleIcon(icon: library.isSaved(page.id) ? "bookmark.fill" : "bookmark") {
                         library.toggleSaved(page)
@@ -437,6 +437,7 @@ struct PageView: View {
                     .disabled(tracks.isEmpty)
                 CircleIcon(icon: "shuffle") { player.playFrom(tracks.shuffled(), at: 0) }
                     .disabled(tracks.isEmpty)
+                DownloadAllButton(tracks: tracks)
             }
             .padding(.top, 4)
         }
@@ -668,14 +669,78 @@ private struct IconArt: View {
     }
 }
 
+/// How a list of songs is ordered (as the desktop player sorts its lists).
+enum SongSort: String, CaseIterable, Identifiable {
+    case standard = "Default order", title = "Title", artist = "Artist", mostPlayed = "Most played"
+    var id: String { rawValue }
+
+    func apply(_ tracks: [Track], plays: [String: Int]) -> [Track] {
+        switch self {
+        case .standard: tracks
+        case .title: tracks.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        case .artist: tracks.sorted {
+            ($0.artist.lowercased(), $0.title.lowercased()) < ($1.artist.lowercased(), $1.title.lowercased())
+        }
+        case .mostPlayed: tracks.sorted { plays[$0.videoId, default: 0] > plays[$1.videoId, default: 0] }
+        }
+    }
+}
+
+/// Download every song of a list: ⬇, a ring while it runs (tap stops), ✓
+/// when all are on the phone.
+struct DownloadAllButton: View {
+    let tracks: [Track]
+    @Environment(Library.self) private var library
+
+    var body: some View {
+        let all = !tracks.isEmpty && tracks.allSatisfy { library.isDownloaded($0.videoId) }
+        let running = tracks.contains { library.downloading.contains($0.videoId) }
+        if all {
+            CircleIcon(icon: "arrow.down.circle.fill") {}
+        } else if running {
+            ZStack {
+                ProgressView().scaleEffect(1.6)
+                CircleIcon(icon: "stop.fill", size: 36) { library.cancelDownloads() }
+            }
+            .frame(width: 44, height: 44)
+        } else {
+            CircleIcon(icon: "arrow.down") { library.download(tracks) }
+                .disabled(tracks.isEmpty)
+                .accessibilityLabel("Download all")
+        }
+    }
+}
+
+/// "Downloading 3 of 12" with a bar, while downloads run.
+struct DownloadProgress: View {
+    @Environment(Library.self) private var library
+
+    var body: some View {
+        if !library.downloading.isEmpty, library.batchTotal > 0 {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Downloading \(min(library.batchDone + 1, library.batchTotal)) of \(library.batchTotal)")
+                    .font(.footnote)
+                    .foregroundStyle(YT.secondary)
+                ProgressView(value: Double(library.batchDone), total: Double(library.batchTotal))
+                    .tint(.white)
+            }
+        }
+    }
+}
+
 /// Liked songs, history, downloads or a playlist.
 struct TrackListView: View {
     let list: LocalList
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
+    @State private var sort = SongSort.standard
+    @State private var renaming = false
+    @State private var newName = ""
+    @State private var confirmDeleteAll = false
 
     var body: some View {
-        let tracks = library.tracks(list)
+        let original = library.tracks(list)
+        let tracks = sort.apply(original, plays: library.plays)
         List {
             VStack(alignment: .leading, spacing: 10) {
                 Text(library.title(list))
@@ -687,17 +752,34 @@ struct TrackListView: View {
                     HStack(spacing: 20) {
                         CircleIcon(icon: "play.fill", size: 56, filled: true) { player.playFrom(tracks, at: 0) }
                         CircleIcon(icon: "shuffle") { player.playFrom(tracks.shuffled(), at: 0) }
+                        if list != .downloads { DownloadAllButton(tracks: tracks) }
                     }
                     .padding(.top, 4)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(SongSort.allCases) { s in
+                                ChipButton(title: String(localized: String.LocalizationValue(s.rawValue)), selected: sort == s) {
+                                    sort = s
+                                }
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
                 }
+                if list == .downloads { DownloadProgress() }
             }
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
             ForEach(Array(tracks.enumerated()), id: \.offset) { i, track in
-                TrackRow(track: track, list: tracks, index: i)
+                TrackRow(track: track, list: tracks, index: i,
+                         plays: sort == .mostPlayed ? library.plays[track.videoId, default: 0] : nil)
             }
-            .onDelete { library.remove(at: $0, from: list) }
-            .onMove(perform: isPlaylist ? { library.move(from: $0, to: $1, in: list) } : nil)
+            .onDelete { offsets in
+                // Edits name the songs' places in the list as stored, not as sorted.
+                let stored = IndexSet(offsets.compactMap { original.firstIndex(of: tracks[$0]) })
+                library.remove(at: stored, from: list)
+            }
+            .onMove(perform: isPlaylist && sort == .standard ? { library.move(from: $0, to: $1, in: list) } : nil)
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
@@ -713,10 +795,38 @@ struct TrackListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .clearNavigationBar()
         .toolbar {
-            if isPlaylist { EditButton() }
+            if case let .playlist(id) = list {
+                Menu {
+                    Button("Rename", systemImage: "pencil") {
+                        newName = library.title(list)
+                        renaming = true
+                    }
+                    EditButton()
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .alert("Rename", isPresented: $renaming) {
+                    TextField("Name", text: $newName)
+                    Button("OK") { library.rename(id, to: newName) }
+                    Button("Cancel", role: .cancel) {}
+                }
+            }
             if list == .history, !tracks.isEmpty {
                 Button("Clear") { library.clearHistory() }
             }
+            if list == .downloads {
+                if !library.downloading.isEmpty {
+                    Button("Stop") { library.cancelDownloads() }
+                }
+                if !tracks.isEmpty {
+                    Button("Delete all") { confirmDeleteAll = true }
+                }
+            }
+        }
+        .confirmationDialog("Delete all downloads?", isPresented: $confirmDeleteAll, titleVisibility: .visible) {
+            Button("Delete all", role: .destructive) { library.removeAllDownloads() }
+        } message: {
+            Text("The songs stay in your library; only the files on the phone go.")
         }
     }
 
@@ -808,6 +918,24 @@ struct SettingsSheet: View {
                 #endif
                 Section {
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-")
+                    let updater = Updater.shared
+                    if let update = updater.available {
+                        Button("Update to \(update.version)", systemImage: "arrow.down.app") { updater.open() }
+                    } else {
+                        Button {
+                            Task { await updater.check() }
+                        } label: {
+                            HStack {
+                                Label("Check for updates", systemImage: "arrow.triangle.2.circlepath")
+                                Spacer()
+                                if updater.checking {
+                                    ProgressView()
+                                } else if updater.upToDate {
+                                    Text("Up to date").foregroundStyle(YT.secondary)
+                                }
+                            }
+                        }
+                    }
                     Link("Source code", destination: URL(string: "https://github.com/yaroven/YTMusicPlayer")!)
                 }
             }

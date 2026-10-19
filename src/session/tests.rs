@@ -123,6 +123,55 @@ async fn the_page_cache_is_bounded() {
     assert!(s.cached_page("PL0").is_none(), "oldest dropped");
 }
 
+fn shelf(title: &str) -> Shelf {
+    Shelf {
+        title: title.into(),
+        items: Vec::new(),
+    }
+}
+
+#[tokio::test]
+async fn home_grows_as_more_shelves_come_and_a_chip_replaces_it() {
+    let (mut s, _, _) = session(Resolves::Hang).await;
+    s.tx.send(Background::Home(Ok(crate::catalog::HomeFeed {
+        chips: vec![crate::catalog::HomeChip {
+            title: "Relax".into(),
+            params: "relax".into(),
+        }],
+        shelves: vec![shelf("Quick picks")],
+        continuation: None,
+        visitor: None,
+    })))
+    .unwrap();
+    assert!(s.next_event().await.home);
+    assert_eq!(s.home_chips.len(), 1);
+    s.tx.send(Background::MoreHome {
+        chip: None,
+        result: Ok((vec![shelf("New releases")], Some("next".into()))),
+    })
+    .unwrap();
+    assert!(s.next_event().await.home);
+    let titles: Vec<_> = s
+        .home
+        .as_deref()
+        .unwrap()
+        .iter()
+        .map(|s| s.title.clone())
+        .collect();
+    assert_eq!(titles, ["Quick picks", "New releases"]);
+    assert!(s.home_has_more());
+
+    // Another chip's Home is under way: the old feed's shelves are dropped.
+    s.home_chip = Some("relax".into());
+    s.tx.send(Background::MoreHome {
+        chip: None,
+        result: Ok((vec![shelf("Stale")], None)),
+    })
+    .unwrap();
+    assert!(!s.next_event().await.home);
+    assert_eq!(s.home.as_deref().unwrap().len(), 2);
+}
+
 #[tokio::test]
 async fn results_of_a_replaced_selection_are_ignored() {
     let (mut s, _, _) = session(Resolves::Fail).await;

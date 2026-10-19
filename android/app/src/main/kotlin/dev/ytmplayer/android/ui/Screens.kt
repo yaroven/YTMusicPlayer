@@ -437,7 +437,7 @@ private fun PageHeader(title: String, subtitle: String, thumbnail: String?, roun
             Text(subtitle, fontSize = 14.sp, color = YT.secondary, textAlign = TextAlign.Center)
         }
         Spacer(Modifier.height(16.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
             val saved = page != null && library.isSaved(page.id)
             CircleIcon(
                 if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, stringResource(R.string.save),
@@ -449,6 +449,7 @@ private fun PageHeader(title: String, subtitle: String, thumbnail: String?, roun
             CircleIcon(Icons.Default.Shuffle, stringResource(R.string.shuffle), enabled = tracks.isNotEmpty()) {
                 playFrom(tracks.shuffled(), 0)
             }
+            DownloadAllButton(tracks)
         }
     }
 }

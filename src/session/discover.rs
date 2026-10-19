@@ -12,7 +12,7 @@ use anyhow::Result;
 use super::{Background, Changes, Session};
 use crate::{
     api::models::Track,
-    catalog::{Item, Page, SearchKind},
+    catalog::{Item, Page, SearchKind, Shelf},
     lyrics, net, tr, trf,
 };
 
@@ -130,15 +130,40 @@ impl Session {
                 }
             }
             Background::Home(result) => match result {
-                Ok(shelves) => {
-                    self.home = Some(shelves.into());
+                Ok(feed) => {
+                    self.home = Some(feed.shelves.into());
+                    // A chip's Home has chips of its own; keep the main ones.
+                    if self.home_chip.is_none() || self.home_chips.is_empty() {
+                        self.home_chips = feed.chips.into();
+                    }
+                    self.home_next = feed.continuation.map(|t| (t, feed.visitor));
                     changes.home = true;
+                    // The first answer has only two shelves: fetch the next
+                    // ones straight away (the window asks for more on scroll).
+                    self.load_more_home();
                 }
                 Err(err) => {
                     self.retry_home = self.network_failed(&err);
                     self.set_error(net::failed(self.lang, "Home", "Головна", &err));
                 }
             },
+            Background::MoreHome { chip, result } => {
+                self.home_loading_more = false;
+                if chip != self.home_chip {
+                    return; // another chip's Home replaced it
+                }
+                match result {
+                    Ok((shelves, next)) => {
+                        let mut all: Vec<Shelf> = self.home.as_deref().unwrap_or_default().to_vec();
+                        all.extend(shelves);
+                        self.home = Some(all.into());
+                        self.home_next =
+                            next.map(|t| (t, self.home_next.take().and_then(|(_, v)| v)));
+                        changes.home = true;
+                    }
+                    Err(err) => tracing::debug!(%err, "more home"),
+                }
+            }
             Background::Suggestions { query, result } => {
                 // Only the newest query's suggestions are shown.
                 if query == self.suggesting {
@@ -344,9 +369,44 @@ impl Session {
         if self.home.is_some() && !refresh {
             return;
         }
-        let (catalog, tx) = (self.deps.catalog.clone(), self.tx.clone());
+        let (catalog, tx, chip) = (
+            self.deps.catalog.clone(),
+            self.tx.clone(),
+            self.home_chip.clone(),
+        );
+        self.home_next = None;
         tokio::spawn(async move {
-            let _ = tx.send(Background::Home(catalog.home().await));
+            let _ = tx.send(Background::Home(catalog.home_feed(chip.as_deref()).await));
+        });
+    }
+
+    /// Home for a mood chip (its params), or the whole Home again (`None`).
+    pub fn select_home_chip(&mut self, params: Option<String>) {
+        self.home_chip = params;
+        self.load_home(true);
+    }
+
+    /// Whether Home has more shelves to load.
+    pub fn home_has_more(&self) -> bool {
+        self.home_next.is_some()
+    }
+
+    /// Home's next shelves (as the list nears its end).
+    pub fn load_more_home(&mut self) {
+        let Some((token, visitor)) = self.home_next.clone() else {
+            return;
+        };
+        if std::mem::replace(&mut self.home_loading_more, true) {
+            return;
+        }
+        let (catalog, tx, chip) = (
+            self.deps.catalog.clone(),
+            self.tx.clone(),
+            self.home_chip.clone(),
+        );
+        tokio::spawn(async move {
+            let result = catalog.more_home(&token, visitor.as_deref()).await;
+            let _ = tx.send(Background::MoreHome { chip, result });
         });
     }
 

@@ -54,6 +54,13 @@ final class Library {
     private(set) var downloads: [Downloaded] = []
     /// Songs being downloaded now.
     private(set) var downloading: Set<String> = []
+    /// How far a batch got: done of total ("Downloading 3 of 12").
+    private(set) var batchDone = 0
+    private(set) var batchTotal = 0
+    /// How often each song was played (by video id); outlives the capped history.
+    private(set) var plays: [String: Int] = [:]
+    @ObservationIgnored private var queue: [Track] = []
+    @ObservationIgnored private var worker: Task<Void, Never>?
     /// A sync is running.
     private(set) var syncing = false
     /// Last failure of a sync or of a write back to YouTube.
@@ -69,6 +76,7 @@ final class Library {
         var playlists: [LocalPlaylist]?
         var saved: [SavedPage]?
         var downloads: [Downloaded]?
+        var plays: [String: Int]?
     }
 
     init(file: URL? = nil, catalog: Catalog = Services.catalog) {
@@ -80,6 +88,10 @@ final class Library {
             history = stored.history ?? []
             playlists = stored.playlists ?? []
             saved = stored.saved ?? []
+            plays = stored.plays ?? [:]
+            // Downloads used to live in Application Support, out of the
+            // Files app's sight: move them to Documents/Downloads.
+            Self.moveOldDownloads()
             // Keep only what is still on disk.
             downloads = (stored.downloads ?? []).filter {
                 FileManager.default.fileExists(atPath: Self.downloadsDirectory.appendingPathComponent($0.file).path)
@@ -95,7 +107,7 @@ final class Library {
 
     private func save() {
         let stored = Stored(liked: liked, history: history, playlists: playlists, saved: saved,
-                            downloads: downloads)
+                            downloads: downloads, plays: plays)
         guard let data = try? JSONEncoder().encode(stored) else { return }
         try? data.write(to: file, options: .atomic)
     }
@@ -208,6 +220,7 @@ final class Library {
     }
 
     func played(_ track: Track) {
+        plays[track.videoId, default: 0] += 1
         history.removeAll { $0.videoId == track.videoId }
         history.insert(track, at: 0)
         if history.count > Self.historySize { history.removeLast(history.count - Self.historySize) }
@@ -216,6 +229,8 @@ final class Library {
 
     func clearHistory() {
         history = []
+        // Like the desktop player: counts go with the history.
+        plays = [:]
         save()
     }
 
@@ -329,6 +344,44 @@ final class Library {
         return id
     }
 
+    /// A playlist of these songs (the queue saved as one): one request to
+    /// YouTube, then a sync for the entries' ids.
+    func createPlaylist(_ name: String, tracks: [Track]) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        let title = trimmed.isEmpty ? String(localized: "Playlist \(playlists.count + 1)") : trimmed
+        let playlist = LocalPlaylist(name: title, tracks: tracks, setVideoIds: tracks.map { _ in "" })
+        playlists.append(playlist)
+        save()
+        let id = playlist.id
+        write(String(localized: "Creating \(title)")) { [self] in
+            let remoteId = try await catalog.createPlaylist(title, videoIds: tracks.map(\.videoId))
+            guard let i = playlists.firstIndex(where: { $0.id == id }) else { return }
+            playlists[i].remoteId = remoteId
+            save()
+            await sync()
+        } undo: { [self] in
+            playlists.removeAll { $0.id == id }
+            save()
+        }
+    }
+
+    /// Renames a playlist here and, for the account's own, on YouTube too.
+    func rename(_ id: UUID, to name: String) {
+        let title = name.trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty, let i = playlists.firstIndex(where: { $0.id == id }) else { return }
+        let before = playlists[i]
+        playlists[i].name = title
+        save()
+        guard let remoteId = before.remoteId else { return }
+        write(String(localized: "Renaming \(before.name)")) { [catalog] in
+            try await catalog.renamePlaylist(remoteId, to: title)
+        } undo: { [self] in
+            guard let j = playlists.firstIndex(where: { $0.id == id }) else { return }
+            playlists[j].name = before.name
+            save()
+        }
+    }
+
     /// Deletes playlists here and, for the account's own, on YouTube too.
     func deletePlaylists(at offsets: IndexSet) {
         let removed = offsets.map { playlists[$0] }
@@ -370,10 +423,30 @@ final class Library {
 
     // MARK: Downloads
 
+    /// Documents/Downloads: the app's folder in the Files app ("On My
+    /// iPhone → YTM Player"), so the songs can be copied or shared.
     static var downloadsDirectory: URL {
-        let dir = directory.appendingPathComponent("downloads", isDirectory: true)
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dir = documents.appendingPathComponent("Downloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    private static func moveOldDownloads() {
+        let old = directory.appendingPathComponent("downloads", isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: old.path) else { return }
+        for name in files {
+            try? FileManager.default.moveItem(at: old.appendingPathComponent(name),
+                                              to: downloadsDirectory.appendingPathComponent(name))
+        }
+        try? FileManager.default.removeItem(at: old)
+    }
+
+    /// "ABBA - Dancing Queen [YkLLcIKhJ64].m4a": readable in Files, unique by id.
+    static func fileName(_ track: Track) -> String {
+        let bad = CharacterSet(charactersIn: "/\\:*?\"<>|")
+        let base = "\(track.artist) - \(track.title)".components(separatedBy: bad).joined(separator: "_")
+        return "\(base.prefix(100)) [\(track.videoId)].m4a"
     }
 
     func isDownloaded(_ videoId: String) -> Bool {
@@ -386,34 +459,92 @@ final class Library {
         return (Self.downloadsDirectory.appendingPathComponent(item.file), item)
     }
 
-    /// Saves the song's audio on the phone, in 1 MB ranges (what YouTube's
-    /// servers answer reliably).
+    /// Saves the song's audio on the phone (queued behind the others).
     func download(_ track: Track) {
-        guard !isDownloaded(track.videoId), downloading.insert(track.videoId).inserted else { return }
-        Task {
-            defer { downloading.remove(track.videoId) }
+        download([track])
+    }
+
+    /// Saves songs on the phone one after another (one stream at a time,
+    /// like the desktop player), in 1 MB ranges — what YouTube's servers
+    /// answer reliably.
+    func download(_ tracks: [Track]) {
+        var seen = Set<String>()
+        let fresh = tracks.filter {
+            seen.insert($0.videoId).inserted && !isDownloaded($0.videoId) && !downloading.contains($0.videoId)
+        }
+        guard !fresh.isEmpty else { return }
+        if worker == nil {
+            batchDone = 0
+            batchTotal = 0
+        }
+        queue += fresh
+        batchTotal += fresh.count
+        downloading.formUnion(fresh.map(\.videoId))
+        if worker == nil {
+            worker = Task { await work() }
+        }
+    }
+
+    private func work() async {
+        var failures = 0
+        while !queue.isEmpty, !Task.isCancelled {
+            let track = queue.removeFirst()
             do {
-                let stream = try await Services.resolver.stream(track.videoId)
-                guard !stream.hls else {
-                    throw DownloadError.notADownloadableFile
-                }
-                let file = "\(track.videoId).m4a"
-                let target = Self.downloadsDirectory.appendingPathComponent(file)
-                let bytes = try await Self.fetch(stream.url, length: stream.contentLength, to: target)
-                downloads.removeAll { $0.track.videoId == track.videoId }
-                downloads.insert(Downloaded(track: track, file: file, bytes: bytes,
-                                            duration: stream.duration, loudnessDb: stream.loudnessDb), at: 0)
-                save()
+                try await fetchSong(track)
+                failures = 0
+            } catch is CancellationError {
+                break
             } catch {
                 self.error = String(localized: "Download failed: \(error.friendly)")
+                // No connection: the rest would fail the same way.
+                failures += 1
+                if !Connectivity.shared.online || failures >= 3 {
+                    queue = []
+                    downloading = []
+                }
             }
+            downloading.remove(track.videoId)
+            batchDone += 1
         }
+        worker = nil
+    }
+
+    private func fetchSong(_ track: Track) async throws {
+        let stream = try await Services.resolver.stream(track.videoId)
+        guard !stream.hls else { throw DownloadError.notADownloadableFile }
+        let file = Self.fileName(track)
+        let target = Self.downloadsDirectory.appendingPathComponent(file)
+        let bytes = try await Self.fetch(stream.url, length: stream.contentLength, to: target)
+        downloads.removeAll { $0.track.videoId == track.videoId }
+        downloads.insert(Downloaded(track: track, file: file, bytes: bytes,
+                                    duration: stream.duration, loudnessDb: stream.loudnessDb), at: 0)
+        save()
+    }
+
+    /// Stops what is downloading and forgets what was waiting.
+    func cancelDownloads() {
+        queue = []
+        worker?.cancel()
+        worker = nil
+        downloading = []
+        batchDone = 0
+        batchTotal = 0
     }
 
     func removeDownload(_ track: Track) {
         guard let (url, _) = download(of: track.videoId) else { return }
         try? FileManager.default.removeItem(at: url)
         downloads.removeAll { $0.track.videoId == track.videoId }
+        save()
+    }
+
+    /// Deletes every downloaded song.
+    func removeAllDownloads() {
+        cancelDownloads()
+        for item in downloads {
+            try? FileManager.default.removeItem(at: Self.downloadsDirectory.appendingPathComponent(item.file))
+        }
+        downloads = []
         save()
     }
 

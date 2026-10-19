@@ -159,4 +159,26 @@
     <string name="share">Поділитися</string>
     <string name="signed_in_short">Вхід виконано</string>
     <string name="not_signed_in">Вхід не виконано</string>
+
+    <string name="update_available">Доступна версія %1$s</string>
+    <string name="update">Оновити</string>
+    <string name="later">Пізніше</string>
+    <string name="update_to">Оновити до %1$s</string>
+    <string name="check_updates">Перевірити оновлення</string>
+    <string name="up_to_date">Остання версія</string>
+    <string name="update_failed">Оновлення не вдалося: %1$s</string>
+    <string name="update_bad_checksum">завантажений файл не збігається з контрольною сумою</string>
+
+    <string name="download_all">Завантажити все</string>
+    <string name="delete_all">Видалити всі</string>
+    <string name="delete_all_downloads_q">Видалити всі завантаження?</string>
+    <string name="delete_all_downloads_note">Пісні лишаться в бібліотеці; зникнуть лише файли на телефоні.</string>
+    <string name="downloading_of">Завантажую %1$d з %2$d</string>
+    <string name="export_downloads">Також зберігати завантаження в «Музику»</string>
+    <string name="sort_default">Власний порядок</string>
+    <string name="sort_title">Назва</string>
+    <string name="sort_artist">Виконавець</string>
+    <string name="sort_most_played">Найчастіше</string>
+    <string name="save_queue">Зберегти як плейлист</string>
+    <string name="queue_playlist_name">Черга %1$s</string>
 </resources>

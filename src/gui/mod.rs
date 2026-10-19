@@ -40,7 +40,7 @@ use crate::{
     account,
     api::models::{LIKED_PLAYLIST_ID, Playlist, Track},
     audio::{player::PlayState, queue::Repeat},
-    catalog::{Item, ItemKind, Page, SearchKind, Shelf},
+    catalog::{HomeChip, Item, ItemKind, Page, SearchKind, Shelf},
     config::settings::Settings,
     fmt::fmt_time,
     i18n::Lang,
@@ -117,6 +117,10 @@ enum Cmd {
     /// A card was pressed: load its page ahead of the click.
     Prefetch(String),
     LoadHome,
+    /// Home for a mood chip (its params), or the whole Home again.
+    HomeChip(Option<String>),
+    /// Home's next shelves (the list neared its end).
+    MoreHome,
     LoadExplore,
     /// What is being typed in the search box (for suggestions).
     Suggest(String),
@@ -162,6 +166,9 @@ struct Snapshot {
     home: Option<Arc<[Shelf]>>,
     /// Explore shelves, when `changes.explore`.
     explore: Option<Arc<[Shelf]>>,
+    /// Home's mood chips and the chosen one, when `changes.home`.
+    home_chips: Option<(Arc<[HomeChip]>, Option<String>)>,
+    home_has_more: bool,
     /// Search suggestions, when `changes.suggestions`.
     suggestions: Option<Arc<[String]>>,
     /// The playing track's lyrics, when `changes.lyrics`.
@@ -185,6 +192,10 @@ impl Snapshot {
             page: session.page.clone().filter(|_| changes.page),
             home: session.home.clone().filter(|_| changes.home),
             explore: session.explore.clone().filter(|_| changes.explore),
+            home_chips: changes
+                .home
+                .then(|| (session.home_chips.clone(), session.home_chip.clone())),
+            home_has_more: session.home_has_more(),
             suggestions: changes.suggestions.then(|| session.suggestions.clone()),
             lyrics: session
                 .lyrics
@@ -805,6 +816,8 @@ struct View {
     lyrics: LyricsView,
     /// The home feed (last received).
     home: Option<Arc<[Shelf]>>,
+    /// Home's mood chips (last received).
+    home_chips: Arc<[HomeChip]>,
     /// Explore shelves (last received).
     explore: Option<Arc<[Shelf]>>,
     /// What YouTube Music suggests for the query being typed.
@@ -1214,6 +1227,21 @@ impl View {
         }
         if let Some(home) = &snap.home {
             self.home = Some(home.clone());
+        }
+        if let Some((chips, chosen)) = &snap.home_chips {
+            self.home_chips = chips.clone();
+            if let Some(ui) = ui {
+                let titles: Vec<SharedString> =
+                    chips.iter().map(|c| c.title.as_str().into()).collect();
+                ui.set_home_chips(ModelRc::new(VecModel::from(titles)));
+                let at = chosen
+                    .as_ref()
+                    .and_then(|p| chips.iter().position(|c| &c.params == p));
+                ui.set_home_chip(at.map_or(-1, |i| i as i32));
+            }
+        }
+        if let Some(ui) = ui {
+            ui.set_home_has_more(snap.home_has_more);
         }
         if let Some(explore) = &snap.explore {
             self.explore = Some(explore.clone());
@@ -1628,6 +1656,7 @@ fn new_view(
         related_data: Arc::from([]),
         lyrics: LyricsView::new(),
         home: None,
+        home_chips: Arc::from([]),
         explore: None,
         suggestion_rows: Rc::new(VecModel::default()),
         lang: Lang::default(),
@@ -2136,6 +2165,15 @@ fn wire_callbacks(
         tx
     ));
     on!(on_retry, [tx, view, ui], || send(Cmd::Retry, tx));
+    on!(on_select_home_chip, [tx, view, ui], |i| {
+        let v = view.borrow();
+        let params = usize::try_from(i)
+            .ok()
+            .and_then(|i| v.home_chips.get(i))
+            .map(|c| c.params.clone());
+        send(Cmd::HomeChip(params), tx);
+    });
+    on!(on_more_home, [tx, view, ui], || send(Cmd::MoreHome, tx));
     on!(on_cycle_sort, [tx, view, ui], || {
         let mut v = view.borrow_mut();
         {
@@ -2545,6 +2583,8 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::OpenPage(id) => session.open_page(&id),
         Cmd::Prefetch(id) => session.prefetch_page(&id),
         Cmd::LoadHome => session.load_home(false),
+        Cmd::HomeChip(params) => session.select_home_chip(params),
+        Cmd::MoreHome => session.load_more_home(),
         Cmd::LoadExplore => session.load_explore(false),
         Cmd::Suggest(query) => session.suggest(&query),
         Cmd::QueueRemove(n) => session.remove_from_queue(n),

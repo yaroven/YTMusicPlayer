@@ -5,7 +5,8 @@ plugins {
 }
 
 // Same version as the desktop player and the iPhone app.
-val appVersion: String = rootDir.resolve("../Cargo.toml").readLines()
+// (`-PappVersion=0.9.0` builds an older-looking app, to try self-update.)
+val appVersion: String = (findProperty("appVersion") as String?) ?: rootDir.resolve("../Cargo.toml").readLines()
     .first { it.startsWith("version = ") }.substringAfter('"').substringBefore('"')
 val buildNumber: Int = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
 

@@ -19,8 +19,19 @@ Play: you install the APK from the releases page.
   saved albums and followed artists; likes, dislikes, playlist changes
   (moving songs too) and follows go back to YouTube. History stays on the
   phone.
-- **Downloads** for offline: a song's ⋮ menu → **Download**; **Library →
-  Downloads** lists them.
+- **Downloads** for offline: a song's ⋮ menu → **Download**, or a whole
+  album / playlist / list with its ⬇ button (one after another, "Downloading
+  3 of 12", tap to stop). **Library → Downloads** lists them, **Delete all**
+  clears them. On Android 10+ each download is also copied to **Music/YTM
+  Player** ("Artist - Title.m4a"), where other players and file managers
+  see it (Settings → "Also save downloads to Music").
+- Lists sort by your own order, title, artist or **most played** (play
+  counts are kept on the phone); **Up next → Save as playlist** keeps the
+  queue.
+- **Updates itself:** a bar says when a new version is out; **Update**
+  downloads it, checks it against the release's SHA256SUMS and opens
+  Android's installer (the first time Android asks to allow installs from
+  YTM Player). Settings → **Check for updates** checks now.
 - English or Ukrainian: **Library → Language** (on Android 13+ also
   **Settings → Apps → YTM Player → Language**).
 - No yt-dlp and no server: the app asks YouTube for the audio link itself.
@@ -36,8 +47,9 @@ Play: you install the APK from the releases page.
    details → Install anyway**. The app isn't signed by a paid store
    account; the source is all in this repository.
 
-Android 8.0 or newer. To update, install the newer APK the same way — your
-library, downloads and sign-in stay.
+Android 8.0 or newer. Later versions arrive through the app itself
+(above); installing a newer APK by hand works too — your library,
+downloads and sign-in stay.
 
 ## Sign in
 

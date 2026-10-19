@@ -609,6 +609,28 @@ Domain terms are defined in `CONTEXT.md`.
   (👍|👎, Save, Download, Share), white scrubber, UP NEXT / LYRICS /
   RELATED. Library: chips + one list; settings moved behind the avatar.
 
+- **Phone parity, 2026-10-19** (user's request): self-update — Android:
+  GitHub latest release once a day, APK checked against SHA256SUMS,
+  `PackageInstaller` session (`InstallResult` relays the user-action
+  intent; Android asks once to allow installs from the app); verified on
+  the emulator 0.9.5 → 0.9.6 (`-PappVersion=0.9.5` builds an older-looking
+  APK, signed with the project key from `~/.ytm-player-signing`). iPhone
+  can't install itself: the bar opens `sidestore://install?url=<ipa>`
+  (AltStore's link scheme; not tried on a phone), else the release page.
+  Downloads on both phones are a queue (one stream at a time, like the
+  desktop), whole lists at once, stop, delete all; Android copies each to
+  `Music/YTM Player` via MediaStore (10+, no permission, toggle in
+  Settings, the copy goes with the download); iPhone keeps them in
+  `Documents/Downloads` with `UIFileSharingEnabled` +
+  `LSSupportsOpeningDocumentsInPlace` (the Files app shows them; old
+  Application Support files moved on first start). Play counts (cleared
+  with the history, as on the desktop), sorting, save queue as playlist
+  (`playlist/create` with `videoIds`, then a sync for the set ids), iPhone
+  rename. Desktop got Home's mood chips and paging (`home_feed` /
+  `more_home`, the next batch fetched right after the first answer and on
+  scroll). Not ported: Last.fm and Chromecast on phones, a persistent
+  shuffle mode (phones shuffle the upcoming songs instead).
+
 ## Open TODOs
 
 - Android: try on a real phone (Google sign-in in the WebView — Google may

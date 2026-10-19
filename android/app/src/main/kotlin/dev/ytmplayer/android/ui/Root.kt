@@ -50,6 +50,12 @@ fun Root() {
             Notice.clear()
         }
     }
+    LaunchedEffect(app.updater.error) {
+        app.updater.error?.let {
+            snackbar.showSnackbar(it)
+            app.updater.error = null
+        }
+    }
     LaunchedEffect(library.error) {
         library.error?.let {
             snackbar.showSnackbar(it)
@@ -67,6 +73,7 @@ fun Root() {
             snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
                 Column {
+                    UpdateBanner()
                     MiniPlayer()
                     // YouTube Music's tab bar: black, outlined icons, filled and white when selected.
                     NavigationBar(containerColor = YT.background, tonalElevation = 0.dp) {

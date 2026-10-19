@@ -93,6 +93,8 @@ fn snapshot(view: SessionView, changes: Changes) -> Snapshot {
         page: None,
         home: None,
         explore: None,
+        home_chips: None,
+        home_has_more: false,
         suggestions: None,
         lyrics: None,
         related: None,
@@ -657,6 +659,37 @@ fn screens_png() {
     save("explore");
     assert_eq!(ui.get_tracks_title(), "Explore");
     assert_eq!(ui.get_shelves().row_count(), 2);
+
+    // --- 1b. Home: YouTube Music's mood chips over its shelves --------------
+    ui.invoke_nav_to(1);
+    let mut snap = snapshot(
+        session_view(),
+        Changes {
+            home: true,
+            ..Changes::default()
+        },
+    );
+    snap.home = Some(Arc::from([Shelf {
+        title: "New albums & singles".into(),
+        items: vec![
+            album("Tidal Glass", "Marina Vel"),
+            album("Quiet Machines", "Orhan Ray"),
+        ],
+    }]));
+    let mood = |title: &str| crate::catalog::HomeChip {
+        title: title.into(),
+        params: title.to_lowercase(),
+    };
+    snap.home_chips = Some((
+        Arc::from([mood("Relax"), mood("Workout"), mood("Energize")]),
+        Some("workout".into()),
+    ));
+    snap.home_has_more = true;
+    view.borrow_mut().absorb(snap, Some(&ui));
+    settle(30);
+    save("home");
+    assert_eq!(ui.get_home_chips().row_count(), 3);
+    assert_eq!(ui.get_home_chip(), 1, "the chosen chip is lit");
 
     // --- 2. Search: the "E" badge and the suggestions dropdown --------------
     let mut snap = snapshot(

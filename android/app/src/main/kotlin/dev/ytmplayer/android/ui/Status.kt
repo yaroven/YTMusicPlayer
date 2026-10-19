@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.HourglassBottom
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -256,3 +257,37 @@ fun ConnectionBanner() {
 }
 
 private const val SLOW_HINT_MS = 6_000L
+
+/** A newer release is out: what it is, and the button that installs it. */
+@Composable
+fun UpdateBanner() {
+    val updater = App.instance.updater
+    val update = updater.available ?: return
+    var dismissed by remember(update.version) { mutableStateOf(false) }
+    if (dismissed) return
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF2E2E2E))
+            .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Default.SystemUpdate, null, Modifier.size(20.dp), tint = Color.White)
+        Spacer(Modifier.width(10.dp))
+        Text(
+            stringResource(R.string.update_available, update.version), Modifier.weight(1f),
+            color = Color.White, style = MaterialTheme.typography.bodyMedium,
+        )
+        if (updater.installing) {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+            Spacer(Modifier.width(12.dp))
+        } else {
+            androidx.compose.material3.TextButton(onClick = { dismissed = true }) {
+                Text(stringResource(R.string.later), color = YT.secondary)
+            }
+            androidx.compose.material3.TextButton(onClick = updater::install) {
+                Text(stringResource(R.string.update), color = Color.White)
+            }
+        }
+    }
+}

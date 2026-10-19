@@ -30,6 +30,8 @@ class App : Application() {
         private set
     lateinit var settings: Settings
         private set
+    lateinit var updater: Updater
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -46,6 +48,8 @@ class App : Application() {
         library = Library(this, catalog, resolver)
         account = Account(store, auth, catalog, resolver, library)
         player = Player(this, library, resolver, catalog, network, settings)
+        updater = Updater(this)
+        updater.checkDaily()
     }
 
     companion object {

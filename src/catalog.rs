@@ -123,6 +123,23 @@ pub struct Page {
     pub channel_id: Option<String>,
 }
 
+/// A mood chip over Home ("Relax", "Workout"): Home again, filtered.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HomeChip {
+    pub title: String,
+    pub params: String,
+}
+
+/// Home: its chips, its first shelves, and how to get more of them.
+#[derive(Debug, Clone, Default)]
+pub struct HomeFeed {
+    pub chips: Vec<HomeChip>,
+    pub shelves: Vec<Shelf>,
+    pub continuation: Option<String>,
+    /// The visitor id YouTube gave; continuations need it back.
+    pub visitor: Option<String>,
+}
+
 /// Lyrics text, with the provider's credit line.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lyrics {
@@ -160,11 +177,27 @@ impl Catalog {
         client: &str,
         version: &str,
         endpoint: &str,
+        body: Value,
+    ) -> Result<Value> {
+        self.send(client, version, endpoint, body, None).await
+    }
+
+    /// `visitor`: a feed's continuations need the visitor id its first
+    /// answer came with (Home answers them with nothing otherwise).
+    async fn send(
+        &self,
+        client: &str,
+        version: &str,
+        endpoint: &str,
         mut body: Value,
+        visitor: Option<&str>,
     ) -> Result<Value> {
         body["context"] = json!({
             "client": { "clientName": client, "clientVersion": version, "hl": "en", "gl": "US" }
         });
+        if let Some(visitor) = visitor {
+            body["context"]["client"]["visitorData"] = json!(visitor);
+        }
         let mut request = self
             .http
             .post(format!("{BASE}/{endpoint}?prettyPrint=false"))
@@ -480,10 +513,50 @@ impl Catalog {
 
     /// The home page's shelves (personalised once signed in).
     pub async fn home(&self) -> Result<Vec<Shelf>> {
+        Ok(self.home_feed(None).await?.shelves)
+    }
+
+    /// Home's first shelves and its mood chips; with `params` (a chip's),
+    /// Home for that mood.
+    pub async fn home_feed(&self, params: Option<&str>) -> Result<HomeFeed> {
+        let mut body = json!({ "browseId": "FEmusic_home" });
+        if let Some(params) = params {
+            body["params"] = json!(params);
+        }
+        let data = self.call("browse", body).await?;
+        Ok(HomeFeed {
+            chips: parse_home_chips(&data),
+            shelves: parse_shelves(&data),
+            continuation: home_continuation(&data),
+            visitor: data
+                .pointer("/responseContext/visitorData")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        })
+    }
+
+    /// Home's next shelves (about three at a time) and the token after.
+    pub async fn more_home(
+        &self,
+        token: &str,
+        visitor: Option<&str>,
+    ) -> Result<(Vec<Shelf>, Option<String>)> {
         let data = self
-            .call("browse", json!({ "browseId": "FEmusic_home" }))
+            .send(
+                CLIENT_NAME,
+                CLIENT_VERSION,
+                "browse",
+                json!({ "continuation": token }),
+                visitor,
+            )
             .await?;
-        Ok(parse_shelves(&data))
+        let shelves = parse_shelves(&data);
+        let next = if shelves.is_empty() {
+            None
+        } else {
+            home_continuation(&data)
+        };
+        Ok((shelves, next))
     }
 
     /// The song's radio: what YouTube Music plays after it (≈50 songs,
@@ -922,6 +995,31 @@ fn parse_shelves(data: &Value) -> Vec<Shelf> {
     carousels.chain(grids).collect()
 }
 
+/// Home's mood chips (each a filtered Home).
+fn parse_home_chips(data: &Value) -> Vec<HomeChip> {
+    find_all(data, "chipCloudChipRenderer")
+        .into_iter()
+        .filter_map(|chip| {
+            let title = text(chip.get("text"));
+            let params = chip
+                .pointer("/navigationEndpoint/browseEndpoint/params")?
+                .as_str()?;
+            (!title.is_empty()).then(|| HomeChip {
+                title,
+                params: params.to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// More of Home's shelves: the section list's own continuation.
+fn home_continuation(data: &Value) -> Option<String> {
+    find_first(data, "nextContinuationData")?
+        .get("continuation")?
+        .as_str()
+        .map(str::to_owned)
+}
+
 /// The cards of a carousel or grid, whichever renderer they use.
 fn shelf_items(contents: &[Value]) -> Vec<Item> {
     contents
@@ -1102,6 +1200,22 @@ fn continuation(data: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_chips_and_continuation() {
+        let home = json!({ "contents": [
+            { "chipCloudChipRenderer": { "text": { "runs": [{ "text": "Relax" }] },
+                "navigationEndpoint": { "browseEndpoint": { "browseId": "FEmusic_home", "params": "relax" } } } }
+        ], "continuations": [{ "nextContinuationData": { "continuation": "more" } }] });
+        assert_eq!(
+            parse_home_chips(&home),
+            vec![HomeChip {
+                title: "Relax".into(),
+                params: "relax".into()
+            }]
+        );
+        assert_eq!(home_continuation(&home).as_deref(), Some("more"));
+    }
 
     #[test]
     fn follows_the_track_lists_continuation() {
@@ -1400,6 +1514,17 @@ mod tests {
         assert!(radio.len() > 10);
         assert!(catalog.lyrics("YkLLcIKhJ64").await.unwrap().is_some());
         assert!(!catalog.home().await.unwrap().is_empty());
+        // Home's chips, and more shelves behind the first answer.
+        let feed = catalog.home_feed(None).await.unwrap();
+        assert!(!feed.chips.is_empty(), "home chips");
+        let (more, _) = catalog
+            .more_home(
+                feed.continuation.as_deref().unwrap(),
+                feed.visitor.as_deref(),
+            )
+            .await
+            .unwrap();
+        assert!(!more.is_empty(), "more home shelves");
         // A playlist past 100 songs comes whole (its own continuation).
         let long = catalog
             .page("VLPL0GvsLQil0MmYC96KEs_7dTNsLm1PS6JX")

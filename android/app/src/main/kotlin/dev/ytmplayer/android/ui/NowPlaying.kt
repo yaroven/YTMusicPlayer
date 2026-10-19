@@ -531,8 +531,15 @@ private fun QueuePane() {
         )
         return
     }
+    var naming by remember { mutableStateOf(false) }
     LazyColumn {
-        item { SectionTitle(stringResource(R.string.up_next)) }
+        item {
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.up_next), Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                // The whole queue (what played, the song, what's next) as a playlist.
+                OutlinePill(stringResource(R.string.save_queue)) { naming = true }
+            }
+        }
         itemsIndexed(upNext) { i, track ->
             Row(
                 Modifier.fillMaxWidth().clickable { player.jump(player.index + 1 + i) }.padding(vertical = 4.dp),
@@ -555,6 +562,18 @@ private fun QueuePane() {
                 IconButton(onClick = { player.removeUpcoming(i) }) { Icon(Icons.Default.Close, stringResource(R.string.remove)) }
             }
         }
+    }
+    if (naming) SaveQueueDialog { naming = false }
+}
+
+/** Names the queue and saves it as a playlist (on YouTube too, signed in). */
+@Composable
+private fun SaveQueueDialog(onDismiss: () -> Unit) {
+    val app = App.instance
+    val date = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date())
+    NameDialog(stringResource(R.string.save_queue), stringResource(R.string.queue_playlist_name, date), onDismiss) {
+        app.library.createPlaylist(it, app.player.queue)
+        onDismiss()
     }
 }
 

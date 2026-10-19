@@ -189,6 +189,8 @@ fun TrackRow(
     index: Int,
     number: Int? = null,
     extra: List<MenuAction> = emptyList(),
+    /** Shown when the list is sorted by plays. */
+    plays: Int? = null,
 ) {
     val app = App.instance
     val player = app.player
@@ -240,7 +242,8 @@ fun TrackRow(
                     Spacer(Modifier.width(5.dp))
                 }
                 val duration = track.durationSecs?.let { " • " + formatTime(it.toDouble()) }.orEmpty()
-                Text(track.artist + duration, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, color = YT.secondary)
+                val count = plays?.let { " • ▶ $it" }.orEmpty()
+                Text(track.artist + duration + count, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, color = YT.secondary)
             }
         }
         Box {

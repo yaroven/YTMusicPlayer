@@ -140,3 +140,28 @@
 "Sleep timer (on)" = "Таймер сну (увімкнено)";
 "Remove" = "Прибрати";
 "Delete" = "Видалити";
+
+/* Updates */
+"Version %@ is available" = "Доступна версія %@";
+"Later" = "Пізніше";
+"Update" = "Оновити";
+"Update to %@" = "Оновити до %@";
+"Check for updates" = "Перевірити оновлення";
+"Up to date" = "Остання версія";
+"Couldn't check for updates" = "Не вдалося перевірити оновлення";
+
+/* Parity with the desktop player */
+"Default order" = "Власний порядок";
+"Title" = "Назва";
+"Artist" = "Виконавець";
+"Most played" = "Найчастіше";
+"Download all" = "Завантажити все";
+"Downloading %lld of %lld" = "Завантажую %lld з %lld";
+"Rename" = "Перейменувати";
+"Stop" = "Зупинити";
+"Delete all" = "Видалити всі";
+"Delete all downloads?" = "Видалити всі завантаження?";
+"The songs stay in your library; only the files on the phone go." = "Пісні лишаться в бібліотеці; зникнуть лише файли на телефоні.";
+"Save as playlist" = "Зберегти як плейлист";
+"Queue %@" = "Черга %@";
+"Renaming %@" = "Перейменовую %@";

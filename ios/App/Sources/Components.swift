@@ -45,7 +45,13 @@ struct RootView: View {
                 .presentationDragIndicator(.hidden)
                 .overlay(alignment: .bottom) { NoticeToast() }
         }
-        .safeAreaInset(edge: .top, spacing: 0) { ConnectionBanner() }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                ConnectionBanner()
+                UpdateBanner()
+            }
+        }
+        .task { Updater.shared.checkDaily() }
         .overlay(alignment: .bottom) { NoticeToast() }
         .animation(.easeInOut(duration: 0.25), value: Notice.shared.text)
     }
@@ -129,6 +135,8 @@ struct TrackRow: View {
     let index: Int
     /// Album pages number their songs instead of showing art.
     var number: Int?
+    /// Shown when the list is sorted by plays.
+    var plays: Int?
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
 
@@ -186,8 +194,10 @@ struct TrackRow: View {
     }
 
     private var subtitle: String {
-        guard let seconds = track.durationSecs else { return track.artist }
-        return "\(track.artist) • \(formatTime(Double(seconds)))"
+        var parts = [track.artist]
+        if let seconds = track.durationSecs { parts.append(formatTime(Double(seconds))) }
+        if let plays { parts.append("▶ \(plays)") }
+        return parts.joined(separator: " • ")
     }
 
     private var isCurrent: Bool { player.current?.videoId == track.videoId }

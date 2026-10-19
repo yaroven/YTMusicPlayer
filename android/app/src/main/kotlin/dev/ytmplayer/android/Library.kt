@@ -51,7 +51,15 @@ data class SavedPage(
 )
 
 /** A song saved on the phone for offline play. */
-data class Downloaded(val track: Track, val file: String, val bytes: Long, val duration: Double?, val loudnessDb: Double?)
+data class Downloaded(
+    val track: Track,
+    val file: String,
+    val bytes: Long,
+    val duration: Double?,
+    val loudnessDb: Double?,
+    /** The copy in the phone's Music folder (a MediaStore URI), if any. */
+    val exported: String? = null,
+)
 
 sealed interface LocalList {
     object Liked : LocalList
@@ -70,6 +78,10 @@ class Library(private val context: Context, private val catalog: Catalog, privat
     var liked by mutableStateOf<List<Track>>(emptyList())
         private set
     var history by mutableStateOf<List<Track>>(emptyList())
+        private set
+
+    /** How often each song was played (by video id); outlives the capped history. */
+    var plays by mutableStateOf<Map<String, Int>>(emptyMap())
         private set
     var playlists by mutableStateOf<List<LocalPlaylist>>(emptyList())
         private set
@@ -93,7 +105,6 @@ class Library(private val context: Context, private val catalog: Catalog, privat
     private val disk = Dispatchers.IO.limitedParallelism(1)
     private val file = File(context.filesDir, "library.json")
     val downloadsDir: File = File(context.filesDir, "downloads").apply { mkdirs() }
-    private val downloadJobs = HashMap<String, Job>()
     private val online get() = App.instance.network.online.value
 
     private val signedIn get() = catalog.signedIn
@@ -108,6 +119,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         fun tracks(key: String) = o.arr(key)?.objects()?.mapNotNull(Track::fromJson).orEmpty()
         liked = tracks("liked")
         history = tracks("history")
+        plays = o.optJSONObject("plays")?.let { p -> p.keys().asSequence().associateWith { p.optInt(it) } }.orEmpty()
         playlists = o.arr("playlists")?.objects()?.map { p ->
             LocalPlaylist(
                 id = p.str("id") ?: UUID.randomUUID().toString(),
@@ -135,6 +147,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
             Downloaded(
                 track, name, d.optLong("bytes"),
                 (d.opt("duration") as? Number)?.toDouble(), (d.opt("loudnessDb") as? Number)?.toDouble(),
+                d.str("exported"),
             )
         }.orEmpty()
     }
@@ -143,6 +156,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         val o = JSONObject()
         o.put("liked", JSONArray(liked.map { it.toJson() }))
         o.put("history", JSONArray(history.map { it.toJson() }))
+        o.put("plays", JSONObject(plays as Map<*, *>))
         o.put(
             "playlists",
             JSONArray(
@@ -167,7 +181,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
             JSONArray(
                 downloads.map { d ->
                     JSONObject().put("track", d.track.toJson()).put("file", d.file).put("bytes", d.bytes)
-                        .put("duration", d.duration).put("loudnessDb", d.loudnessDb)
+                        .put("duration", d.duration).put("loudnessDb", d.loudnessDb).put("exported", d.exported)
                 },
             ),
         )
@@ -272,12 +286,15 @@ class Library(private val context: Context, private val catalog: Catalog, privat
     }
 
     fun played(track: Track) {
+        plays = plays + (track.videoId to (plays[track.videoId] ?: 0) + 1)
         history = (listOf(track) + history.filter { it.videoId != track.videoId }).take(HISTORY_SIZE)
         save()
     }
 
     fun clearHistory() {
         history = emptyList()
+        // Like the desktop player: counts go with the history.
+        plays = emptyMap()
         save()
     }
 
@@ -414,39 +431,133 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         return File(downloadsDir, item.file) to item
     }
 
-    /** Saves the song's audio on the phone, in 1 MB ranges (what googlevideo answers reliably). */
-    fun download(track: Track) {
-        if (isDownloaded(track.videoId) || track.videoId in downloading) return
-        downloading = downloading + track.videoId
-        downloadJobs[track.videoId] = scope.launch {
+    /** Songs waiting for their turn to download, in order. */
+    private val queue = ArrayDeque<Track>()
+    private var worker: Job? = null
+
+    /** How far a batch got: done of total (for "Downloading 3 of 12"). */
+    var batchDone by mutableStateOf(0)
+        private set
+    var batchTotal by mutableStateOf(0)
+        private set
+
+    /** Saves the song's audio on the phone (queued behind the others). */
+    fun download(track: Track) = download(listOf(track))
+
+    /**
+     * Saves songs on the phone one after another (one stream at a time, like
+     * the desktop player), in 1 MB ranges — what googlevideo answers reliably.
+     */
+    fun download(tracks: List<Track>) {
+        val fresh = tracks.distinctBy { it.videoId }.filter { !isDownloaded(it.videoId) && it.videoId !in downloading }
+        if (fresh.isEmpty()) return
+        if (queue.isEmpty() && worker?.isActive != true) {
+            batchDone = 0
+            batchTotal = 0
+        }
+        queue.addAll(fresh)
+        batchTotal += fresh.size
+        downloading = downloading + fresh.map { it.videoId }
+        if (worker?.isActive != true) worker = scope.launch { work() }
+    }
+
+    private suspend fun work() {
+        var failures = 0
+        while (true) {
+            val track = queue.removeFirstOrNull() ?: break
             try {
-                val stream = resolver.stream(track.videoId)
-                if (stream.hls) throw YTMError.Unplayable(context.getString(R.string.download_age_restricted))
-                val name = "${track.videoId}.m4a"
-                val bytes = withContext(Dispatchers.IO) { fetch(stream.url, stream.contentLength, File(downloadsDir, name)) }
-                downloads = listOf(Downloaded(track, name, bytes, stream.duration, stream.loudnessDb)) +
-                    downloads.filter { it.track.videoId != track.videoId }
-                save()
+                fetchSong(track)
+                failures = 0
             } catch (e: CancellationException) {
                 File(downloadsDir, "${track.videoId}.m4a.part").delete()
+                throw e
             } catch (e: Exception) {
                 error = context.getString(R.string.download_failed, e.describe(context, online))
+                // No connection: the rest would fail the same way.
+                if (!online || ++failures >= 3) {
+                    queue.clear()
+                    downloading = emptySet()
+                    break
+                }
             } finally {
                 downloading = downloading - track.videoId
-                downloadJobs.remove(track.videoId)
+                batchDone++
             }
         }
     }
 
+    private suspend fun fetchSong(track: Track) {
+        val stream = resolver.stream(track.videoId)
+        if (stream.hls) throw YTMError.Unplayable(context.getString(R.string.download_age_restricted))
+        val name = "${track.videoId}.m4a"
+        val file = File(downloadsDir, name)
+        val bytes = withContext(Dispatchers.IO) { fetch(stream.url, stream.contentLength, file) }
+        val exported = if (App.instance.settings.exportDownloads) withContext(Dispatchers.IO) { export(track, file) } else null
+        downloads = listOf(Downloaded(track, name, bytes, stream.duration, stream.loudnessDb, exported)) +
+            downloads.filter { it.track.videoId != track.videoId }
+        save()
+    }
+
+    /** Stops what is downloading and forgets what was waiting. */
     fun cancelDownloads() {
-        downloadJobs.values.toList().forEach { it.cancel() }
+        queue.clear()
+        worker?.cancel()
+        worker = null
+        downloading = emptySet()
+        batchTotal = 0
+        batchDone = 0
     }
 
     fun removeDownload(track: Track) {
-        val (file, _) = download(track.videoId) ?: return
+        val (file, item) = download(track.videoId) ?: return
         file.delete()
+        unexport(item)
         downloads = downloads.filter { it.track.videoId != track.videoId }
         save()
+    }
+
+    /** Deletes every downloaded song (and its copy in Music). */
+    fun removeAllDownloads() {
+        cancelDownloads()
+        downloads.forEach { item ->
+            File(downloadsDir, item.file).delete()
+            unexport(item)
+        }
+        downloadsDir.listFiles()?.forEach { it.delete() }
+        downloads = emptyList()
+        save()
+    }
+
+    /**
+     * A copy in the phone's Music folder ("Music/YTM Player/Artist - Title.m4a"),
+     * where other players and file managers see it. Android 10+ (MediaStore,
+     * no storage permission).
+     */
+    private fun export(track: Track, file: File): String? {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) return null
+        return runCatching {
+            val resolver = context.contentResolver
+            val name = "${track.artist} - ${track.title}".replace(Regex("[\\\\/:*?\"<>|]"), "_").take(120) + ".m4a"
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Audio.Media.DISPLAY_NAME, name)
+                put(android.provider.MediaStore.Audio.Media.MIME_TYPE, "audio/mp4")
+                put(android.provider.MediaStore.Audio.Media.TITLE, track.title)
+                put(android.provider.MediaStore.Audio.Media.ARTIST, track.artist)
+                put(android.provider.MediaStore.Audio.Media.RELATIVE_PATH, "Music/YTM Player")
+                put(android.provider.MediaStore.Audio.Media.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values) ?: return null
+            resolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+            values.clear()
+            values.put(android.provider.MediaStore.Audio.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            uri.toString()
+        }.getOrNull()
+    }
+
+    private fun unexport(item: Downloaded) {
+        val uri = item.exported ?: return
+        runCatching { context.contentResolver.delete(android.net.Uri.parse(uri), null, null) }
     }
 
     /** Fetches `url` to `target` range by range; returns its size. A dropped connection resumes where it stopped. */

@@ -13,6 +13,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.draw.clip
@@ -284,6 +287,13 @@ fun SettingsScreen() {
             item {
                 Toggle(stringResource(R.string.autoplay), player.autoplay, player::changeAutoplay)
                 Toggle(stringResource(R.string.normalize), player.normalize, player::changeNormalize)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    var export by remember { mutableStateOf(app.settings.exportDownloads) }
+                    Toggle(stringResource(R.string.export_downloads), export) {
+                        export = it
+                        app.settings.exportDownloads = it
+                    }
+                }
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Text(
                         if (player.crossfade == 0) stringResource(R.string.crossfade_off)
@@ -299,6 +309,16 @@ fun SettingsScreen() {
                 val context = LocalContext.current
                 SectionTitle(stringResource(R.string.about))
                 SettingRow(Icons.Default.MusicNote, stringResource(R.string.version), BuildConfig.VERSION_NAME) {}
+                val updater = app.updater
+                SettingRow(
+                    Icons.Default.SystemUpdate,
+                    updater.available?.let { stringResource(R.string.update_to, it.version) } ?: stringResource(R.string.check_updates),
+                    when {
+                        updater.installing -> "…"
+                        updater.upToDate -> stringResource(R.string.up_to_date)
+                        else -> null
+                    },
+                ) { if (updater.available != null) updater.install() else updater.check() }
                 SettingRow(Icons.Default.Code, stringResource(R.string.source_code)) {
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/yaroven/YTMusicPlayer")))
                 }
@@ -385,8 +405,11 @@ private fun Footnote(text: String) {
 fun TrackListScreen(list: LocalList) {
     val app = App.instance
     val library = app.library
-    val tracks = library.tracks(list)
+    val original = library.tracks(list)
+    var sort by rememberSaveable { mutableStateOf(Sort.Default) }
+    val tracks = sorted(original, sort, library.plays)
     var menu by remember { mutableStateOf(false) }
+    var confirmDeleteAll by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val playlist = (list as? LocalList.Playlist)?.let { p -> library.playlists.firstOrNull { it.id == p.id } }
@@ -400,6 +423,9 @@ fun TrackListScreen(list: LocalList) {
                     Icon(Icons.Default.Stop, null)
                     Text(stringResource(R.string.stop_downloads))
                 }
+            }
+            if (list == LocalList.Downloads && tracks.isNotEmpty()) {
+                TextButton(onClick = { confirmDeleteAll = true }) { Text(stringResource(R.string.delete_all)) }
             }
             if (playlist != null) {
                 IconButton(onClick = { menu = true }) {
@@ -423,12 +449,7 @@ fun TrackListScreen(list: LocalList) {
                 }
             }
         }
-        if (list == LocalList.Downloads && library.downloading.isNotEmpty()) {
-            Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(Modifier.padding(end = 12.dp).width(16.dp), strokeWidth = 2.dp)
-                Text(stringResource(R.string.downloading_n, library.downloading.size), style = MaterialTheme.typography.bodySmall)
-            }
-        }
+        if (list == LocalList.Downloads) DownloadProgress()
         if (tracks.isEmpty()) {
             Message(
                 Icons.Default.MusicNote, stringResource(R.string.no_songs),
@@ -439,13 +460,26 @@ fun TrackListScreen(list: LocalList) {
         LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
             item {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Text(songsCount(tracks.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    PlayButtons(tracks)
+                    Text(songsCount(tracks.size), fontSize = 14.sp, color = YT.secondary)
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PlayButtons(tracks)
+                        Spacer(Modifier.width(20.dp))
+                        if (list != LocalList.Downloads) DownloadAllButton(tracks)
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(Sort.entries) { s ->
+                            ChipButton(stringResource(s.label), sort == s) { sort = s }
+                        }
+                    }
                 }
             }
             itemsIndexed(tracks) { i, track ->
+                // Edits name the song's place in the list as stored, not as sorted.
+                val at = if (sort == Sort.Default) i else original.indexOf(track)
                 val extra = buildList {
-                    if (playlist != null) {
+                    if (playlist != null && sort == Sort.Default) {
                         addAll(
                             moveActions(
                                 if (i > 0) ({ library.move(list, i, i - 1) }) else null,
@@ -460,11 +494,25 @@ fun TrackListScreen(list: LocalList) {
                         LocalList.History -> stringResource(R.string.remove_from_history)
                         is LocalList.Playlist -> stringResource(R.string.remove_from_playlist)
                     }
-                    if (label != null) add(MenuAction(label, Icons.Default.Delete) { library.remove(i, list) })
+                    if (label != null) add(MenuAction(label, Icons.Default.Delete) { library.remove(at, list) })
                 }
-                TrackRow(track, tracks, i, extra = extra)
+                TrackRow(track, tracks, i, extra = extra, plays = if (sort == Sort.MostPlayed) library.plays[track.videoId] ?: 0 else null)
             }
         }
+    }
+    if (confirmDeleteAll) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteAll = false },
+            title = { Text(stringResource(R.string.delete_all_downloads_q)) },
+            text = { Text(stringResource(R.string.delete_all_downloads_note)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeleteAll = false
+                    library.removeAllDownloads()
+                }) { Text(stringResource(R.string.delete)) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteAll = false }) { Text(stringResource(R.string.cancel)) } },
+        )
     }
     if (renaming && playlist != null) {
         NameDialog(stringResource(R.string.rename), playlist.name, { renaming = false }) {
@@ -485,5 +533,51 @@ fun TrackListScreen(list: LocalList) {
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.cancel)) } },
         )
+    }
+}
+
+/** How a list of songs is ordered (as the desktop player sorts its lists). */
+enum class Sort(val label: Int) { Default(R.string.sort_default), Title(R.string.sort_title), Artist(R.string.sort_artist), MostPlayed(R.string.sort_most_played) }
+
+fun sorted(tracks: List<dev.ytmplayer.core.Track>, sort: Sort, plays: Map<String, Int>): List<dev.ytmplayer.core.Track> = when (sort) {
+    Sort.Default -> tracks
+    Sort.Title -> tracks.sortedBy { it.title.lowercase() }
+    Sort.Artist -> tracks.sortedWith(compareBy({ it.artist.lowercase() }, { it.title.lowercase() }))
+    Sort.MostPlayed -> tracks.sortedByDescending { plays[it.videoId] ?: 0 }
+}
+
+/** "Downloading 3 of 12" with a bar, while downloads run. */
+@Composable
+fun DownloadProgress() {
+    val library = App.instance.library
+    if (library.downloading.isEmpty() || library.batchTotal == 0) return
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+        Text(
+            stringResource(R.string.downloading_of, minOf(library.batchDone + 1, library.batchTotal), library.batchTotal),
+            fontSize = 13.sp, color = YT.secondary,
+        )
+        Spacer(Modifier.height(6.dp))
+        androidx.compose.material3.LinearProgressIndicator(
+            progress = { library.batchDone.toFloat() / library.batchTotal },
+            modifier = Modifier.fillMaxWidth(), color = Color.White, trackColor = Color.White.copy(alpha = 0.15f),
+        )
+    }
+}
+
+/** Download every song of a list: ⬇, a spinner while it runs (tap stops), ✓ when all are on the phone. */
+@Composable
+fun DownloadAllButton(tracks: List<dev.ytmplayer.core.Track>) {
+    val library = App.instance.library
+    val all = tracks.isNotEmpty() && tracks.all { library.isDownloaded(it.videoId) }
+    val running = tracks.any { it.videoId in library.downloading }
+    when {
+        all -> CircleIcon(Icons.Default.DownloadDone, stringResource(R.string.downloaded)) {}
+        running -> Box(contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(Modifier.size(44.dp), color = Color.White, strokeWidth = 2.dp)
+            CircleIcon(Icons.Default.Stop, stringResource(R.string.stop_downloads), 36.dp) { library.cancelDownloads() }
+        }
+        else -> CircleIcon(Icons.Default.Download, stringResource(R.string.download_all), enabled = tracks.isNotEmpty()) {
+            library.download(tracks)
+        }
     }
 }

@@ -1270,6 +1270,12 @@ slint::slint! {
         // How the list is sorted ("" = its own order) and the next press.
         in property <string> sort-label;
         callback cycle-sort();
+        // Home's mood chips: the chosen one (-1 none), more shelves to load.
+        in property <[string]> home-chips;
+        in property <int> home-chip: -1;
+        in property <bool> home-has-more;
+        callback select-home-chip(int);
+        callback more-home();
         callback save-queue-as(string);
         callback clear-history();
         // Checks the connection and loads again what failed for want of it.
@@ -1865,9 +1871,35 @@ slint::slint! {
                                 init => { self.opacity = 1; }
                                 animate opacity { duration: 180ms; easing: ease-out; }
                                 content-height: page.preferred-height;
+                                // Home: its next shelves as the end comes near.
+                                changed content-y => {
+                                    if root.nav == 1 && root.home-has-more
+                                        && -self.content-y > self.content-height - self.height - 400px {
+                                        root.more-home();
+                                    }
+                                }
                                 page := VerticalLayout {
                                     spacing: 24px;
                                     padding-bottom: 24px;
+                                    // Home's moods ("Relax", "Workout"…), as on YouTube Music.
+                                    if root.nav == 1 && root.home-chips.length > 0: Flickable {
+                                        height: 40px;
+                                        // A Flickable's width follows its content by default,
+                                        // which narrowed the whole column.
+                                        min-width: 0px;
+                                        preferred-width: 0px;
+                                        max-width: 100000px;
+                                        horizontal-stretch: 1;
+                                        content-width: chips.preferred-width;
+                                        chips := HorizontalLayout {
+                                            spacing: 8px;
+                                            for c[i] in root.home-chips: Chip {
+                                                text: c;
+                                                selected: i == root.home-chip;
+                                                clicked => { root.select-home-chip(i == root.home-chip ? -1 : i); keys.focus(); }
+                                            }
+                                        }
+                                    }
                                     VerticalLayout {
                                         for t[i] in root.tracks: TrackItem {
                                             track: t;

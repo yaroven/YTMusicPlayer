@@ -266,8 +266,10 @@ public final class Catalog: Sendable {
     }
 
     /// Creates a private playlist; returns its id (`PL…`).
-    public func createPlaylist(_ title: String) async throws -> String {
-        let data = try await write("playlist/create", ["title": title, "privacyStatus": "PRIVATE"])
+    public func createPlaylist(_ title: String, videoIds: [String] = []) async throws -> String {
+        var body: [String: Any] = ["title": title, "privacyStatus": "PRIVATE"]
+        if !videoIds.isEmpty { body["videoIds"] = videoIds }
+        let data = try await write("playlist/create", body)
         guard let id = (data as? JSON)?["playlistId"] as? String ?? findFirst(data, "playlistId") as? String else {
             throw YTMError.http("YouTube Music didn't return the new playlist's id", 200)
         }

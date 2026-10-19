@@ -18,8 +18,16 @@ setup.
   saved albums and followed artists, with likes, dislikes, playlist changes
   (reordering too) written back to YouTube. History and the editable queue
   stay on the phone.
-- **Offline:** long-press a song → **Download**; **Library → Downloads**
-  lists them, swipe to delete. Downloaded songs play without network.
+- **Offline:** long-press a song → **Download**, or a whole album /
+  playlist / list with its ⬇ button (one after another, tap to stop);
+  **Library → Downloads** lists them (**Stop**, **Delete all**). They are
+  also in the **Files** app: On My iPhone → YTM Player → Downloads
+  ("Artist - Title [id].m4a"). Downloaded songs play without network.
+- Lists sort by your own order, title, artist or **most played**; playlists
+  can be renamed; **Up next → Save as playlist** keeps the queue.
+- **New versions:** a bar says when one is out; **Update** hands it to
+  SideStore (or opens the release page). Settings (the avatar) → **Check for
+  updates**. SideStore also offers it when you open it.
 - **Song / video switch** over the cover (♪ / ▶): the clip plays in place
   of the cover and the song carries on where it stopped when you switch
   back.
