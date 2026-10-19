@@ -559,7 +559,11 @@ Domain terms are defined in `CONTEXT.md`.
   the old song (started 1.5 s ahead, swapped in when ready), so the media
   session keeps one player. Sign-in: Google's page in a WebView with "; wv"
   stripped from the UA, cookies from `CookieManager`, then cleared.
-  Release APK 2.3 MB (R8). Memory, emulator android-35, release, playing,
+  Release APK 2.3 MB (R8). Signed in CI with the `ANDROID_KEYSTORE_*`
+  repo secrets (set 2026-10-19 with the user's OK); the keystore and its
+  password live on this Mac in `~/.ytm-player-signing/` (not in git —
+  losing it means users must uninstall to update). Cert SHA-256
+  `6f693e448dd3e78bbadf03f61a7a7415073f1c27c6f20c6b4f18b06acc34cbc7`. Memory, emulator android-35, release, playing,
   `dumpsys meminfo` PSS: ~82 MB Now Playing open, ~73 MB background (the
   software GPU's buffers land in native heap; a real GPU puts them in
   "Graphics").
@@ -583,9 +587,6 @@ Domain terms are defined in `CONTEXT.md`.
 
 - Android: try on a real phone (Google sign-in in the WebView — Google may
   refuse embedded browsers; video rendering; notification on Android 13+);
-  release signing: CI needs `ANDROID_KEYSTORE_BASE64` / `_PASSWORD` /
-  `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` secrets, else every CI APK
-  is signed with that runner's debug key and won't update over the last.
 
 - iPhone: verify signed-in age-restricted playback on a real account,
   memory measurement on a real device; the video pane and crossfade on a

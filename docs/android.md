@@ -80,5 +80,7 @@ YTM_LIVE=1 ./gradlew :core:test    # also against YouTube / LRCLIB
 
 JDK 17 and the Android SDK (platform 35) are needed. CI builds the APK on
 every Android change, and the Release workflow attaches it to releases.
-Without the `ANDROID_KEYSTORE_*` secrets the APK is signed with a debug key,
-so a later APK signed differently won't install over it (uninstall first).
+Releases are signed with the project's key (the `ANDROID_KEYSTORE_*`
+repository secrets; certificate SHA-256 `6f693e44…cbc7`), so each one
+installs over the last. A local build without those variables is signed
+with your debug key, which won't install over a release (uninstall first).
