@@ -2,6 +2,21 @@ package dev.ytmplayer.android.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.style.TextAlign
+import dev.ytmplayer.core.ShelfStyle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -136,10 +151,10 @@ fun Artwork(art: Art, size: Dp, modifier: Modifier = Modifier, round: Boolean = 
 @Composable
 fun ExplicitBadge() {
     Box(
-        Modifier.size(15.dp).background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(3.dp)),
+        Modifier.size(14.dp).background(YT.secondary, RoundedCornerShape(2.dp)),
         contentAlignment = Alignment.Center,
     ) {
-        Text("E", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("E", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.Black)
     }
 }
 
@@ -165,6 +180,7 @@ fun playFrom(list: List<Track>, index: Int) {
     app.player.play(list, index)
 }
 
+/** A song in a list: art (or its number on an album), title, artist • length, ⋮. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TrackRow(
@@ -192,42 +208,43 @@ fun TrackRow(
     ) {
         if (number != null) {
             Text(
-                "$number", Modifier.width(28.dp), style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                "$number", Modifier.width(28.dp), fontSize = 15.sp,
+                color = if (current) Color.White else YT.secondary,
             )
         } else {
-            Artwork(Art.Video(track.videoId), 48.dp)
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    track.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    color = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                if (track.explicit) {
-                    Spacer(Modifier.width(6.dp))
-                    ExplicitBadge()
+            Box {
+                Artwork(Art.Video(track.videoId), 48.dp)
+                if (current) {
+                    Box(
+                        Modifier.size(48.dp).clip(RoundedCornerShape(5.dp)).background(Color.Black.copy(alpha = 0.5f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            if (player.isPlaying) Icons.Default.GraphicEq else Icons.Default.PlayArrow, null,
+                            tint = Color.White,
+                        )
+                    }
                 }
             }
-            Text(
-                track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
-        if (downloaded) {
-            Icon(
-                Icons.Default.DownloadForOffline, stringResource(R.string.downloaded), Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.width(6.dp))
-        }
-        track.durationSecs?.let {
-            Text(formatTime(it.toDouble()), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (track.explicit) {
+                    ExplicitBadge()
+                    Spacer(Modifier.width(5.dp))
+                }
+                if (downloaded) {
+                    Icon(Icons.Default.DownloadForOffline, stringResource(R.string.downloaded), Modifier.size(13.dp), tint = YT.secondary)
+                    Spacer(Modifier.width(5.dp))
+                }
+                val duration = track.durationSecs?.let { " • " + formatTime(it.toDouble()) }.orEmpty()
+                Text(track.artist + duration, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, color = YT.secondary)
+            }
         }
         Box {
-            IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, stringResource(R.string.more)) }
+            IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, stringResource(R.string.more), tint = YT.secondary) }
             TrackMenu(track, menu, { menu = false }, extra)
         }
     }
@@ -340,51 +357,55 @@ fun ItemRow(item: Item) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Artwork(item.art, 56.dp, round = item.kind == ItemKind.Artist)
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp, modifier = Modifier.weight(1f, fill = false))
                 if (item.explicit) {
                     Spacer(Modifier.width(6.dp))
                     ExplicitBadge()
                 }
             }
-            Text(
-                item.subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text(item.subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, color = YT.secondary)
         }
     }
 }
 
-/** An Explore chip ("Chill", "Charts"): a coloured tile, no picture. */
+/** An Explore category ("Chill", "Workout"): a dark tile with a coloured edge, as YouTube Music draws them. */
 @Composable
-private fun Chip(item: Item) {
+private fun MoodTile(item: Item) {
     val hue = (item.title.hashCode() and 0xFFFF) % 360
-    Box(
+    LaunchedEffect(item.browseId) { PageCache.note(item) }
+    Row(
         Modifier
-            .width(150.dp)
-            .height(64.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color.hsv(hue.toFloat(), 0.55f, 0.45f))
-            .clickable { Router.open(Route.Page(item.browseId)) }
-            .padding(12.dp),
-        contentAlignment = Alignment.BottomStart,
+            .width(170.dp)
+            .height(48.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(YT.surface)
+            .prefetchOnPress(item)
+            .clickable { Router.open(Route.Page(item.browseId)) },
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, color = Color.White)
+        Box(Modifier.width(6.dp).fillMaxHeight().background(Color.hsv(hue.toFloat(), 0.7f, 0.9f)))
+        Text(
+            item.title, Modifier.padding(horizontal = 12.dp), fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
+/** A card in a shelf: square art (round for artists, 16:9 for videos), title and subtitle under it. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun Card(item: Item, songs: List<Track>) {
-    if (item.track == null && item.thumbnail == null && item.subtitle.isEmpty()) return Chip(item)
+fun Card(item: Item, songs: List<Track>, wide: Boolean = false) {
     var menu by remember { mutableStateOf(false) }
     val track = item.track
+    val width = if (wide) 280.dp else 160.dp
+    val round = item.kind == ItemKind.Artist
     LaunchedEffect(item.browseId) { PageCache.note(item) }
     Column(
         Modifier
-            .width(150.dp)
+            .width(width)
             .prefetchOnPress(item)
             .combinedClickable(
                 onClick = {
@@ -397,36 +418,138 @@ fun Card(item: Item, songs: List<Track>) {
                 },
                 onLongClick = { if (track != null) menu = true },
             ),
+        horizontalAlignment = if (round) Alignment.CenterHorizontally else Alignment.Start,
     ) {
         Box {
-            Artwork(item.art, 150.dp, round = item.kind == ItemKind.Artist)
+            if (wide) {
+                coil.compose.AsyncImage(
+                    model = track?.let { "https://i.ytimg.com/vi/${it.videoId}/mqdefault.jpg" } ?: item.thumbnail,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.width(width).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)).background(YT.raised),
+                )
+            } else {
+                Artwork(item.art, width, round = round)
+            }
             if (item.explicit) Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { ExplicitBadge() }
             if (track != null) TrackMenu(track, menu, { menu = false })
         }
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
-            item.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
-            maxLines = 2, overflow = TextOverflow.Ellipsis,
+            item.title, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            textAlign = if (round) TextAlign.Center else TextAlign.Start,
         )
         Text(
-            item.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2, overflow = TextOverflow.Ellipsis,
+            item.subtitle, fontSize = 13.sp, color = YT.secondary, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            textAlign = if (round) TextAlign.Center else TextAlign.Start,
         )
     }
 }
 
+/**
+ * A shelf: its header (strapline, title, "Play all"), then its cards — in a
+ * row, as a three-row grid of tiles (song shelves like "Quick picks"), as
+ * wide video cards, or as mood tiles.
+ */
 @Composable
 fun ShelfView(shelf: Shelf, showTitle: Boolean = true) {
+    val songs = shelf.items.mapNotNull { it.track }
+    val moods = shelf.items.all { it.track == null && it.thumbnail == null && it.subtitle.isEmpty() }
     Column {
         if (showTitle && shelf.title.isNotEmpty()) {
-            Text(
-                shelf.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            )
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                shelf.straplineArt?.let {
+                    Artwork(Art.Url(it), 36.dp, round = true)
+                    Spacer(Modifier.width(12.dp))
+                }
+                Column(Modifier.weight(1f)) {
+                    if (shelf.strapline.isNotEmpty()) {
+                        Text(shelf.strapline.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = YT.secondary)
+                    }
+                    Text(shelf.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (songs.size > 1) OutlinePill(stringResource(R.string.play_all)) { playFrom(songs, 0) }
+            }
         }
-        val songs = shelf.items.mapNotNull { it.track }
-        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(shelf.items, key = { it.id }) { Card(it, songs) }
+        when {
+            moods -> LazyHorizontalGrid(
+                rows = GridCells.Fixed(2),
+                modifier = Modifier.height(106.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) { items(shelf.items, key = { it.id }) { MoodTile(it) } }
+            shelf.style == ShelfStyle.Grid && songs.isNotEmpty() -> QuickPicks(songs)
+            else -> LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                items(shelf.items, key = { it.id }) { Card(it, songs, wide = shelf.style == ShelfStyle.Wide) }
+            }
+        }
+    }
+}
+
+/** "Quick picks": square tiles three rows high with the title over the picture, paged sideways, dots under them. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun QuickPicks(songs: List<Track>) {
+    val player = App.instance.player
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val tile = (maxWidth - 32.dp - 12.dp) / 3
+        val state = rememberLazyGridState()
+        val pages = (songs.size + 8) / 9
+        Column {
+            LazyHorizontalGrid(
+                rows = GridCells.Fixed(3),
+                state = state,
+                flingBehavior = rememberSnapFlingBehavior(state),
+                modifier = Modifier.height(tile * 3 + 12.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                itemsIndexed(songs, key = { _, t -> t.videoId }) { i, track ->
+                    var menu by remember { mutableStateOf(false) }
+                    Box(
+                        Modifier
+                            .size(tile)
+                            .clip(RoundedCornerShape(5.dp))
+                            .combinedClickable(onClick = { playFrom(songs, i) }, onLongClick = { menu = true })
+                            .then(
+                                if (player.current?.videoId == track.videoId) {
+                                    Modifier.border(3.dp, Color.White, RoundedCornerShape(5.dp))
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                        contentAlignment = Alignment.BottomStart,
+                    ) {
+                        Artwork(Art.Video(track.videoId), tile)
+                        Box(
+                            Modifier.matchParentSize().background(
+                                Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.75f)),
+                            ),
+                        )
+                        Text(
+                            track.title, Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                        TrackMenu(track, menu, { menu = false })
+                    }
+                }
+            }
+            if (pages > 1) {
+                val page = ((state.firstVisibleItemIndex + 4) / 9).coerceIn(0, pages - 1)
+                Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.Center) {
+                    repeat(pages) { p ->
+                        Box(
+                            Modifier.padding(horizontal = 3.dp).size(7.dp).clip(CircleShape)
+                                .background(Color.White.copy(alpha = if (p == page) 1f else 0.35f)),
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -23,6 +23,8 @@ class Account(
         private set
     var name by mutableStateOf<String?>(null)
         private set
+    var photo by mutableStateOf<String?>(null)
+        private set
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -46,11 +48,16 @@ class Account(
         auth.set(emptyMap())
         signedIn = false
         name = null
+        photo = null
         library.forgetAccount()
         scope.launch { resolver.reset() }
     }
 
     fun loadName() {
-        scope.launch { name = runCatching { catalog.accountName() }.getOrNull() }
+        scope.launch {
+            val info = runCatching { catalog.accountInfo() }.getOrNull()
+            name = info?.name
+            photo = info?.photo
+        }
     }
 }

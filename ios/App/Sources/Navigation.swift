@@ -6,7 +6,9 @@ enum Services {
     /// The Google account's youtube.com cookies, kept in the Keychain
     /// (rotated cookies are saved back as YouTube sends them).
     static let auth = Auth(cookies: Keychain.cookies() ?? [:], onChange: { Keychain.save($0) })
-    static let catalog = Catalog(auth: auth)
+    /// Shelves and titles in the app's language (iOS's per-app setting).
+    static let catalog = Catalog(auth: auth,
+                                 language: Bundle.main.preferredLocalizations.first == "uk" ? "uk" : "en")
     static let resolver = Resolver(auth: auth)
     static let lyrics = LyricsFinder(catalog: catalog)
 }

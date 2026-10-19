@@ -147,9 +147,18 @@ func songsIn(_ data: Any, albumArtist: String? = nil) -> [Track] {
 /// Explore and "moods & genres" use instead.
 func parseShelves(_ data: Any) -> [Shelf] {
     let carousels = findAll(data, "musicCarouselShelfRenderer").compactMap { shelf -> Shelf? in
-        let title = text(pointer(shelf, "header/musicCarouselShelfBasicHeaderRenderer/title"))
-        let items = shelfItems((shelf as? JSON)?["contents"] as? [JSON] ?? [])
-        return items.isEmpty ? nil : Shelf(title: title, items: items)
+        let header = pointer(shelf, "header/musicCarouselShelfBasicHeaderRenderer")
+        let title = text(pointer(header, "title"))
+        let contents = (shelf as? JSON)?["contents"] as? [JSON] ?? []
+        let items = shelfItems(contents)
+        guard !items.isEmpty else { return nil }
+        let rows = contents.allSatisfy { $0["musicResponsiveListItemRenderer"] != nil }
+        let wide = contents.contains {
+            (pointer($0, "musicTwoRowItemRenderer/aspectRatio") as? String ?? "").contains("16_9")
+        }
+        return Shelf(title: title, items: items, style: rows ? .grid : wide ? .wide : .cards,
+                     strapline: text(pointer(header, "strapline")),
+                     straplineArt: thumbnail(pointer(header, "thumbnail")))
     }
     let grids = findAll(data, "gridRenderer").compactMap { grid -> Shelf? in
         let title = text(pointer(grid, "header/gridHeaderRenderer/title"))
@@ -210,6 +219,20 @@ func parseRadio(_ data: Any) -> [Track] {
 func tabBrowseId(_ next: Any, title: String) -> String? {
     let tab = findAll(next, "tabRenderer").first { ($0 as? JSON)?["title"] as? String == title }
     return string(tab, "endpoint/browseEndpoint/browseId")
+}
+
+/// Home's mood chips (each a filtered Home).
+func parseHomeChips(_ data: Any) -> [HomeChip] {
+    findAll(data, "chipCloudChipRenderer").compactMap { chip in
+        let title = text((chip as? JSON)?["text"])
+        guard !title.isEmpty, let params = string(chip, "navigationEndpoint/browseEndpoint/params") else { return nil }
+        return HomeChip(title: title, params: params)
+    }
+}
+
+/// More of Home's shelves: the section list's own continuation.
+func homeContinuation(_ data: Any) -> String? {
+    (findFirst(data, "nextContinuationData") as? JSON)?["continuation"] as? String
 }
 
 /// Plain query strings from `music/get_search_suggestions`.

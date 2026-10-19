@@ -6,6 +6,12 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.NorthWest
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
@@ -20,6 +26,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -89,11 +97,16 @@ fun TopBar(title: String, back: Boolean = false, actions: @Composable () -> Unit
         },
         actions = { actions() },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-        // The scaffold already keeps clear of the status bar.
-        windowInsets = WindowInsets(0),
+        windowInsets = WindowInsets.statusBars,
     )
 }
 
+/**
+ * YouTube Music's Home: the logo and the account at the top, mood chips,
+ * then shelves ("Quick picks" as a grid of tiles, videos wide, the rest as
+ * cards), more of them loading as you scroll, over the colours of the first
+ * picture.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen() {
@@ -101,27 +114,53 @@ fun HomeScreen() {
     val library = app.library
     val signedIn = app.account.signedIn
     val online by app.network.online.collectAsState()
-    // Signed in, Home is the account's own.
-    val home = rememberLoad(signedIn) { app.catalog.home() }
-    Column(Modifier.fillMaxSize()) {
-        TopBar(stringResource(R.string.home))
+    var chip by remember { mutableStateOf<dev.ytmplayer.core.HomeChip?>(null) }
+    var chips by remember { mutableStateOf<List<dev.ytmplayer.core.HomeChip>>(emptyList()) }
+    // Signed in, Home is the account's own; a chip is Home for that mood.
+    val home = rememberLoad(signedIn to chip?.params) { app.catalog.homeFeed(chip?.params) }
+    var more by remember(home.value) { mutableStateOf<List<Shelf>>(emptyList()) }
+    var token by remember(home.value) { mutableStateOf(home.value?.continuation) }
+    LaunchedEffect(home.value) { home.value?.chips?.takeIf { it.isNotEmpty() && chip == null }?.let { chips = it } }
+    val list = rememberLazyListState()
+    // The next shelves when the end of the list comes near.
+    val nearEnd by remember { derivedStateOf { list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 >= list.layoutInfo.totalItemsCount - 2 } }
+    LaunchedEffect(nearEnd, token) {
+        val t = token ?: return@LaunchedEffect
+        if (!nearEnd) return@LaunchedEffect
+        val (shelves, next) = runCatching { app.catalog.moreHome(t, home.value?.visitor) }.getOrNull() ?: return@LaunchedEffect
+        more = more + shelves
+        token = next
+    }
+    val shelves = home.value?.shelves.orEmpty() + more
+    Box(Modifier.fillMaxSize()) {
+        AmbientBackdrop(shelves.firstOrNull()?.items?.firstOrNull()?.let { it.track?.thumbnailUrl ?: it.thumbnail })
         PullToRefreshBox(home.loading && home.value != null, onRefresh = home::retry, Modifier.fillMaxSize()) {
             val history = library.history.take(20).map { it.toItem() }
-            val shelves = home.value
-            if (shelves == null && history.isEmpty()) {
-                Loaded(home) {}
-                return@PullToRefreshBox
-            }
-            LazyColumn(contentPadding = PaddingValues(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                if (!online && library.downloads.isNotEmpty()) {
-                    item { OfflineHint() }
+            LazyColumn(state = list, contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
+                item {
+                    Column {
+                        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            YTLogo()
+                            Spacer(Modifier.weight(1f))
+                            AvatarButton()
+                        }
+                        if (chips.isNotEmpty()) {
+                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(chips, key = { it.params }) { c ->
+                                    ChipButton(c.title, chip == c) { chip = if (chip == c) null else c }
+                                }
+                            }
+                        }
+                    }
                 }
-                if (history.isNotEmpty()) item { ShelfView(Shelf(stringResource(R.string.listen_again), history)) }
+                if (!online && library.downloads.isNotEmpty()) item { OfflineHint() }
+                if (chip == null && history.isNotEmpty()) item { ShelfView(Shelf(stringResource(R.string.listen_again), history)) }
                 when {
-                    shelves != null -> items(shelves, key = { it.id }) { ShelfView(it) }
+                    home.value != null -> items(shelves, key = { it.id }) { ShelfView(it) }
                     home.error != null && !home.loading -> item { ErrorState(home.error!!, Modifier.height(320.dp), home::retry) }
-                    else -> item { Loading(Modifier.height(200.dp)) }
+                    else -> item { Loading(Modifier.height(240.dp)) }
                 }
+                if (token != null) item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(28.dp)) } }
             }
         }
     }
@@ -146,6 +185,7 @@ private fun OfflineHint() {
 
 fun Track.toItem() = dev.ytmplayer.core.Item(ItemKind.Song, videoId, title, artist, track = this, explicit = explicit)
 
+/** Search, with Explore when nothing is typed and YouTube Music's suggestions while typing. */
 /** Search, with Explore when nothing is typed and YouTube Music's suggestions while typing. */
 @Composable
 fun SearchScreen() {
@@ -176,26 +216,32 @@ fun SearchScreen() {
         keyboard?.hide()
     }
 
-    Column(Modifier.fillMaxSize()) {
-        TopBar(stringResource(R.string.search))
-        OutlinedTextField(
-            query, { query = it },
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            placeholder = { Text(stringResource(R.string.search_prompt)) },
-            leadingIcon = { Icon(Icons.Default.Search, null) },
-            trailingIcon = {
-                if (query.isNotEmpty()) {
-                    IconButton(onClick = {
-                        query = ""
-                        searched = ""
-                    }) { Icon(Icons.Default.Clear, stringResource(R.string.clear)) }
-                }
-            },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { run() }),
-        )
-        Spacer(Modifier.height(8.dp))
+    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        // YouTube Music's search bar: a dark rounded field.
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).height(44.dp)
+                .clip(RoundedCornerShape(22.dp)).background(YT.surface).padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.Search, null, tint = YT.secondary)
+            Spacer(Modifier.width(10.dp))
+            Box(Modifier.weight(1f)) {
+                if (query.isEmpty()) Text(stringResource(R.string.search_prompt), color = YT.secondary, fontSize = 16.sp)
+                androidx.compose.foundation.text.BasicTextField(
+                    query, { query = it }, Modifier.fillMaxWidth(), singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Color.White),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { run() }),
+                )
+            }
+            if (query.isNotEmpty()) {
+                IconButton(onClick = {
+                    query = ""
+                    searched = ""
+                }) { Icon(Icons.Default.Clear, stringResource(R.string.clear), tint = YT.secondary) }
+            }
+        }
         when {
             suggestions.isNotEmpty() && query.trim() != searched -> LazyColumn {
                 items(suggestions) { s ->
@@ -203,9 +249,10 @@ fun SearchScreen() {
                         Modifier.fillMaxWidth().clickable { scope.launch { run(s) } }.padding(horizontal = 20.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(Icons.Default.Search, null, tint = YT.secondary)
                         Spacer(Modifier.width(16.dp))
-                        Text(s)
+                        Text(s, Modifier.weight(1f))
+                        Icon(Icons.Default.NorthWest, null, tint = YT.secondary)
                     }
                 }
             }
@@ -219,7 +266,7 @@ fun SearchScreen() {
 private fun Explore() {
     val explore = rememberLoad(Unit) { App.instance.catalog.explore() }
     Loaded(explore) { shelves ->
-        LazyColumn(contentPadding = PaddingValues(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        LazyColumn(contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
             items(shelves, key = { it.id }) { ShelfView(it) }
         }
     }
@@ -231,7 +278,7 @@ private fun Results(query: String, kind: SearchKind, onKind: (SearchKind) -> Uni
     Column {
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(SearchKind.entries) { k ->
-                FilterChip(k == kind, onClick = { onKind(k) }, label = { Text(kindLabel(k)) })
+                ChipButton(kindLabel(k), k == kind) { onKind(k) }
             }
         }
         Loaded(results) { found ->
@@ -289,22 +336,18 @@ fun PageScreen(id: String) {
             PageCache.remember(id, p)
         }
     }
-    Column(Modifier.fillMaxSize()) {
-        val loaded = page.value
-        val preview = PageCache.preview(id)
-        TopBar(loaded?.title?.ifEmpty { null } ?: preview?.title ?: "", back = true) {
-            if (loaded != null) {
-                val saved = app.library.isSaved(loaded.id)
-                IconButton(onClick = { app.library.toggleSaved(loaded) }) {
-                    Icon(if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, stringResource(R.string.save))
-                }
-            }
-        }
+    val loaded = page.value
+    val preview = PageCache.preview(id)
+    Box(Modifier.fillMaxSize()) {
+        AmbientBackdrop(loaded?.thumbnail ?: preview?.thumbnail, 520.dp)
+        Column(Modifier.fillMaxSize()) {
+        TopBar("", back = true)
         when {
             loaded != null -> PageContent(loaded, preview?.title.orEmpty(), showAll) { showAll = true }
             // The card's title and art at once, the songs when they come.
             preview != null -> PagePreview(preview, page)
             else -> Loaded(page) {}
+        }
         }
     }
 }
@@ -313,17 +356,7 @@ fun PageScreen(id: String) {
 private fun PagePreview(item: dev.ytmplayer.core.Item, page: Load<Page>) {
     LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
-            Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Artwork(item.thumbnail?.let { Art.Url(it) } ?: Art.None, 220.dp, round = item.kind == ItemKind.Artist)
-                Spacer(Modifier.height(12.dp))
-                Text(item.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                Text(
-                    item.subtitle, style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(12.dp))
-                PlayButtons(emptyList())
-            }
+            PageHeader(item.title, item.subtitle, item.thumbnail, item.kind == ItemKind.Artist, emptyList(), null)
         }
         val error = page.error
         if (error != null && !page.loading) {
@@ -365,52 +398,70 @@ private fun PageContent(page: Page, cardTitle: String, showAll: Boolean, onShowA
             item {
                 Text(
                     page.title.ifEmpty { cardTitle },
-                    Modifier.padding(16.dp), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold,
+                    Modifier.padding(16.dp), fontSize = 28.sp, fontWeight = FontWeight.Bold,
                 )
             }
         } else item {
-            Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Artwork(page.thumbnail?.let { Art.Url(it) } ?: Art.None, 220.dp, round = page.kind == ItemKind.Artist)
-                Spacer(Modifier.height(12.dp))
-                Text(page.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                Text(
-                    page.subtitle, style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(12.dp))
-                PlayButtons(page.tracks)
-            }
+            PageHeader(page.title.ifEmpty { cardTitle }, page.subtitle, page.thumbnail, page.kind == ItemKind.Artist, page.tracks, page)
         }
         if (page.kind == ItemKind.Artist && page.tracks.isNotEmpty()) {
-            item { SectionTitle(stringResource(R.string.top_songs)) }
+            item {
+                Text(stringResource(R.string.top_songs), Modifier.padding(horizontal = 16.dp, vertical = 8.dp), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            }
         }
         itemsIndexed(shown) { i, t -> TrackRow(t, page.tracks, i, number = if (page.kind == ItemKind.Album) i + 1 else null) }
         if (shown.size < page.tracks.size) {
             item {
-                TextButton(onClick = onShowAll, Modifier.padding(horizontal = 8.dp)) {
-                    Text(stringResource(R.string.show_all_songs, page.tracks.size))
+                Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
+                    OutlinePill(stringResource(R.string.show_all_songs, page.tracks.size), onShowAll)
                 }
             }
         }
         items(page.shelves, key = { it.id }) { shelf ->
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(28.dp))
             ShelfView(shelf)
         }
     }
 }
 
+/** Art, title, subtitle, then save / play / shuffle (also before the songs are in). */
+@Composable
+private fun PageHeader(title: String, subtitle: String, thumbnail: String?, round: Boolean, tracks: List<Track>, page: Page?) {
+    val library = App.instance.library
+    Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Artwork(thumbnail?.let { Art.Url(it) } ?: Art.None, if (round) 200.dp else 250.dp, round = round)
+        Spacer(Modifier.height(16.dp))
+        Text(title, fontSize = 26.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        if (subtitle.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(subtitle, fontSize = 14.sp, color = YT.secondary, textAlign = TextAlign.Center)
+        }
+        Spacer(Modifier.height(16.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+            val saved = page != null && library.isSaved(page.id)
+            CircleIcon(
+                if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, stringResource(R.string.save),
+                enabled = page != null,
+            ) { page?.let(library::toggleSaved) }
+            CircleIcon(Icons.Default.PlayArrow, stringResource(R.string.play), 64.dp, filled = true, enabled = tracks.isNotEmpty()) {
+                playFrom(tracks, 0)
+            }
+            CircleIcon(Icons.Default.Shuffle, stringResource(R.string.shuffle), enabled = tracks.isNotEmpty()) {
+                playFrom(tracks.shuffled(), 0)
+            }
+        }
+    }
+}
+
+/** Play and shuffle for a list (liked songs, a playlist…). */
 @Composable
 fun PlayButtons(tracks: List<Track>) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Button(onClick = { playFrom(tracks, 0) }, Modifier.weight(1f), enabled = tracks.isNotEmpty()) {
-            Icon(Icons.Default.PlayArrow, null)
-            Spacer(Modifier.width(6.dp))
-            Text(stringResource(R.string.play))
+    Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+        CircleIcon(Icons.Default.PlayArrow, stringResource(R.string.play), 56.dp, filled = true, enabled = tracks.isNotEmpty()) {
+            playFrom(tracks, 0)
         }
-        OutlinedButton(onClick = { playFrom(tracks.shuffled(), 0) }, Modifier.weight(1f), enabled = tracks.isNotEmpty()) {
-            Icon(Icons.Default.Shuffle, null)
-            Spacer(Modifier.width(6.dp))
-            Text(stringResource(R.string.shuffle))
+        CircleIcon(Icons.Default.Shuffle, stringResource(R.string.shuffle), enabled = tracks.isNotEmpty()) {
+            playFrom(tracks.shuffled(), 0)
         }
     }
 }

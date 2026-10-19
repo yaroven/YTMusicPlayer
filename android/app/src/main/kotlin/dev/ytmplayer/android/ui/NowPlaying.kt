@@ -5,6 +5,18 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material.icons.outlined.ThumbDown
+import androidx.compose.material.icons.outlined.ThumbUp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -124,11 +136,19 @@ fun NowPlaying() {
                 IconButton(onClick = {
                     setVideo(false)
                     player.showNowPlaying = false
-                }) { Icon(Icons.Default.ExpandMore, stringResource(R.string.close)) }
+                }) { Icon(Icons.Default.ExpandMore, stringResource(R.string.close), Modifier.size(30.dp)) }
                 Spacer(Modifier.weight(1f))
                 if (track != null && pane == null) MediaSwitch(video, ::setVideo)
                 Spacer(Modifier.weight(1f))
-                Spacer(Modifier.width(48.dp))
+                if (track != null) {
+                    Box {
+                        var menu by remember { mutableStateOf(false) }
+                        IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, stringResource(R.string.more)) }
+                        TrackMenu(track, menu, { menu = false })
+                    }
+                } else {
+                    Spacer(Modifier.width(48.dp))
+                }
             }
             if (track == null) {
                 Message(Icons.Default.MusicNote, stringResource(R.string.nothing_playing))
@@ -147,19 +167,24 @@ fun NowPlaying() {
                 }
             }
             Header(track)
+            Actions(track)
             Scrubber()
             Controls()
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                PaneToggle(Icons.Default.Lyrics, stringResource(R.string.lyrics), pane == Pane.Lyrics) {
-                    pane = if (pane == Pane.Lyrics) null else Pane.Lyrics
-                }
-                PaneToggle(Icons.Default.ViewCarousel, stringResource(R.string.related), pane == Pane.Related) {
-                    pane = if (pane == Pane.Related) null else Pane.Related
+            // YouTube Music's UP NEXT / LYRICS / RELATED, plus the sleep timer.
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                listOf(Pane.Queue to R.string.up_next, Pane.Lyrics to R.string.lyrics, Pane.Related to R.string.related).forEach { (target, label) ->
+                    Box(
+                        Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(8.dp))
+                            .clickable { pane = if (pane == target) null else target },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            stringResource(label).uppercase(), fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp,
+                            color = if (pane == target) Color.White else YT.secondary,
+                        )
+                    }
                 }
                 SleepMenu()
-                PaneToggle(Icons.AutoMirrored.Filled.QueueMusic, stringResource(R.string.up_next), pane == Pane.Queue) {
-                    pane = if (pane == Pane.Queue) null else Pane.Queue
-                }
             }
             Spacer(Modifier.height(4.dp))
         }
@@ -221,36 +246,73 @@ private fun Cover(track: Track) {
 
 @Composable
 private fun Header(track: Track) {
-    val app = App.instance
-    val player = app.player
-    val library = app.library
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    track.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
-                )
-                if (track.explicit) {
-                    Spacer(Modifier.width(6.dp))
-                    ExplicitBadge()
-                }
-            }
+    Column(Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.clickable { Router.openArtist(track) },
+                track.title, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
             )
-            Status()
+            if (track.explicit) {
+                Spacer(Modifier.width(8.dp))
+                ExplicitBadge()
+            }
         }
-        IconButton(onClick = { player.dislike(track) }) { Icon(Icons.Default.ThumbDownOffAlt, stringResource(R.string.dislike)) }
+        Text(
+            track.artist, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = YT.secondary,
+            modifier = Modifier.clickable { Router.openArtist(track) },
+        )
+        Status()
+    }
+}
+
+/** 👍 | 👎, Save, Download, Share — YouTube Music's pill row. */
+@Composable
+private fun Actions(track: Track) {
+    val app = App.instance
+    val library = app.library
+    val context = LocalContext.current
+    var saving by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         val liked = library.isLiked(track)
-        IconButton(onClick = { library.toggleLike(track) }) {
-            Icon(
-                if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder, stringResource(R.string.like),
-                tint = if (liked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            )
+        Row(Modifier.height(36.dp).clip(CircleShape).background(YT.raised), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.fillMaxHeight().clickable { library.toggleLike(track) }.padding(horizontal = 14.dp), contentAlignment = Alignment.Center) {
+                Icon(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp, stringResource(R.string.like), Modifier.size(20.dp))
+            }
+            Box(Modifier.width(1.dp).height(18.dp).background(Color.White.copy(alpha = 0.25f)))
+            Box(Modifier.fillMaxHeight().clickable { app.player.dislike(track) }.padding(horizontal = 14.dp), contentAlignment = Alignment.Center) {
+                Icon(Icons.Outlined.ThumbDown, stringResource(R.string.dislike), Modifier.size(20.dp))
+            }
         }
+        Pill(Icons.AutoMirrored.Filled.PlaylistAdd, stringResource(R.string.save)) { saving = true }
+        when {
+            library.isDownloaded(track.videoId) ->
+                Pill(Icons.Default.DownloadDone, stringResource(R.string.downloaded)) { library.removeDownload(track) }
+            track.videoId in library.downloading -> Pill(Icons.Default.Download, stringResource(R.string.downloading)) {}
+            else -> Pill(Icons.Default.Download, stringResource(R.string.download)) { library.download(track) }
+        }
+        Pill(Icons.Default.Share, stringResource(R.string.share)) {
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(android.content.Intent.EXTRA_TEXT, "https://music.youtube.com/watch?v=${track.videoId}")
+            context.startActivity(android.content.Intent.createChooser(send, null))
+        }
+    }
+    if (saving) PlaylistChooser(track) { saving = false }
+}
+
+@Composable
+private fun Pill(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        Modifier.height(36.dp).clip(CircleShape).background(YT.raised).clickable(onClick = onClick).padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -289,6 +351,7 @@ private fun Scrubber() {
                 dragging = null
             },
             valueRange = 0f..maxOf(player.duration.toFloat(), 1f),
+            colors = ytSlider(),
         )
         Row {
             Text(formatTime(shown), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -330,7 +393,7 @@ private fun Controls() {
             Icon(
                 if (player.repeatMode == RepeatMode.One) Icons.Default.RepeatOne else Icons.Default.Repeat,
                 stringResource(R.string.repeat),
-                tint = if (player.repeatMode == RepeatMode.Off) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
+                tint = if (player.repeatMode == RepeatMode.Off) YT.secondary else Color.White,
             )
         }
     }
@@ -510,50 +573,46 @@ private fun RelatedPane(track: Track) {
     }
 }
 
-/** At the bottom of every tab: the song, play/pause, next; a tap opens the player. */
+/** Above the tab bar: the song, play / pause, next; a tap opens the player. */
 @Composable
 fun MiniPlayer() {
     val player = App.instance.player
     val track = player.current ?: return
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color(0xFF2A2A2C))
-            .clickable { player.showNowPlaying = true },
-    ) {
-        Row(Modifier.padding(start = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Artwork(Art.Video(track.videoId), 42.dp)
+    Column(Modifier.fillMaxWidth().background(YT.surface).clickable { player.showNowPlaying = true }) {
+        // Progress line along the top.
+        val fraction = if (player.duration > 0) (player.position / player.duration).toFloat().coerceIn(0f, 1f) else 0f
+        Box(Modifier.fillMaxWidth().height(2.dp).background(Color.White.copy(alpha = 0.15f))) {
+            Box(Modifier.fillMaxWidth(fraction).height(2.dp).background(Color.White))
+        }
+        Row(Modifier.padding(start = 10.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Artwork(Art.Video(track.videoId), 44.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(track.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+                Text(track.title, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (player.error != null || player.waitingForNetwork || (player.slow && player.isPlaying)) {
                     Status(compact = true)
                 } else {
-                    Text(
-                        track.artist, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (track.explicit) {
+                            ExplicitBadge()
+                            Spacer(Modifier.width(5.dp))
+                        }
+                        Text(track.artist, fontSize = 13.sp, color = YT.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
             IconButton(onClick = { player.togglePlay() }) {
                 if (player.isBuffering && player.isPlaying) {
-                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
                 } else {
                     Icon(
                         if (player.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         stringResource(if (player.isPlaying) R.string.pause else R.string.play),
+                        Modifier.size(30.dp),
                     )
                 }
             }
-            IconButton(onClick = { player.next() }) { Icon(Icons.Default.SkipNext, stringResource(R.string.next)) }
+            IconButton(onClick = { player.next() }) { Icon(Icons.Default.SkipNext, stringResource(R.string.next), Modifier.size(28.dp)) }
         }
-        // Progress line along the bottom.
-        val fraction = if (player.duration > 0) (player.position / player.duration).toFloat().coerceIn(0f, 1f) else 0f
-        Box(
-            Modifier.align(Alignment.BottomStart).fillMaxWidth(fraction).height(2.dp)
-                .background(MaterialTheme.colorScheme.primary),
-        )
     }
 }

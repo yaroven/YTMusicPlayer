@@ -594,6 +594,21 @@ Domain terms are defined in `CONTEXT.md`.
   (`allSongsId`) behind it. Measured: first answer 0.4–0.6 s, each further
   100 songs ~0.5 s.
 
+- **Phones look like YouTube Music** (user's request 2026-10-19, with a
+  screenshot of the official app): near-black `#030303`, white text, grey
+  `#AAAAAA`, translucent chips, white for selection (no accent colour),
+  red only in the "▶ Music" logo; Home = logo + avatar (→ Settings), mood
+  chips (`chipCloudChipRenderer`, Home again with their `params`), shelves
+  by style (`ShelfStyle`: song rows → 3-row grid of tiles with dots, 16:9 →
+  wide cards, else cards; strapline + avatar over the title, "Play all"),
+  ambient blurred art behind the top. Home is paged: the first answer has
+  2 shelves, `moreHome` (the section list's `nextContinuationData` + the
+  first answer's `visitorData`, required) brings ~3 more per call. Titles
+  come in the app's language (`hl`), except `next`, whose tab titles
+  ("Lyrics", "Related") are parsed in English. Player: ⌄ / ♪▶ / ⋮, pill row
+  (👍|👎, Save, Download, Share), white scrubber, UP NEXT / LYRICS /
+  RELATED. Library: chips + one list; settings moved behind the avatar.
+
 ## Open TODOs
 
 - Android: try on a real phone (Google sign-in in the WebView — Google may

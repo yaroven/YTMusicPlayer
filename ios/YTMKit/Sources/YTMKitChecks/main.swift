@@ -269,6 +269,23 @@ let albumRow = #"""
         {"continuationItemRenderer":{"continuationEndpoint":{"continuationCommand":{"token":"songs"}}}}]}}]}}}
     """#)
     check(continuation(twoTokens) == "songs", "the track list's continuation")
+
+    // Home: mood chips, shelf styles, the strapline.
+    let home = json(#"""
+    {"contents":[{"chipCloudChipRenderer":{"text":{"runs":[{"text":"Relax"}]},
+        "navigationEndpoint":{"browseEndpoint":{"browseId":"FEmusic_home","params":"relax"}}}},
+      {"musicCarouselShelfRenderer":{"header":{"musicCarouselShelfBasicHeaderRenderer":{
+          "title":{"runs":[{"text":"Quick picks"}]},"strapline":{"runs":[{"text":"JANE"}]}}},
+        "contents":[\#(songRow)]}},
+      {"musicCarouselShelfRenderer":{"header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Videos"}]}}},
+        "contents":[{"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"Clip"}]},"aspectRatio":"MUSIC_TWO_ROW_ITEM_THUMBNAIL_ASPECT_RATIO_RECTANGLE_16_9",
+          "navigationEndpoint":{"watchEndpoint":{"videoId":"x"}}}}]}}],
+     "continuations":[{"nextContinuationData":{"continuation":"more"}}]}
+    """#)
+    check(parseHomeChips(home) == [HomeChip(title: "Relax", params: "relax")], "home chips")
+    let homeShelves = parseShelves(home)
+    check(homeShelves.map(\.style) == [.grid, .wide] && homeShelves[0].strapline == "JANE", "shelf styles \(homeShelves.map(\.style))")
+    check(homeContinuation(home) == "more", "home continuation")
 }
 
 @MainActor func live() async throws {
@@ -309,6 +326,18 @@ let albumRow = #"""
     check(suggested.contains { $0.contains("dancing") }, "live suggestions")
     let explicitSongs = try await catalog.search("eminem", kind: .songs)
     check(explicitSongs.contains(where: \.explicit), "live E badges")
+
+    // Home in Ukrainian, with its chips and more shelves behind the first.
+    let feed = try await Catalog(language: "uk").homeFeed()
+    print("home feed: \(feed.chips.prefix(3).map(\.title)), \(feed.shelves.map(\.title))")
+    check(!feed.chips.isEmpty, "home chips live")
+    if let token = feed.continuation {
+        let more = try await Catalog(language: "uk").moreHome(token, visitor: feed.visitor)
+        print("more home: \(more.shelves.map(\.title))")
+        check(!more.shelves.isEmpty, "more home shelves")
+    } else {
+        check(false, "home continuation live")
+    }
 
     // Long playlists: every song, and the first answer on its own (fast).
     let long = try await catalog.page("VLPL0GvsLQil0MmYC96KEs_7dTNsLm1PS6JX")

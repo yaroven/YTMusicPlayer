@@ -3,6 +3,22 @@ package dev.ytmplayer.android.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -10,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -69,129 +86,99 @@ import dev.ytmplayer.android.R
 import dev.ytmplayer.core.ItemKind
 import kotlinx.coroutines.launch
 
+/** What the library list shows: everything, or one kind. */
+private enum class LibraryFilter(val label: Int) {
+    Playlists(R.string.playlists), Songs(R.string.songs), Albums(R.string.albums), Artists(R.string.artists), Downloads(R.string.downloads),
+}
+
+/**
+ * YouTube Music's Library: chips to narrow it, then liked music, downloads,
+ * history, playlists and saved albums / artists as one list. Settings live
+ * behind the avatar.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen() {
     val app = App.instance
     val library = app.library
     val account = app.account
-    val player = app.player
     val scope = rememberCoroutineScope()
     var naming by remember { mutableStateOf(false) }
-    var signingIn by remember { mutableStateOf(false) }
-    var confirmSignOut by remember { mutableStateOf(false) }
-    var choosingLanguage by remember { mutableStateOf(false) }
+    var filter by rememberSaveable { mutableStateOf<LibraryFilter?>(null) }
 
     LaunchedEffect(account.signedIn) {
         if (library.needsFirstSync) library.sync()
     }
 
-    Column(Modifier.fillMaxSize()) {
-        TopBar(stringResource(R.string.library))
-        PullToRefreshBox(library.syncing, onRefresh = { scope.launch { library.sync() } }) {
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+    PullToRefreshBox(library.syncing, onRefresh = { scope.launch { library.sync() } }) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+            item {
+                Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.library), fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { naming = true }) { Icon(Icons.Default.Add, stringResource(R.string.new_playlist)) }
+                    AvatarButton()
+                }
+                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(LibraryFilter.entries) { f ->
+                        ChipButton(stringResource(f.label), filter == f) { filter = if (filter == f) null else f }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+            if (filter == null || filter == LibraryFilter.Songs) {
                 item {
                     Entry(
-                        Icons.Default.Favorite,
                         stringResource(if (account.signedIn) R.string.liked_music else R.string.liked_songs),
-                        library.liked.size.takeIf { it > 0 }?.toString(),
+                        songsCount(library.liked.size), { LikedArt() },
                     ) { Router.open(Route.List(LocalList.Liked)) }
-                    Entry(Icons.Default.History, stringResource(R.string.history)) { Router.open(Route.List(LocalList.History)) }
-                    Entry(
-                        Icons.Default.DownloadForOffline, stringResource(R.string.downloads),
-                        library.downloads.size.takeIf { it > 0 }?.toString(),
-                    ) { Router.open(Route.List(LocalList.Downloads)) }
                 }
-                item { SectionTitle(stringResource(R.string.playlists)) }
+            }
+            if (filter == null || filter == LibraryFilter.Downloads) {
+                item {
+                    Entry(stringResource(R.string.downloads), songsCount(library.downloads.size), { IconArt(Icons.Default.DownloadForOffline) }) {
+                        Router.open(Route.List(LocalList.Downloads))
+                    }
+                }
+            }
+            if (filter == null) {
+                item {
+                    Entry(stringResource(R.string.history), songsCount(library.history.size), { IconArt(Icons.Default.History) }) {
+                        Router.open(Route.List(LocalList.History))
+                    }
+                }
+            }
+            if (filter == null || filter == LibraryFilter.Playlists) {
                 items(library.playlists, key = { it.id }) { p ->
-                    Entry(Icons.AutoMirrored.Filled.QueueMusic, p.name, p.tracks.size.toString()) {
-                        Router.open(Route.List(LocalList.Playlist(p.id)))
-                    }
+                    Entry(p.name, songsCount(p.tracks.size), {
+                        Artwork(p.tracks.firstOrNull()?.let { Art.Video(it.videoId) } ?: Art.None, 56.dp)
+                    }) { Router.open(Route.List(LocalList.Playlist(p.id))) }
                 }
-                item { Entry(Icons.Default.Add, stringResource(R.string.new_playlist)) { naming = true } }
-                if (library.saved.isNotEmpty()) {
-                    item { SectionTitle(stringResource(R.string.saved_pages)) }
-                    items(library.saved, key = { it.id }) { s ->
-                        var menu by remember { mutableStateOf(false) }
-                        val item = dev.ytmplayer.core.Item(s.kind, s.id, s.title, s.subtitle, s.thumbnail)
-                        LaunchedEffect(s.id) { PageCache.note(item) }
-                        Row(
-                            Modifier.fillMaxWidth().prefetchOnPress(item).clickable { Router.open(Route.Page(s.id)) }
-                                .padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Artwork(s.thumbnail?.let { Art.Url(it) } ?: Art.None, 48.dp, round = s.kind == ItemKind.Artist)
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(s.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    s.subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            IconButton(onClick = { menu = true }) {
-                                Icon(Icons.Default.MoreVert, stringResource(R.string.more))
-                                DropdownMenu(menu, { menu = false }) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.remove_from_library)) },
-                                        leadingIcon = { Icon(Icons.Default.Delete, null) },
-                                        onClick = {
-                                            menu = false
-                                            library.deleteSaved(s.id)
-                                        },
-                                    )
-                                }
-                            }
+            }
+            val saved = library.saved.filter {
+                when (filter) {
+                    null -> true
+                    LibraryFilter.Albums -> it.kind == ItemKind.Album
+                    LibraryFilter.Artists -> it.kind == ItemKind.Artist
+                    LibraryFilter.Playlists -> it.kind == ItemKind.Playlist
+                    else -> false
+                }
+            }
+            items(saved, key = { it.id }) { s ->
+                var menu by remember { mutableStateOf(false) }
+                Box {
+                    ItemRow(dev.ytmplayer.core.Item(s.kind, s.id, s.title, s.subtitle, s.thumbnail))
+                    Box(Modifier.align(Alignment.CenterEnd)) {
+                        IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, stringResource(R.string.more), tint = YT.secondary) }
+                        DropdownMenu(menu, { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.remove_from_library)) },
+                                leadingIcon = { Icon(Icons.Default.Delete, null) },
+                                onClick = {
+                                    menu = false
+                                    library.deleteSaved(s.id)
+                                },
+                            )
                         }
-                    }
-                }
-
-                item { SectionTitle(stringResource(R.string.google_account)) }
-                item {
-                    if (account.signedIn) {
-                        Entry(Icons.Default.Sync, stringResource(R.string.sync_library), trailing = if (library.syncing) "…" else null) {
-                            scope.launch { library.sync() }
-                        }
-                        Entry(Icons.AutoMirrored.Filled.Logout, stringResource(R.string.sign_out)) { confirmSignOut = true }
-                    } else {
-                        Entry(Icons.Default.PersonAdd, stringResource(R.string.sign_in_google)) { signingIn = true }
-                    }
-                    Entry(Icons.Default.MedicalServices, stringResource(R.string.age_test_title)) { Router.open(Route.AgeTest) }
-                    Footnote(
-                        when {
-                            library.syncing -> stringResource(R.string.syncing)
-                            account.signedIn && account.name != null -> stringResource(R.string.signed_in_as, account.name!!)
-                            account.signedIn -> stringResource(R.string.signed_in)
-                            else -> stringResource(R.string.sign_in_why)
-                        },
-                    )
-                }
-
-                item { SectionTitle(stringResource(R.string.playback)) }
-                item {
-                    Toggle(stringResource(R.string.autoplay), player.autoplay, player::changeAutoplay)
-                    Toggle(stringResource(R.string.normalize), player.normalize, player::changeNormalize)
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Text(
-                            if (player.crossfade == 0) stringResource(R.string.crossfade_off)
-                            else stringResource(R.string.crossfade_seconds, player.crossfade),
-                        )
-                        Slider(
-                            player.crossfade.toFloat(), { player.changeCrossfade(it.toInt()) },
-                            valueRange = 0f..12f, steps = 11,
-                        )
-                    }
-                    Entry(Icons.Default.Language, stringResource(R.string.language), Lang.label(LocalContext.current)) {
-                        choosingLanguage = true
-                    }
-                }
-
-                item {
-                    val context = LocalContext.current
-                    SectionTitle(stringResource(R.string.about))
-                    Entry(Icons.Default.MusicNote, stringResource(R.string.version), BuildConfig.VERSION_NAME) {}
-                    Entry(Icons.Default.Code, stringResource(R.string.source_code)) {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/yaroven/YTMusicPlayer")))
                     }
                 }
             }
@@ -202,6 +189,120 @@ fun LibraryScreen() {
         NameDialog(stringResource(R.string.new_playlist), "", { naming = false }) {
             library.createPlaylist(it)
             naming = false
+        }
+    }
+}
+
+/** "Liked music": YouTube Music's purple tile with a thumbs-up. */
+@Composable
+private fun LikedArt() {
+    Box(
+        Modifier.size(56.dp).clip(RoundedCornerShape(5.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF8C73F2), Color(0xFFE566BF)))),
+        contentAlignment = Alignment.Center,
+    ) { Icon(Icons.Default.ThumbUp, null, tint = Color.White) }
+}
+
+@Composable
+private fun IconArt(icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    Box(Modifier.size(56.dp).clip(RoundedCornerShape(5.dp)).background(YT.surface), contentAlignment = Alignment.Center) {
+        Icon(icon, null, tint = Color.White)
+    }
+}
+
+/** A library entry: picture, title, "N songs". */
+@Composable
+private fun Entry(title: String, subtitle: String, art: @Composable () -> Unit, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        art()
+        Spacer(Modifier.width(14.dp))
+        Column {
+            Text(title, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, fontSize = 14.sp, color = YT.secondary)
+        }
+    }
+}
+
+/** The avatar's screen: the Google account, playback, language, about. */
+@Composable
+fun SettingsScreen() {
+    val app = App.instance
+    val library = app.library
+    val account = app.account
+    val player = app.player
+    val scope = rememberCoroutineScope()
+    var signingIn by remember { mutableStateOf(false) }
+    var confirmSignOut by remember { mutableStateOf(false) }
+    var choosingLanguage by remember { mutableStateOf(false) }
+
+    Column(Modifier.fillMaxSize()) {
+        TopBar(stringResource(R.string.settings), back = true)
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(48.dp).clip(CircleShape)) {
+                        val photo = account.photo
+                        if (photo != null) {
+                            coil.compose.AsyncImage(photo, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                        } else {
+                            Icon(Icons.Default.AccountCircle, null, Modifier.fillMaxSize(), tint = YT.secondary)
+                        }
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column {
+                        Text(
+                            account.name ?: stringResource(if (account.signedIn) R.string.signed_in_short else R.string.not_signed_in),
+                            fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(stringResource(R.string.google_account), fontSize = 14.sp, color = YT.secondary)
+                    }
+                }
+            }
+            item {
+                if (account.signedIn) {
+                    SettingRow(Icons.Default.Sync, stringResource(R.string.sync_library), trailing = if (library.syncing) "…" else null) {
+                        scope.launch { library.sync() }
+                    }
+                    SettingRow(Icons.AutoMirrored.Filled.Logout, stringResource(R.string.sign_out)) { confirmSignOut = true }
+                } else {
+                    SettingRow(Icons.Default.PersonAdd, stringResource(R.string.sign_in_google)) { signingIn = true }
+                }
+                SettingRow(Icons.Default.MedicalServices, stringResource(R.string.age_test_title)) { Router.open(Route.AgeTest) }
+                Footnote(
+                    when {
+                        library.syncing -> stringResource(R.string.syncing)
+                        account.signedIn && account.name != null -> stringResource(R.string.signed_in_as, account.name!!)
+                        account.signedIn -> stringResource(R.string.signed_in)
+                        else -> stringResource(R.string.sign_in_why)
+                    },
+                )
+            }
+            item { SectionTitle(stringResource(R.string.playback)) }
+            item {
+                Toggle(stringResource(R.string.autoplay), player.autoplay, player::changeAutoplay)
+                Toggle(stringResource(R.string.normalize), player.normalize, player::changeNormalize)
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Text(
+                        if (player.crossfade == 0) stringResource(R.string.crossfade_off)
+                        else stringResource(R.string.crossfade_seconds, player.crossfade),
+                    )
+                    Slider(player.crossfade.toFloat(), { player.changeCrossfade(it.toInt()) }, valueRange = 0f..12f, steps = 11, colors = ytSlider())
+                }
+                SettingRow(Icons.Default.Language, stringResource(R.string.language), Lang.label(LocalContext.current)) {
+                    choosingLanguage = true
+                }
+            }
+            item {
+                val context = LocalContext.current
+                SectionTitle(stringResource(R.string.about))
+                SettingRow(Icons.Default.MusicNote, stringResource(R.string.version), BuildConfig.VERSION_NAME) {}
+                SettingRow(Icons.Default.Code, stringResource(R.string.source_code)) {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/yaroven/YTMusicPlayer")))
+                }
+            }
         }
     }
     if (signingIn) SignInDialog { signingIn = false }
@@ -251,7 +352,7 @@ private fun LanguageDialog(onDismiss: () -> Unit) {
 }
 
 @Composable
-fun Entry(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, trailing: String? = null, onClick: () -> Unit) {
+fun SettingRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, trailing: String? = null, onClick: () -> Unit) {
     ListItem(
         headlineContent = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         leadingContent = { Icon(icon, null) },

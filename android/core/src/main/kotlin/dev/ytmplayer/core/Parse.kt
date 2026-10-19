@@ -140,9 +140,18 @@ fun songsIn(data: Any, albumArtist: String? = null): List<Track> =
  */
 fun parseShelves(data: Any): List<Shelf> {
     val carousels = findAll(data, "musicCarouselShelfRenderer").mapNotNull { shelf ->
-        val title = text(pointer(shelf, "header/musicCarouselShelfBasicHeaderRenderer/title"))
-        val items = shelfItems((shelf as? JSONObject)?.arr("contents")?.objects().orEmpty())
-        if (items.isEmpty()) null else Shelf(title, items)
+        val header = pointer(shelf, "header/musicCarouselShelfBasicHeaderRenderer")
+        val contents = (shelf as? JSONObject)?.arr("contents")?.objects().orEmpty()
+        val items = shelfItems(contents)
+        if (items.isEmpty()) return@mapNotNull null
+        val rows = contents.all { it.has("musicResponsiveListItemRenderer") }
+        val wide = contents.any { (string(it, "musicTwoRowItemRenderer/aspectRatio") ?: "").contains("16_9") }
+        Shelf(
+            text(pointer(header, "title")), items,
+            style = if (rows) ShelfStyle.Grid else if (wide) ShelfStyle.Wide else ShelfStyle.Cards,
+            strapline = text(pointer(header, "strapline")),
+            straplineArt = thumbnail(pointer(header, "thumbnail")),
+        )
     }
     val grids = findAll(data, "gridRenderer").mapNotNull { grid ->
         val title = text(pointer(grid, "header/gridHeaderRenderer/title"))
@@ -211,6 +220,16 @@ fun tabBrowseId(next: Any, title: String): String? {
     val tab = findAll(next, "tabRenderer").firstOrNull { (it as? JSONObject)?.str("title") == title }
     return string(tab, "endpoint/browseEndpoint/browseId")
 }
+
+/** Home's mood chips (each a filtered Home). */
+fun parseHomeChips(data: Any): List<HomeChip> = findAll(data, "chipCloudChipRenderer").mapNotNull { chip ->
+    val title = text((chip as? JSONObject)?.opt("text"))
+    val params = string(chip, "navigationEndpoint/browseEndpoint/params") ?: return@mapNotNull null
+    if (title.isEmpty()) null else HomeChip(title, params)
+}
+
+/** More of Home's shelves: the section list's own continuation. */
+fun homeContinuation(data: Any): String? = (findFirst(data, "nextContinuationData") as? JSONObject)?.str("continuation")
 
 /** Plain query strings from `music/get_search_suggestions`. */
 fun parseSuggestions(data: Any): List<String> = findAll(data, "searchSuggestionRenderer")

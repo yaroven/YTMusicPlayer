@@ -73,10 +73,45 @@ data class Item(
     val id: String get() = "${kind.name}:$browseId"
 }
 
+/** How YouTube Music lays a shelf out. */
+enum class ShelfStyle {
+    /** Square cards in a row (albums, playlists, artists). */
+    Cards,
+
+    /** Song rows ("Quick picks"): a grid of small tiles, three rows high. */
+    Grid,
+
+    /** 16:9 cards (music videos). */
+    Wide,
+}
+
 /** A titled row of cards. */
-data class Shelf(val title: String, val items: List<Item>) {
+data class Shelf(
+    val title: String,
+    val items: List<Item>,
+    val style: ShelfStyle = ShelfStyle.Cards,
+    /** The small line above the title ("JANE DOE", "TIMELESS CLASSICS"). */
+    val strapline: String = "",
+    /** The round picture next to it (the account, an artist). */
+    val straplineArt: String? = null,
+) {
     val id: String get() = title + (items.firstOrNull()?.id ?: "")
 }
+
+/** A mood chip over Home ("Relax", "Workout"): Home again, filtered. */
+data class HomeChip(val title: String, val params: String)
+
+/** Home: its chips, its first shelves, and how to get more of them. */
+data class HomeFeed(
+    val chips: List<HomeChip>,
+    val shelves: List<Shelf>,
+    val continuation: String?,
+    /** The visitor id YouTube gave; continuations need it back. */
+    val visitor: String?,
+)
+
+/** Who is signed in. */
+data class AccountInfo(val name: String, val photo: String?)
 
 /** An album, artist or playlist page. */
 data class Page(

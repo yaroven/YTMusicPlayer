@@ -8,13 +8,28 @@ import org.json.JSONObject
  * (personal home, its library). Mirrors YTMKit's Catalog.swift.
  */
 class Catalog(private val auth: Auth? = null) {
+    /** The language shelves, titles and chips come in ("en", "uk"). */
+    @Volatile
+    var language: String = "en"
+
     /** Whether requests go as an account. */
     val signedIn: Boolean get() = auth?.signedIn == true
 
-    internal suspend fun call(endpoint: String, body: JSONObject): JSONObject {
+    /**
+     * `english`: the answer is parsed by its English labels (the song's
+     * "Lyrics" / "Related" tabs). `visitor`: continuations of a feed need
+     * the visitor id its first answer came with.
+     */
+    internal suspend fun call(endpoint: String, body: JSONObject, english: Boolean = false, visitor: String? = null): JSONObject {
+        val hl = if (english) "en" else language
         body.put(
             "context",
-            json("client" to mapOf("clientName" to "WEB_REMIX", "clientVersion" to CLIENT_VERSION, "hl" to "en", "gl" to "US")),
+            json(
+                "client" to mapOf(
+                    "clientName" to "WEB_REMIX", "clientVersion" to CLIENT_VERSION,
+                    "hl" to hl, "gl" to if (hl == "uk") "UA" else "US", "visitorData" to visitor,
+                ),
+            ),
         )
         val headers = mutableMapOf(
             "Content-Type" to "application/json",
@@ -87,6 +102,19 @@ class Catalog(private val auth: Auth? = null) {
 
     suspend fun home(): List<Shelf> = parseShelves(call("browse", json("browseId" to "FEmusic_home")))
 
+    /** Home's first shelves and mood chips; with `params` (a chip's), Home for that mood. */
+    suspend fun homeFeed(params: String? = null): HomeFeed {
+        val data = call("browse", json("browseId" to "FEmusic_home", "params" to params))
+        return HomeFeed(parseHomeChips(data), parseShelves(data), homeContinuation(data), string(data, "responseContext/visitorData"))
+    }
+
+    /** Home's next shelves (three or so at a time) and the token after. */
+    suspend fun moreHome(token: String, visitor: String?): Pair<List<Shelf>, String?> {
+        val data = call("browse", json("continuation" to token), visitor = visitor)
+        val shelves = parseShelves(data)
+        return shelves to if (shelves.isEmpty()) null else homeContinuation(data)
+    }
+
     /** What YouTube Music plays after the song (≈50 songs, the song first). */
     suspend fun radio(videoId: String): List<Track> = parseRadio(next(videoId))
 
@@ -106,9 +134,13 @@ class Catalog(private val auth: Auth? = null) {
     suspend fun artistId(videoId: String): String? = artistIdIn(next(videoId), videoId)
 
     /** The signed-in account's name, to show who is signed in. */
-    suspend fun accountName(): String? {
-        val name = text(findFirst(call("account/account_menu", JSONObject()), "accountName"))
-        return name.ifEmpty { null }
+    suspend fun accountName(): String? = accountInfo()?.name
+
+    /** The signed-in account's name and picture. */
+    suspend fun accountInfo(): AccountInfo? {
+        val data = call("account/account_menu", JSONObject())
+        val name = text(findFirst(data, "accountName")).ifEmpty { return null }
+        return AccountInfo(name, thumbnail(findFirst(data, "accountPhoto")))
     }
 
     suspend fun likedSongs(): List<Track> = page("VLLM").tracks
@@ -211,7 +243,7 @@ class Catalog(private val auth: Auth? = null) {
     }
 
     private suspend fun next(videoId: String): JSONObject =
-        call("next", json("videoId" to videoId, "playlistId" to "RDAMVM$videoId", "isAudioOnly" to true))
+        call("next", json("videoId" to videoId, "playlistId" to "RDAMVM$videoId", "isAudioOnly" to true), english = true)
 
     companion object {
         const val BASE = "https://music.youtube.com/youtubei/v1"

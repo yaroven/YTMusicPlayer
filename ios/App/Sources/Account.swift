@@ -10,6 +10,7 @@ import WebKit
 final class Account {
     private(set) var signedIn = Services.auth.signedIn
     private(set) var name: String?
+    private(set) var photo: URL?
 
     init() {
         if signedIn { loadName() }
@@ -28,11 +29,16 @@ final class Account {
         Services.auth.set([:])
         signedIn = false
         name = nil
+        photo = nil
         Task { await Services.resolver.reset() }
     }
 
     private func loadName() {
-        Task { name = try? await Services.catalog.accountName() }
+        Task {
+            let info = try? await Services.catalog.accountInfo()
+            name = info?.name
+            photo = info?.photo
+        }
     }
 }
 

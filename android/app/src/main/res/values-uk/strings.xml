@@ -153,4 +153,10 @@
     <string name="moving_song">Переміщення пісні</string>
     <string name="download_failed">Завантаження не вдалось: %1$s</string>
     <string name="download_age_restricted">Пісні 18+ не можна зберегти для офлайну</string>
+
+    <string name="settings">Налаштування</string>
+    <string name="play_all">Відтворити все</string>
+    <string name="share">Поділитися</string>
+    <string name="signed_in_short">Вхід виконано</string>
+    <string name="not_signed_in">Вхід не виконано</string>
 </resources>

@@ -36,6 +36,14 @@ class LiveTest {
         assertTrue(suggested.any { it.contains("dancing") })
         assertTrue(catalog.search("eminem", SearchKind.Songs).any { it.explicit }, "E badges")
         assertTrue(catalog.related("YkLLcIKhJ64").isNotEmpty(), "related")
+        // Home in Ukrainian, with its chips and more shelves behind the first.
+        val uk = Catalog().apply { language = "uk" }
+        val feed = uk.homeFeed()
+        println("home feed: ${feed.chips.take(3).map { it.title }}, ${feed.shelves.map { it.title }}")
+        assertTrue(feed.chips.isNotEmpty(), "home chips")
+        val more = uk.moreHome(feed.continuation!!, feed.visitor)
+        println("more home: ${more.first.map { it.title }}")
+        assertTrue(more.first.isNotEmpty(), "more home shelves")
         // Long playlists: every song, and the first answer on its own (fast).
         val long = catalog.page("VLPL0GvsLQil0MmYC96KEs_7dTNsLm1PS6JX")
         val quick = catalog.page("VLPL0GvsLQil0MmYC96KEs_7dTNsLm1PS6JX", full = false)

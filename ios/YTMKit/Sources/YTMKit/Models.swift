@@ -98,16 +98,57 @@ public struct Item: Hashable, Identifiable, Sendable {
     }
 }
 
+/// How YouTube Music lays a shelf out.
+public enum ShelfStyle: Sendable, Hashable {
+    /// Square cards in a row (albums, playlists, artists).
+    case cards
+    /// Song rows ("Quick picks"): a grid of small tiles, three rows high.
+    case grid
+    /// 16:9 cards (music videos).
+    case wide
+}
+
 /// A titled row of cards.
 public struct Shelf: Hashable, Identifiable, Sendable {
     public var title: String
     public var items: [Item]
+    public var style: ShelfStyle
+    /// The small line above the title ("JANE DOE", "TIMELESS CLASSICS").
+    public var strapline: String
+    /// The round picture next to it (the account, an artist).
+    public var straplineArt: URL?
     public var id: String { title + (items.first?.id ?? "") }
 
-    public init(title: String, items: [Item]) {
+    public init(title: String, items: [Item], style: ShelfStyle = .cards, strapline: String = "",
+                straplineArt: URL? = nil) {
         self.title = title
         self.items = items
+        self.style = style
+        self.strapline = strapline
+        self.straplineArt = straplineArt
     }
+}
+
+/// A mood chip over Home ("Relax", "Workout"): Home again, filtered.
+public struct HomeChip: Hashable, Identifiable, Sendable {
+    public var title: String
+    public var params: String
+    public var id: String { params }
+}
+
+/// Home: its chips, its first shelves, and how to get more of them.
+public struct HomeFeed: Sendable {
+    public var chips: [HomeChip]
+    public var shelves: [Shelf]
+    public var continuation: String?
+    /// The visitor id YouTube gave; continuations need it back.
+    public var visitor: String?
+}
+
+/// Who is signed in.
+public struct AccountInfo: Sendable {
+    public var name: String
+    public var photo: URL?
 }
 
 /// An album, artist or playlist page.

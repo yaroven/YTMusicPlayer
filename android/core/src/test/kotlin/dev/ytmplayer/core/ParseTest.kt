@@ -234,6 +234,26 @@ class ParseTest {
     }
 
     @Test
+    fun homeChipsAndShelfStyles() {
+        val home = j(
+            """{"contents":[{"chipCloudChipRenderer":{"text":{"runs":[{"text":"Relax"}]},
+                "navigationEndpoint":{"browseEndpoint":{"browseId":"FEmusic_home","params":"relax"}}}},
+              {"musicCarouselShelfRenderer":{"header":{"musicCarouselShelfBasicHeaderRenderer":{
+                  "title":{"runs":[{"text":"Quick picks"}]},"strapline":{"runs":[{"text":"JANE"}]}}},
+                "contents":[$songRow]}},
+              {"musicCarouselShelfRenderer":{"header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Videos"}]}}},
+                "contents":[{"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"Clip"}]},"aspectRatio":"MUSIC_TWO_ROW_ITEM_THUMBNAIL_ASPECT_RATIO_RECTANGLE_16_9",
+                  "navigationEndpoint":{"watchEndpoint":{"videoId":"x"}}}}]}}],
+             "continuations":[{"nextContinuationData":{"continuation":"more"}}]}""",
+        )
+        assertEquals(listOf(HomeChip("Relax", "relax")), parseHomeChips(home))
+        val shelves = parseShelves(home)
+        assertEquals(listOf(ShelfStyle.Grid, ShelfStyle.Wide), shelves.map { it.style })
+        assertEquals("JANE", shelves[0].strapline)
+        assertEquals("more", homeContinuation(home))
+    }
+
+    @Test
     fun followsTheTrackListsContinuation() {
         // A playlist page has the section list's continuation (more shelves)
         // as well as its track list's: the track list's is the one to follow.

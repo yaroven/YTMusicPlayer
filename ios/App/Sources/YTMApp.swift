@@ -23,7 +23,7 @@ struct YTMApp: App {
                 .environment(player)
                 .environment(router)
                 .environment(account)
-                .tint(.accentColor)
+                .tint(.white)
                 .preferredColorScheme(.dark)
         }
     }

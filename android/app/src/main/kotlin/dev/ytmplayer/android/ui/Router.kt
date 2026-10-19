@@ -20,6 +20,7 @@ sealed interface Route {
     data class Page(val id: String) : Route
     data class List(val list: LocalList) : Route
     object AgeTest : Route
+    object Settings : Route
 }
 
 /** Each tab's back stack, so "Go to artist" works from anywhere. */

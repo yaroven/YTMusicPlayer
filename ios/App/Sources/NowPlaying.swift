@@ -2,6 +2,10 @@ import AVKit
 import SwiftUI
 import YTMKit
 
+/// YouTube Music's player: ⌄ and the song / video switch at the top, the
+/// big cover (or the clip), title and artist, a row of pill actions, the
+/// scrubber, the controls, and UP NEXT / LYRICS / RELATED at the bottom —
+/// over the cover's own colours.
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
@@ -11,17 +15,24 @@ struct NowPlayingView: View {
     @State private var video = false
     @State private var videoStart: TimeInterval = 0
     @State private var videoAt: TimeInterval?
+    @State private var addingToPlaylist = false
 
-    enum Pane {
-        case lyrics, queue, related
+    enum Pane: CaseIterable {
+        case queue, lyrics, related
+
+        var title: LocalizedStringKey {
+            switch self {
+            case .queue: "UP NEXT"
+            case .lyrics: "LYRICS"
+            case .related: "RELATED"
+            }
+        }
     }
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 16) {
             if let track = player.current {
-                if pane == nil {
-                    MediaSwitch(video: $video)
-                }
+                topBar(track)
                 Group {
                     switch pane {
                     case nil where video && !Connectivity.shared.online:
@@ -39,16 +50,17 @@ struct NowPlayingView: View {
                 .frame(maxHeight: .infinity)
                 .animation(.easeInOut(duration: 0.25), value: pane)
                 header(track)
+                actions(track)
                 Scrubber()
                 controls
-                footer
+                tabs
             } else {
                 ContentUnavailableView("Nothing playing", systemImage: "music.note")
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 28)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 22)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
         .onChange(of: video) { _, on in
             if on {
                 videoAt = nil
@@ -69,17 +81,40 @@ struct NowPlayingView: View {
         }
         .background {
             ZStack {
-                Color.black
+                YT.background
                 if let track = player.current {
-                    // The cover, blurred, as better-lyrics does.
                     Artwork(source: .video(track.videoId), size: 200)
                         .scaleEffect(4)
-                        .blur(radius: 60)
-                        .opacity(0.6)
+                        .blur(radius: 70)
+                        .opacity(0.65)
                 }
-                LinearGradient(colors: [.black.opacity(0.2), .black.opacity(0.7)], startPoint: .top, endPoint: .bottom)
+                LinearGradient(colors: [.black.opacity(0.15), .black.opacity(0.8)], startPoint: .top, endPoint: .bottom)
             }
             .ignoresSafeArea()
+        }
+        .sheet(isPresented: $addingToPlaylist) {
+            if let track = player.current { PlaylistPicker(track: track) }
+        }
+    }
+
+    private func topBar(_ track: Track) -> some View {
+        HStack {
+            Button { player.showNowPlaying = false } label: {
+                Image(systemName: "chevron.down").font(.system(size: 20, weight: .semibold)).frame(width: 40, height: 40)
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            if pane == nil { MediaSwitch(video: $video) }
+            Spacer()
+            Menu {
+                sleepMenu
+                TrackMenuItems(track: track)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .rotationEffect(.degrees(90))
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 40, height: 40)
+            }
         }
     }
 
@@ -87,7 +122,7 @@ struct NowPlayingView: View {
         GeometryReader { geo in
             Artwork(source: .video(track.videoId), size: min(geo.size.width, geo.size.height))
                 .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
-                .scaleEffect(player.isPlaying ? 1 : 0.86)
+                .scaleEffect(player.isPlaying ? 1 : 0.9)
                 .animation(.spring(response: 0.45, dampingFraction: 0.7), value: player.isPlaying)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // The cover itself plays and pauses.
@@ -99,64 +134,102 @@ struct NowPlayingView: View {
     }
 
     private func header(_ track: Track) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
                 Text(track.title)
-                    .font(.title3.bold())
+                    .font(.system(size: 22, weight: .bold))
                     .lineLimit(1)
-                Button {
-                    player.showNowPlaying = false
-                    router.openArtist(of: track)
-                } label: {
-                    Text(track.artist)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                .buttonStyle(.plain)
-                if let status = player.statusText {
-                    Text(status)
-                        .font(.caption)
-                        .foregroundStyle(player.error == nil ? Color.secondary : Color.red)
-                        .lineLimit(2)
-                }
+                if track.explicit { ExplicitBadge() }
             }
-            Spacer()
-            Button { player.dislike(track) } label: {
-                Image(systemName: "hand.thumbsdown")
-                    .font(.title2)
-                    .foregroundStyle(Color.primary)
+            Button {
+                player.showNowPlaying = false
+                router.openArtist(of: track)
+            } label: {
+                Text(track.artist)
+                    .font(.system(size: 16))
+                    .foregroundStyle(YT.secondary)
+                    .lineLimit(1)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Dislike")
-            let liked = library.isLiked(track)
-            Button { library.toggleLike(track) } label: {
-                Image(systemName: liked ? "heart.fill" : "heart")
-                    .font(.title2)
-                    .foregroundStyle(liked ? Color.accentColor : Color.primary)
-                    .symbolEffect(.bounce, value: liked)
+            if let status = player.statusText {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(player.error == nil ? YT.secondary : Color.red)
+                    .lineLimit(2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 👍 | 👎, Save, Download, Share — YouTube Music's pill row.
+    private func actions(_ track: Track) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                let liked = library.isLiked(track)
+                HStack(spacing: 0) {
+                    Button { library.toggleLike(track) } label: {
+                        Image(systemName: liked ? "hand.thumbsup.fill" : "hand.thumbsup")
+                            .symbolEffect(.bounce, value: liked)
+                            .padding(.leading, 14)
+                            .padding(.trailing, 12)
+                    }
+                    Rectangle().fill(.white.opacity(0.25)).frame(width: 1, height: 18)
+                    Button { player.dislike(track) } label: {
+                        Image(systemName: "hand.thumbsdown")
+                            .padding(.leading, 12)
+                            .padding(.trailing, 14)
+                    }
+                }
+                .frame(height: 34)
+                .background(YT.raised, in: Capsule())
+                pill("Save", icon: "text.badge.plus") { addingToPlaylist = true }
+                if library.isDownloaded(track.videoId) {
+                    pill("Downloaded", icon: "arrow.down.circle.fill") { library.removeDownload(track) }
+                } else if library.downloading.contains(track.videoId) {
+                    pill("Downloading…", icon: "arrow.down.circle") {}
+                } else {
+                    pill("Download", icon: "arrow.down.circle") { library.download(track) }
+                }
+                ShareLink(item: URL(string: "https://music.youtube.com/watch?v=\(track.videoId)")!) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                        .font(.system(size: 14, weight: .medium))
+                        .padding(.horizontal, 14)
+                        .frame(height: 34)
+                        .background(YT.raised, in: Capsule())
+                }
             }
             .buttonStyle(.plain)
+            .font(.system(size: 14, weight: .medium))
+        }
+    }
+
+    private func pill(_ title: LocalizedStringKey, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .padding(.horizontal, 14)
+                .frame(height: 34)
+                .background(YT.raised, in: Capsule())
         }
     }
 
     private var controls: some View {
         HStack {
             Button { player.shuffleUpcoming() } label: {
-                Image(systemName: "shuffle").font(.title3)
+                Image(systemName: "shuffle").font(.system(size: 20))
             }
             Spacer()
             Button { player.previous() } label: {
-                Image(systemName: "backward.fill").font(.title)
+                Image(systemName: "backward.end.fill").font(.system(size: 30))
             }
             Spacer()
             Button { player.togglePlay() } label: {
                 ZStack {
                     Circle().fill(.white).frame(width: 72, height: 72)
-                    if player.isBuffering {
+                    if player.isBuffering, player.isPlaying {
                         ProgressView().tint(.black)
                     } else {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.title)
+                            .font(.system(size: 30))
                             .foregroundStyle(.black)
                             .contentTransition(.symbolEffect(.replace))
                     }
@@ -164,38 +237,43 @@ struct NowPlayingView: View {
             }
             Spacer()
             Button { player.next() } label: {
-                Image(systemName: "forward.fill").font(.title)
+                Image(systemName: "forward.end.fill").font(.system(size: 30))
             }
             Spacer()
             Button { player.repeatMode = player.repeatMode.next } label: {
                 Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                    .font(.title3)
-                    .foregroundStyle(player.repeatMode == .off ? Color.primary : Color.accentColor)
+                    .font(.system(size: 20))
+                    .foregroundStyle(player.repeatMode == .off ? YT.secondary : .white)
             }
         }
         .buttonStyle(.plain)
     }
 
-    private var footer: some View {
+    /// UP NEXT / LYRICS / RELATED, and AirPlay.
+    private var tabs: some View {
         HStack {
-            toggle(.lyrics, icon: "quote.bubble")
-            Spacer()
-            toggle(.related, icon: "square.stack")
-            Spacer()
+            ForEach(Pane.allCases, id: \.self) { target in
+                Button {
+                    withAnimation { pane = pane == target ? nil : target }
+                } label: {
+                    Text(target.title)
+                        .font(.system(size: 13, weight: .bold))
+                        .tracking(0.6)
+                        .foregroundStyle(pane == target ? .white : YT.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                }
+                .buttonStyle(.plain)
+            }
             #if os(iOS)
-            AirPlayButton().frame(width: 44, height: 44)
+            AirPlayButton().frame(width: 40, height: 40)
             #endif
-            Spacer()
-            sleepMenu
-            Spacer()
-            toggle(.queue, icon: "list.bullet")
         }
     }
 
     /// Sleep timer: pause after a while, or when the song ends.
-    private var sleepMenu: some View {
+    @ViewBuilder private var sleepMenu: some View {
         let on = player.sleepUntil != nil || player.sleepAtEndOfSong
-        return Menu {
+        Menu(on ? "Sleep timer (on)" : "Sleep timer", systemImage: on ? "moon.zzz.fill" : "moon.zzz") {
             ForEach([15, 30, 60], id: \.self) { minutes in
                 Button("\(minutes) min") { player.setSleep(minutes: minutes) }
             }
@@ -203,25 +281,43 @@ struct NowPlayingView: View {
             if on {
                 Button("Turn off", role: .destructive) { player.cancelSleep() }
             }
-        } label: {
-            Image(systemName: on ? "moon.zzz.fill" : "moon.zzz")
-                .font(.title3)
-                .foregroundStyle(on ? Color.accentColor : Color.secondary)
-                .frame(width: 44, height: 44)
         }
-        .accessibilityLabel("Sleep timer")
+        Divider()
     }
+}
 
-    private func toggle(_ target: Pane, icon: String) -> some View {
-        Button {
-            pane = pane == target ? nil : target
-        } label: {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundStyle(pane == target ? Color.accentColor : Color.secondary)
-                .frame(width: 44, height: 44)
+/// "Save": the song into one of the playlists, or a new one.
+private struct PlaylistPicker: View {
+    let track: Track
+    @Environment(Library.self) private var library
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Button("New playlist", systemImage: "plus") {
+                    library.createPlaylist("", with: track)
+                    dismiss()
+                }
+                ForEach(library.playlists) { playlist in
+                    Button {
+                        library.add(track, to: playlist.id)
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Artwork(source: playlist.tracks.first.map { .video($0.videoId) } ?? .none, size: 44)
+                            Text(playlist.name)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Save to playlist")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
         }
-        .buttonStyle(.plain)
+        .presentationDetents([.medium, .large])
     }
 }
 
@@ -432,11 +528,11 @@ private struct QueuePane: View {
 
 #if os(iOS)
 /// AirPlay / Bluetooth output picker.
-private struct AirPlayButton: UIViewRepresentable {
+struct AirPlayButton: UIViewRepresentable {
     func makeUIView(context: Context) -> AVRoutePickerView {
         let view = AVRoutePickerView()
-        view.tintColor = .secondaryLabel
-        view.activeTintColor = UIColor(Color.accentColor)
+        view.tintColor = .white
+        view.activeTintColor = .white
         view.prioritizesVideoDevices = false
         return view
     }

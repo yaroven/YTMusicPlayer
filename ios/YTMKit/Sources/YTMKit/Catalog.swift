@@ -25,21 +25,31 @@ public final class Catalog: Sendable {
 
     let session: URLSession
     let auth: Auth?
+    /// The language shelves, titles and chips come in ("en", "uk").
+    let language: String
 
     /// With `auth` signed in, requests go as the account (personal home,
     /// its library).
-    public init(session: URLSession = .shared, auth: Auth? = nil) {
+    public init(session: URLSession = .shared, auth: Auth? = nil, language: String = "en") {
         self.session = session
         self.auth = auth
+        self.language = language
     }
 
     /// Whether requests go as an account (its library, its own home).
     public var signedIn: Bool { auth?.signedIn == true }
 
-    func call(_ endpoint: String, _ body: [String: Any]) async throws -> Any {
+    /// `english`: the answer is parsed by its English labels (the song's
+    /// "Lyrics" / "Related" tabs). `visitor`: continuations of a feed need
+    /// the visitor id its first answer came with.
+    func call(_ endpoint: String, _ body: [String: Any], english: Bool = false,
+              visitor: String? = nil) async throws -> Any {
         var body = body
-        body["context"] = ["client": ["clientName": "WEB_REMIX", "clientVersion": Self.clientVersion,
-                                      "hl": "en", "gl": "US"]]
+        let hl = english ? "en" : language
+        var client: [String: Any] = ["clientName": "WEB_REMIX", "clientVersion": Self.clientVersion,
+                                     "hl": hl, "gl": hl == "uk" ? "UA" : "US"]
+        client["visitorData"] = visitor
+        body["context"] = ["client": client]
         var request = URLRequest(url: URL(string: "\(Self.base)/\(endpoint)?prettyPrint=false")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -126,6 +136,24 @@ public final class Catalog: Sendable {
         parseShelves(try await call("browse", ["browseId": "FEmusic_home"]))
     }
 
+    /// Home's first shelves and its mood chips; with `params` (a chip's),
+    /// Home for that mood.
+    public func homeFeed(params: String? = nil) async throws -> HomeFeed {
+        var body: [String: Any] = ["browseId": "FEmusic_home"]
+        body["params"] = params
+        let data = try await call("browse", body)
+        return HomeFeed(chips: parseHomeChips(data), shelves: parseShelves(data),
+                        continuation: homeContinuation(data),
+                        visitor: string(data, "responseContext/visitorData"))
+    }
+
+    /// Home's next shelves (three or so at a time) and the token after.
+    public func moreHome(_ token: String, visitor: String?) async throws -> (shelves: [Shelf], next: String?) {
+        let data = try await call("browse", ["continuation": token], visitor: visitor)
+        let shelves = parseShelves(data)
+        return (shelves, shelves.isEmpty ? nil : homeContinuation(data))
+    }
+
     /// What YouTube Music plays after the song (≈50 songs, the song first).
     public func radio(_ videoId: String) async throws -> [Track] {
         parseRadio(try await next(videoId))
@@ -152,9 +180,15 @@ public final class Catalog: Sendable {
 
     /// The signed-in account's name ("Jane Doe"), to show who is signed in.
     public func accountName() async throws -> String? {
+        try await accountInfo()?.name
+    }
+
+    /// The signed-in account's name and picture.
+    public func accountInfo() async throws -> AccountInfo? {
         let data = try await call("account/account_menu", [:])
         let name = text(findFirst(data, "accountName"))
-        return name.isEmpty ? nil : name
+        guard !name.isEmpty else { return nil }
+        return AccountInfo(name: name, photo: thumbnail(findFirst(data, "accountPhoto")))
     }
 
     /// The signed-in account's liked songs (YouTube Music's "Liked music").
@@ -288,6 +322,7 @@ public final class Catalog: Sendable {
     }
 
     func next(_ videoId: String) async throws -> Any {
-        try await call("next", ["videoId": videoId, "playlistId": "RDAMVM\(videoId)", "isAudioOnly": true])
+        try await call("next", ["videoId": videoId, "playlistId": "RDAMVM\(videoId)", "isAudioOnly": true],
+                       english: true)
     }
 }
