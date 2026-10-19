@@ -256,8 +256,27 @@ private fun kindLabel(kind: SearchKind): String = stringResource(
 @Composable
 fun PageScreen(id: String) {
     val app = App.instance
-    val page = rememberLoad(id) { app.catalog.page(id) }
+    // The first answer shows at once; a long playlist's other songs (or an
+    // artist's full top songs) arrive behind it.
+    val page = rememberLoad(id) { app.catalog.page(id, full = false) }
     var showAll by rememberSaveable(id) { mutableStateOf(false) }
+    LaunchedEffect(page.value?.id) {
+        var p = page.value ?: return@LaunchedEffect
+        p.allSongsId?.let { all ->
+            val list = runCatching { app.catalog.page(all) }.getOrNull()
+            if (list != null && list.tracks.size > p.tracks.size) {
+                p = p.copy(tracks = list.tracks, allSongsId = null)
+                page.update(p)
+            }
+        }
+        var parts = 0
+        while (parts++ < 50) {
+            val token = p.continuation ?: break
+            val (more, next) = runCatching { app.catalog.moreTracks(token) }.getOrNull() ?: break
+            p = p.copy(tracks = p.tracks + more, continuation = next)
+            page.update(p)
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         val loaded = page.value
         TopBar(loaded?.title ?: "", back = true) {

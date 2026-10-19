@@ -234,6 +234,18 @@ class ParseTest {
     }
 
     @Test
+    fun followsTheTrackListsContinuation() {
+        // A playlist page has the section list's continuation (more shelves)
+        // as well as its track list's: the track list's is the one to follow.
+        val page = j(
+            """{"contents":{"sectionListRenderer":{"continuations":[{"nextContinuationData":{"continuation":"shelves"}}],
+              "contents":[{"musicPlaylistShelfRenderer":{"contents":[$songRow,
+                {"continuationItemRenderer":{"continuationEndpoint":{"continuationCommand":{"token":"songs"}}}}]}}]}}}""",
+        )
+        assertEquals("songs", continuation(page))
+    }
+
+    @Test
     fun clientsJsonMatchesBuiltIn() {
         // ios/clients.json is what both phone apps fetch; it must decode to the built-in list.
         val file = generateSequence(File("").absoluteFile) { it.parentFile }

@@ -260,6 +260,15 @@ let albumRow = #"""
     check(fallback?.url.absoluteString == "https://v/18" && fallback?.hasVideo == true, "itag 18 when 140 stays ciphered")
 
     check(visitorDataIn(#"x "VISITOR_DATA":"Cgt abc%3D%3D","y""#) == "Cgt abc%3D%3D", "visitor data")
+
+    // A playlist page has the section list's continuation (more shelves) as
+    // well as its track list's: the track list's is the one to follow.
+    let twoTokens = json(#"""
+    {"contents":{"sectionListRenderer":{"continuations":[{"nextContinuationData":{"continuation":"shelves"}}],
+      "contents":[{"musicPlaylistShelfRenderer":{"contents":[\#(songRow),
+        {"continuationItemRenderer":{"continuationEndpoint":{"continuationCommand":{"token":"songs"}}}}]}}]}}}
+    """#)
+    check(continuation(twoTokens) == "songs", "the track list's continuation")
 }
 
 @MainActor func live() async throws {
@@ -300,6 +309,13 @@ let albumRow = #"""
     check(suggested.contains { $0.contains("dancing") }, "live suggestions")
     let explicitSongs = try await catalog.search("eminem", kind: .songs)
     check(explicitSongs.contains(where: \.explicit), "live E badges")
+
+    // Long playlists: every song, and the first answer on its own (fast).
+    let long = try await catalog.page("VLPL0GvsLQil0MmYC96KEs_7dTNsLm1PS6JX")
+    let quick = try await catalog.page("VLPL0GvsLQil0MmYC96KEs_7dTNsLm1PS6JX", full: false)
+    print("long playlist: \(long.tracks.count) songs, first answer \(quick.tracks.count)")
+    check(long.tracks.count > 100, "a playlist past 100 songs")
+    check(quick.tracks.count <= 100 && quick.continuation != nil, "first answer + continuation")
 
     let resolver = Resolver()
     let start = Date()

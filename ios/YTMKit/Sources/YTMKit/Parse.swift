@@ -194,7 +194,8 @@ func parsePage(id: String, _ data: Any) -> Page {
     // Video carousels duplicate the songs; keep albums, artists, lists.
     let shelves = parseShelves(data).filter { $0.items.contains { $0.kind != .song } }
     return Page(kind: kind, id: id, title: title, subtitle: subtitle,
-                thumbnail: thumbnail(header?["thumbnail"]), tracks: tracks, shelves: shelves)
+                thumbnail: thumbnail(header?["thumbnail"]), tracks: tracks, shelves: shelves,
+                allSongsId: kind == .artist ? topSongsPlaylist(data) : nil)
 }
 
 func parseRadio(_ data: Any) -> [Track] {
@@ -224,9 +225,13 @@ func parseLyricsText(_ data: Any) -> (text: String, source: String)? {
     return body.isEmpty ? nil : (body, text(shelf["footer"]))
 }
 
+/// The next page of a track list. The list's own `continuationCommand`
+/// comes first: a playlist page also carries the section list's
+/// `nextContinuationData` (more shelves, no songs), and following that one
+/// cut every playlist off at 100 songs.
 func continuation(_ data: Any) -> String? {
-    if let c = findFirst(data, "nextContinuationData") as? JSON, let t = c["continuation"] as? String { return t }
-    return (findFirst(data, "continuationCommand") as? JSON)?["token"] as? String
+    if let t = (findFirst(data, "continuationCommand") as? JSON)?["token"] as? String { return t }
+    return (findFirst(data, "nextContinuationData") as? JSON)?["continuation"] as? String
 }
 
 /// The song's first artist page, as linked under the song in the queue.

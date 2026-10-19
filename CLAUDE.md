@@ -583,6 +583,17 @@ Domain terms are defined in `CONTEXT.md`.
   wifi + data off mid-song → buffer runs out → "waiting" → on → resumes at
   the same second, Explore reloads.
 
+- **Playlist continuations** (found 2026-10-19, user: "opening a playlist
+  on the phone takes long"): a playlist page carries the section list's
+  `nextContinuationData` (more shelves) and the track list's own
+  `continuationCommand`; `continuation()` took the first, so every
+  playlist (and the library sync of one) stopped at 100 songs after a
+  wasted request. The track list's token now wins, on all three. Phones
+  show the first answer (≤100 songs, `page(…, full: false)`) at once and
+  append the rest (`moreTracks`) / an artist's full top songs
+  (`allSongsId`) behind it. Measured: first answer 0.4–0.6 s, each further
+  100 songs ~0.5 s.
+
 ## Open TODOs
 
 - Android: try on a real phone (Google sign-in in the WebView — Google may

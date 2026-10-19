@@ -194,7 +194,10 @@ fun parsePage(id: String, data: Any): Page {
         .flatMap { songsIn(it, albumArtist) }
     // Video carousels duplicate the songs; keep albums, artists, lists.
     val shelves = parseShelves(data).filter { s -> s.items.any { it.kind != ItemKind.Song } }
-    return Page(kind, id, title, subtitle, thumbnail(header?.opt("thumbnail")), tracks, shelves)
+    return Page(
+        kind, id, title, subtitle, thumbnail(header?.opt("thumbnail")), tracks, shelves,
+        allSongsId = if (kind == ItemKind.Artist) topSongsPlaylist(data) else null,
+    )
 }
 
 fun parseRadio(data: Any): List<Track> = findAll(data, "playlistPanelVideoRenderer").mapNotNull { value ->
@@ -220,9 +223,15 @@ fun parseLyricsText(data: Any): Pair<String, String>? {
     return if (body.isEmpty()) null else body to text(shelf.opt("footer"))
 }
 
+/**
+ * The next page of a track list. The list's own `continuationCommand`
+ * comes first: a playlist page also carries the section list's
+ * `nextContinuationData` (more shelves, no songs), and following that one
+ * cut every playlist off at 100 songs.
+ */
 fun continuation(data: Any): String? {
-    (findFirst(data, "nextContinuationData") as? JSONObject)?.str("continuation")?.let { return it }
-    return (findFirst(data, "continuationCommand") as? JSONObject)?.str("token")
+    (findFirst(data, "continuationCommand") as? JSONObject)?.str("token")?.let { return it }
+    return (findFirst(data, "nextContinuationData") as? JSONObject)?.str("continuation")
 }
 
 /** The song's first artist page, as linked under the song in the queue. */

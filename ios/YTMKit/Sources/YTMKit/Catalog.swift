@@ -66,7 +66,10 @@ public final class Catalog: Sendable {
     }
 
     /// Album (`MPREb_…`), artist (`UC…`) or playlist (`VL…` / `PL…`) page.
-    public func page(_ browseId: String) async throws -> Page {
+    /// With `full: false` only the first answer: up to 100 songs, the rest
+    /// left in `continuation` (and an artist's 5 top songs, the rest in
+    /// `allSongsId`), so a screen can show it at once and add the rest.
+    public func page(_ browseId: String, full: Bool = true) async throws -> Page {
         // Explore chips carry their params after a `#` (see `navButton`).
         let parts = browseId.split(separator: "#", maxSplits: 1)
         let browseId = String(parts[0])
@@ -75,6 +78,10 @@ public final class Catalog: Sendable {
         if parts.count > 1 { body["params"] = String(parts[1]) }
         let data = try await call("browse", body)
         var page = parsePage(id: id, data)
+        if !full {
+            page.continuation = page.kind == .playlist ? continuation(data) : nil
+            return page
+        }
         // Long playlists come in pages.
         var token = page.kind == .playlist ? continuation(data) : nil
         var pages = 1
@@ -92,6 +99,13 @@ public final class Catalog: Sendable {
             page.tracks = list.tracks
         }
         return page
+    }
+
+    /// The next part of a long track list, and the token for the one after.
+    public func moreTracks(_ token: String) async throws -> (tracks: [Track], next: String?) {
+        let more = try await call("browse", ["continuation": token])
+        let tracks = songsIn(more)
+        return (tracks, tracks.isEmpty ? nil : continuation(more))
     }
 
     /// Explore: charts, new releases, moods and genres. Its chips open as

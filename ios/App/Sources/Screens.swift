@@ -252,12 +252,31 @@ struct PageView: View {
         }
     }
 
+    /// The first answer shows at once; a long playlist's other songs (or an
+    /// artist's full top songs) arrive behind it.
     private func load() async {
         error = nil
         do {
-            page = try await Services.catalog.page(id)
+            page = try await Services.catalog.page(id, full: false)
         } catch {
             self.error = error
+            return
+        }
+        await loadRest()
+    }
+
+    private func loadRest() async {
+        if let all = page?.allSongsId,
+           let list = try? await Services.catalog.page(all),
+           list.tracks.count > page?.tracks.count ?? 0 {
+            page?.tracks = list.tracks
+        }
+        var parts = 0
+        while let token = page?.continuation, parts < 50, !Task.isCancelled {
+            parts += 1
+            guard let more = try? await Services.catalog.moreTracks(token) else { return }
+            page?.tracks += more.tracks
+            page?.continuation = more.next
         }
     }
 

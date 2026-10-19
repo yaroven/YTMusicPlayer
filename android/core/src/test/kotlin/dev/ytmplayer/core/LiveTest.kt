@@ -36,6 +36,12 @@ class LiveTest {
         assertTrue(suggested.any { it.contains("dancing") })
         assertTrue(catalog.search("eminem", SearchKind.Songs).any { it.explicit }, "E badges")
         assertTrue(catalog.related("YkLLcIKhJ64").isNotEmpty(), "related")
+        // Long playlists: every song, and the first answer on its own (fast).
+        val long = catalog.page("VLPL0GvsLQil0MmYC96KEs_7dTNsLm1PS6JX")
+        val quick = catalog.page("VLPL0GvsLQil0MmYC96KEs_7dTNsLm1PS6JX", full = false)
+        println("long playlist: ${long.tracks.size} songs, first answer ${quick.tracks.size}")
+        assertTrue(long.tracks.size > 100, "a playlist past 100 songs")
+        assertTrue(quick.tracks.size <= 100 && quick.continuation != null, "first answer + continuation")
     }
 
     @Test

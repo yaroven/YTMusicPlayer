@@ -119,6 +119,10 @@ public struct Page: Sendable {
     public var thumbnail: URL?
     public var tracks: [Track]
     public var shelves: [Shelf]
+    /// More of `tracks` to fetch (`Catalog.moreTracks`): long playlists.
+    public var continuation: String?
+    /// An artist's "Top songs" playlist, with all of them (the page lists 5).
+    public var allSongsId: String?
 }
 
 /// One lyrics line; `at` is when it starts (synced lyrics only).

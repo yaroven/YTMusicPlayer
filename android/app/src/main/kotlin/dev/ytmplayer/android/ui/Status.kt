@@ -70,19 +70,28 @@ class Load<T> {
     fun retry() {
         attempt++
     }
+
+    /** More of the same value arrived (a long list's next part). */
+    fun update(newer: T) {
+        value = newer
+        key?.let { recent.put(it, newer as Any) }
+    }
+
+    internal var key: Any? = null
 }
 
 /**
  * The last screens' data, so going back (or switching tabs) shows them at
  * once instead of loading again; pull to refresh or Retry loads afresh.
  */
-private val recent = android.util.LruCache<Any, Any>(16)
+internal val recent = android.util.LruCache<Any, Any>(16)
 
 @Suppress("UNCHECKED_CAST")
 @Composable
 fun <T> rememberLoad(key: Any?, load: suspend () -> T): Load<T> {
     val state = remember(key) {
         Load<T>().apply {
+            this.key = key
             (key?.let { recent.get(it) } as T?)?.let {
                 value = it
                 loading = false

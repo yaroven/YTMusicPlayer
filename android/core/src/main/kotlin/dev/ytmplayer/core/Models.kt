@@ -87,6 +87,10 @@ data class Page(
     val thumbnail: String?,
     val tracks: List<Track>,
     val shelves: List<Shelf>,
+    /** More of `tracks` to fetch (`Catalog.moreTracks`): long playlists. */
+    val continuation: String? = null,
+    /** An artist's "Top songs" playlist, with all of them (the page lists 5). */
+    val allSongsId: String? = null,
 )
 
 /** One lyrics line; `at` is when it starts (synced lyrics only). */

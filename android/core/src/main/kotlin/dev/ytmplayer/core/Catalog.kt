@@ -32,14 +32,20 @@ class Catalog(private val auth: Auth? = null) {
     suspend fun search(query: String, kind: SearchKind): List<Item> =
         parseSearch(call("search", json("query" to query, "params" to kind.params)), kind)
 
-    /** Album (`MPREb_…`), artist (`UC…`) or playlist (`VL…` / `PL…`) page. */
-    suspend fun page(browseId: String): Page {
+    /**
+     * Album (`MPREb_…`), artist (`UC…`) or playlist (`VL…` / `PL…`) page.
+     * With `full = false` only the first answer: up to 100 songs, the rest
+     * left in `continuation` (an artist's 5 top songs, the rest in
+     * `allSongsId`), so a screen can show it at once and add the rest.
+     */
+    suspend fun page(browseId: String, full: Boolean = true): Page {
         // Explore chips carry their params after a `#` (see `navButton`).
         val raw = browseId.substringBefore('#')
         val params = browseId.substringAfter('#', "").ifEmpty { null }
         val id = if (listOf("PL", "OLAK", "RD").any { raw.startsWith(it) }) "VL$raw" else raw
         val data = call("browse", json("browseId" to id, "params" to params))
         var page = parsePage(id, data)
+        if (!full) return page.copy(continuation = if (page.kind == ItemKind.Playlist) continuation(data) else null)
         // Long playlists come in pages.
         var token = if (page.kind == ItemKind.Playlist) continuation(data) else null
         var pages = 1
@@ -60,6 +66,13 @@ class Catalog(private val auth: Auth? = null) {
             }
         }
         return page
+    }
+
+    /** The next part of a long track list, and the token for the one after. */
+    suspend fun moreTracks(token: String): Pair<List<Track>, String?> {
+        val more = call("browse", json("continuation" to token))
+        val tracks = songsIn(more)
+        return tracks to if (tracks.isEmpty()) null else continuation(more)
     }
 
     /** Explore: charts, new releases, moods and genres. */

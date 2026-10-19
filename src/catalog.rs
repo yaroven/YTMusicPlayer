@@ -1084,10 +1084,14 @@ fn parse_loudness(data: &Value) -> Option<f32> {
     per_format.or_else(track).map(|db| db as f32)
 }
 
+/// The next page of a track list. The list's own `continuationCommand`
+/// comes first: a playlist page also carries the section list's
+/// `nextContinuationData` (more shelves, no songs), and following that one
+/// cut every playlist (and its sync) off at 100 songs.
 fn continuation(data: &Value) -> Option<String> {
-    find_first(data, "nextContinuationData")
-        .and_then(|c| c.get("continuation"))
-        .or_else(|| find_first(data, "continuationCommand").and_then(|c| c.get("token")))
+    find_first(data, "continuationCommand")
+        .and_then(|c| c.get("token"))
+        .or_else(|| find_first(data, "nextContinuationData").and_then(|c| c.get("continuation")))
         .and_then(Value::as_str)
         .map(str::to_owned)
 }
@@ -1095,6 +1099,20 @@ fn continuation(data: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn follows_the_track_lists_continuation() {
+        // A playlist page has the section list's continuation (more shelves)
+        // as well as its track list's: the track list's is the one to follow.
+        let page = json!({ "contents": { "sectionListRenderer": {
+            "continuations": [{ "nextContinuationData": { "continuation": "shelves" } }],
+            "contents": [{ "musicPlaylistShelfRenderer": { "contents": [
+                { "continuationItemRenderer": { "continuationEndpoint": {
+                    "continuationCommand": { "token": "songs" } } } }
+            ] } }]
+        } } });
+        assert_eq!(continuation(&page).as_deref(), Some("songs"));
+    }
 
     fn browse(id: &str, page_type: &str) -> Value {
         json!({ "browseEndpoint": { "browseId": id,
@@ -1379,6 +1397,12 @@ mod tests {
         assert!(radio.len() > 10);
         assert!(catalog.lyrics("YkLLcIKhJ64").await.unwrap().is_some());
         assert!(!catalog.home().await.unwrap().is_empty());
+        // A playlist past 100 songs comes whole (its own continuation).
+        let long = catalog
+            .page("VLPL0GvsLQil0MmYC96KEs_7dTNsLm1PS6JX")
+            .await
+            .unwrap();
+        assert!(long.tracks.len() > 100, "{} songs", long.tracks.len());
 
         // Explore: shelves, and a chip that opens as a page of its own.
         let explore = catalog.explore().await.unwrap();
