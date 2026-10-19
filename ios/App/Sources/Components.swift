@@ -25,7 +25,11 @@ struct RootView: View {
         .sheet(isPresented: $player.showNowPlaying) {
             NowPlayingView()
                 .presentationDragIndicator(.visible)
+                .overlay(alignment: .bottom) { NoticeToast() }
         }
+        .safeAreaInset(edge: .top, spacing: 0) { ConnectionBanner() }
+        .overlay(alignment: .bottom) { NoticeToast() }
+        .animation(.easeInOut(duration: 0.25), value: Notice.shared.text)
     }
 }
 
@@ -34,6 +38,7 @@ extension View {
         navigationDestination(for: Route.self) { route in
             switch route {
             case let .page(id): PageView(id: id)
+            case .downloads: TrackListView(list: .downloads)
             }
         }
     }
@@ -108,7 +113,7 @@ struct TrackRow: View {
     @Environment(Library.self) private var library
 
     var body: some View {
-        Button { player.play(list, at: index) } label: {
+        Button { player.playFrom(list, at: index) } label: {
             HStack(spacing: 12) {
                 if let number {
                     Text("\(number)")
@@ -143,6 +148,8 @@ struct TrackRow: View {
                 }
             }
             .contentShape(Rectangle())
+            // Offline, what can't play is dimmed.
+            .opacity(!Connectivity.shared.online && !library.isDownloaded(track.videoId) ? 0.4 : 1)
         }
         .buttonStyle(.plain)
         .trackMenu(track)
@@ -199,7 +206,7 @@ struct CardView: View {
 
         if let track = item.track {
             Button {
-                player.play(songs.isEmpty ? [track] : songs, at: songs.firstIndex(of: track) ?? 0)
+                player.playFrom(songs.isEmpty ? [track] : songs, at: songs.firstIndex(of: track) ?? 0)
             } label: { content }
                 .buttonStyle(.plain)
                 .trackMenu(track)
@@ -243,10 +250,17 @@ struct MiniPlayer: View {
                     Text(track.title)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
-                    Text(player.error ?? track.artist)
-                        .font(.caption)
-                        .foregroundStyle(player.error == nil ? Color.secondary : Color.red)
-                        .lineLimit(1)
+                    if let status = player.statusText {
+                        Text(status)
+                            .font(.caption)
+                            .foregroundStyle(player.error == nil ? Color.secondary : Color.red)
+                            .lineLimit(1)
+                    } else {
+                        Text(track.artist)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 4)
                 Button { player.togglePlay() } label: {

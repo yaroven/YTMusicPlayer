@@ -24,6 +24,9 @@ struct NowPlayingView: View {
                 }
                 Group {
                     switch pane {
+                    case nil where video && !Connectivity.shared.online:
+                        ContentUnavailableView("You're offline", systemImage: "wifi.slash",
+                                               description: Text("The video needs the internet. The song itself plays if it's downloaded."))
                     case nil where video:
                         VideoPane(videoId: track.videoId, start: videoStart) { videoAt = $0 }
                             .id(track.videoId)
@@ -110,10 +113,10 @@ struct NowPlayingView: View {
                         .lineLimit(1)
                 }
                 .buttonStyle(.plain)
-                if let error = player.error {
-                    Text(error)
+                if let status = player.statusText {
+                    Text(status)
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(player.error == nil ? Color.secondary : Color.red)
                         .lineLimit(2)
                 }
             }
@@ -256,6 +259,7 @@ private struct LyricsPane: View {
     @Environment(Player.self) private var player
     @State private var lyrics: Lyrics?
     @State private var loading = true
+    @State private var failure: Error?
 
     var body: some View {
         Group {
@@ -275,19 +279,31 @@ private struct LyricsPane: View {
                     }
                 }
             } else if loading {
-                ProgressView()
+                LoadingView()
+            } else if let failure {
+                ErrorView(error: failure) { Task { await load() } }
             } else {
                 ContentUnavailableView("No lyrics", systemImage: "quote.bubble")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: track.videoId) {
-            lyrics = nil
-            loading = true
-            let duration = track.durationSecs.map(Double.init) ?? (player.duration > 0 ? player.duration : nil)
-            lyrics = try? await Services.lyrics.find(track, duration: duration)
-            loading = false
+        .task(id: track.videoId) { await load() }
+        .onChange(of: Connectivity.shared.cameBack) {
+            if failure != nil { Task { await load() } }
         }
+    }
+
+    private func load() async {
+        lyrics = nil
+        failure = nil
+        loading = true
+        let duration = track.durationSecs.map(Double.init) ?? (player.duration > 0 ? player.duration : nil)
+        do {
+            lyrics = try await Services.lyrics.find(track, duration: duration)
+        } catch {
+            failure = error
+        }
+        loading = false
     }
 }
 
@@ -433,6 +449,7 @@ private struct AirPlayButton: UIViewRepresentable {
 private struct RelatedPane: View {
     let track: Track
     @State private var shelves: [Shelf]?
+    @State private var failure: Error?
 
     var body: some View {
         ScrollView {
@@ -441,15 +458,27 @@ private struct RelatedPane: View {
             }
         }
         .overlay {
-            if shelves == nil {
-                ProgressView()
+            if let failure {
+                ErrorView(error: failure) { Task { await load() } }
+            } else if shelves == nil {
+                LoadingView()
             } else if shelves?.isEmpty == true {
                 ContentUnavailableView("Nothing related", systemImage: "square.stack")
             }
         }
-        .task(id: track.videoId) {
-            shelves = nil
-            shelves = (try? await Services.catalog.related(track.videoId)) ?? []
+        .task(id: track.videoId) { await load() }
+        .onChange(of: Connectivity.shared.cameBack) {
+            if failure != nil { Task { await load() } }
+        }
+    }
+
+    private func load() async {
+        shelves = nil
+        failure = nil
+        do {
+            shelves = try await Services.catalog.related(track.videoId)
+        } catch {
+            failure = error
         }
     }
 }

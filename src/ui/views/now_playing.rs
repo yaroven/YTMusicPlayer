@@ -148,6 +148,10 @@ pub fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
             text.into()
         };
         frame.render_widget(Paragraph::new(line), left);
+    } else if app.session.is_offline() {
+        // Nothing else to say: keep the reason everything is empty in sight.
+        let text = format!(" ⚠ {}", crate::net::offline_text(lang));
+        frame.render_widget(Paragraph::new(text.red()), left);
     }
     frame.render_widget(Paragraph::new(hint), right);
 }

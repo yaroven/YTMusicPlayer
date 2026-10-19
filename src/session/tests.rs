@@ -17,6 +17,60 @@ async fn stops_skipping_after_three_failures_in_a_row() {
 }
 
 #[tokio::test]
+async fn offline_waits_for_the_connection_instead_of_skipping() {
+    let (mut s, _, _) = session(Resolves::Offline).await;
+    s.play(tracks("t", 5), 0);
+    settle(&mut s).await;
+    assert_eq!(
+        current(&s),
+        "t0",
+        "nothing skipped for want of a connection"
+    );
+    assert!(s.is_offline() && s.view().offline);
+    assert!(s.waiting_for_network && !s.loading);
+    let status = s.status.as_ref().unwrap();
+    assert!(
+        status.text.starts_with("No internet connection"),
+        "{}",
+        status.text
+    );
+
+    // The connection is back: the same track loads again.
+    s.tx.send(Background::Online(true)).unwrap();
+    s.next_event().await;
+    assert!(s.loading && !s.waiting_for_network && !s.is_offline());
+    assert_eq!(current(&s), "t0");
+}
+
+#[tokio::test]
+async fn a_track_that_ran_dry_offline_continues_where_it_stopped() {
+    let (mut s, player, _) = session(Resolves::Hang).await;
+    s.play(tracks("t", 3), 0);
+    let generation = s.generation;
+    s.tx.send(Background::EndedEarly {
+        generation,
+        at: Duration::from_secs(42),
+        online: false,
+    })
+    .unwrap();
+    s.next_event().await;
+    assert_eq!(current(&s), "t0");
+    assert_eq!(s.resume_at, Some(Duration::from_secs(42)));
+    assert!(s.waiting_for_network);
+
+    // Online after all: an early end is just an end.
+    s.tx.send(Background::EndedEarly {
+        generation,
+        at: Duration::from_secs(42),
+        online: true,
+    })
+    .unwrap();
+    s.next_event().await;
+    assert_eq!(current(&s), "t1");
+    drop(player);
+}
+
+#[tokio::test]
 async fn results_of_a_replaced_selection_are_ignored() {
     let (mut s, _, _) = session(Resolves::Fail).await;
     s.play(tracks("old", 5), 0);

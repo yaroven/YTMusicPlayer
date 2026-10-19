@@ -11,7 +11,7 @@ use super::{Background, Changes, Session};
 use crate::{
     api::models::Track,
     catalog::{Item, SearchKind},
-    lyrics, tr, trf,
+    lyrics, net, tr, trf,
 };
 
 /// Results per Data API search (one page, 100 quota units).
@@ -74,11 +74,15 @@ impl Session {
                         });
                         changes.search = true;
                     }
-                    Err(err) => self.set_error(trf!(
-                        self.lang,
-                        "Search failed: {err:#}",
-                        "Пошук не вдався: {err:#}"
-                    )),
+                    Err(err) => {
+                        self.network_failed(&err);
+                        self.set_error(net::failed(
+                            self.lang,
+                            "Search failed",
+                            "Пошук не вдався",
+                            &err,
+                        ));
+                    }
                 }
             }
             Background::Searched { .. } => {} // a newer search replaced it
@@ -90,11 +94,17 @@ impl Session {
                         self.page = Some(Arc::new(page));
                         changes.page = true;
                     }
-                    Err(err) => self.set_error(trf!(
-                        self.lang,
-                        "Couldn't open it: {err:#}",
-                        "Не вдалось відкрити: {err:#}"
-                    )),
+                    Err(err) => {
+                        if self.network_failed(&err) {
+                            self.retry_page = self.page_request.clone();
+                        }
+                        self.set_error(net::failed(
+                            self.lang,
+                            "Couldn't open it",
+                            "Не вдалось відкрити",
+                            &err,
+                        ));
+                    }
                 }
             }
             Background::PageLoaded { .. } => {}
@@ -103,7 +113,10 @@ impl Session {
                     self.home = Some(shelves.into());
                     changes.home = true;
                 }
-                Err(err) => self.set_error(trf!(self.lang, "Home: {err:#}", "Головна: {err:#}")),
+                Err(err) => {
+                    self.retry_home = self.network_failed(&err);
+                    self.set_error(net::failed(self.lang, "Home", "Головна", &err));
+                }
             },
             Background::Suggestions { query, result } => {
                 // Only the newest query's suggestions are shown.
@@ -117,7 +130,10 @@ impl Session {
                     self.explore = Some(shelves.into());
                     changes.explore = true;
                 }
-                Err(err) => self.set_error(trf!(self.lang, "Explore: {err:#}", "Огляд: {err:#}")),
+                Err(err) => {
+                    self.retry_explore = self.network_failed(&err);
+                    self.set_error(net::failed(self.lang, "Explore", "Огляд", &err));
+                }
             },
             Background::Related { video_id, result } => {
                 if self.queue.current().is_some_and(|t| t.video_id == video_id) {
@@ -200,6 +216,7 @@ impl Session {
 
     /// Opens an album, artist or playlist page.
     pub fn open_page(&mut self, browse_id: &str) {
+        self.page_request = Some(browse_id.to_owned());
         self.page_generation += 1;
         self.page_loading = true;
         self.set_info(tr!(self.lang, "Loading…", "Завантажую…"));
@@ -218,6 +235,7 @@ impl Session {
     /// Opens the page of `track`'s artist: the one YouTube Music links
     /// under the song, else the best name match.
     pub fn open_artist(&mut self, track: &Track) {
+        self.page_request = None;
         self.page_generation += 1;
         self.page_loading = true;
         let name = main_artist(&track.artist);

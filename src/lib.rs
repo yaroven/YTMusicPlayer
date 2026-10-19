@@ -19,6 +19,7 @@ pub mod lastfm;
 pub mod library_view;
 pub mod lyrics;
 pub mod media;
+pub mod net;
 #[cfg(feature = "gui")]
 pub mod notify;
 pub mod session;

@@ -18,6 +18,8 @@ enum AppTab: Hashable {
 enum Route: Hashable {
     /// Album, artist or playlist page by browse id.
     case page(String)
+    /// The songs on the phone (offline, from an error screen).
+    case downloads
 }
 
 /// Each tab's navigation stack, so "Go to artist" works from anywhere.
@@ -34,6 +36,12 @@ final class Router {
         case .search: search.append(route)
         case .library: library.append(route)
         }
+    }
+
+    /// Offline: straight to what still plays.
+    func openDownloads() {
+        tab = .library
+        library.append(.downloads)
     }
 
     /// The song's artist page, as linked under the song, else the first

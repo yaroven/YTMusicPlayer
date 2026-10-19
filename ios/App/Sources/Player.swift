@@ -26,8 +26,14 @@ final class Player {
     private(set) var isPlaying = false
     /// Resolving the URL, or AVPlayer waiting for data.
     var isBuffering: Bool { resolving || waiting }
-    private var resolving = false
-    private var waiting = false
+    private var resolving = false { didSet { watchSlow() } }
+    private var waiting = false { didSet { watchSlow() } }
+    /// Buffering for a while: the connection is slow.
+    private(set) var slow = false
+    /// Playback stopped because the connection went; it carries on (where
+    /// it stopped) when the connection is back, instead of skipping songs.
+    private(set) var waitingForNetwork = false
+    @ObservationIgnored private var slowTask: Task<Void, Never>?
     /// Pause pressed while the song was still resolving.
     @ObservationIgnored private var playWhenReady = true
     private(set) var position: TimeInterval = 0
@@ -109,12 +115,38 @@ final class Player {
         self.muted = muted
         av.isMuted = muted
         restoreQueue()
+        Connectivity.shared.onReconnect { [weak self] in self?.networkBack() }
         setUpPlayer()
         setUpAudioSession()
         setUpRemoteCommands()
     }
 
+    /// What the player is waiting for, or what went wrong (one line).
+    var statusText: String? {
+        if let error { return error }
+        if waitingForNetwork { return String(localized: "No internet connection. Playback continues when it's back.") }
+        if slow, isPlaying {
+            return Connectivity.shared.online ? String(localized: "Slow connection, buffering…")
+                : String(localized: "No internet connection. Playback continues when it's back.")
+        }
+        return nil
+    }
+
     // MARK: Commands
+
+    /// Plays `tracks` from `start`. Offline only downloaded songs can play:
+    /// the downloaded part of the list, from this song.
+    func playFrom(_ tracks: [Track], at start: Int) {
+        guard tracks.indices.contains(start) else { return }
+        guard !Connectivity.shared.online else { return play(tracks, at: start) }
+        let track = tracks[start]
+        guard library.isDownloaded(track.videoId) else {
+            Notice.shared.show(String(localized: "No internet: only downloaded songs play offline"))
+            return
+        }
+        let offline = tracks.filter { library.isDownloaded($0.videoId) }
+        play(offline, at: offline.firstIndex { $0.videoId == track.videoId } ?? 0)
+    }
 
     func play(_ tracks: [Track], at start: Int = 0) {
         guard tracks.indices.contains(start) else { return }
@@ -273,6 +305,7 @@ final class Player {
             return
         }
         error = nil
+        waitingForNetwork = false
         resolving = true
         playWhenReady = true
         isPlaying = true
@@ -357,6 +390,23 @@ final class Player {
     private func failed(_ track: Track, _ error: Error) {
         resolving = false
         isPlaying = false
+        if error.isNetwork {
+            // Don't run through the queue while the connection is down:
+            // wait here and carry on when it comes back.
+            waitingForNetwork = true
+            self.error = nil
+            updateNowPlaying()
+            if Connectivity.shared.online {
+                // Online but too slow: try again in a moment.
+                let target = index
+                Task {
+                    try? await Task.sleep(for: .seconds(5))
+                    guard index == target, waitingForNetwork else { return }
+                    networkBack()
+                }
+            }
+            return
+        }
         failuresInARow += 1
         self.error = "\(track.title): \(error.localizedDescription)"
         updateNowPlaying()
@@ -418,6 +468,28 @@ final class Player {
             queue += more
             if preloaded == nil { preloadNext() }
             saveQueue()
+        }
+    }
+
+    /// The connection is back: the song that was waiting for it goes on.
+    private func networkBack() {
+        guard waitingForNetwork else { return }
+        waitingForNetwork = false
+        load(resumeAt: position)
+    }
+
+    private func watchSlow() {
+        if isBuffering {
+            guard slowTask == nil else { return }
+            slowTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(4))
+                guard let self, !Task.isCancelled, isBuffering else { return }
+                slow = true
+            }
+        } else {
+            slowTask?.cancel()
+            slowTask = nil
+            if slow { slow = false }
         }
     }
 

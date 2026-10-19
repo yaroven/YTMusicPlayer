@@ -41,6 +41,7 @@ use crate::{
     i18n::Lang,
     lyrics::Lyrics,
     media::{MediaAction, MediaControls},
+    net,
     storage::{Download, Library},
     sync::SyncReport,
     sysmem, tr, trf, video,
@@ -65,6 +66,13 @@ const MEMORY_STEP: u64 = 2 << 20;
 /// The next track is opened this long before the current one ends (plus
 /// the crossfade), so it starts without a gap.
 const PRELOAD_LEAD: Duration = Duration::from_secs(20);
+/// A track that stops this long before its end ran dry (or failed).
+const EARLY_END: Duration = Duration::from_secs(8);
+/// Offline, YouTube Music is asked this often whether it answers again.
+const PROBE_EVERY: Duration = Duration::from_secs(4);
+/// The same track waits for the connection at most this many times in a
+/// row (a connection too slow to ever load it shouldn't loop forever).
+const MAX_NETWORK_RETRIES: u32 = 5;
 
 pub struct Deps {
     pub library: Arc<Library>,
@@ -193,9 +201,20 @@ pub struct SessionView {
     /// A newer version, when one was found.
     pub update: Option<String>,
     pub updating: bool,
+    /// The last request failed for want of a connection (until one works).
+    pub offline: bool,
 }
 
 enum Background {
+    /// YouTube Music answers again (after `offline`), or still doesn't.
+    Online(bool),
+    /// The track stopped well before its end: if the connection is gone,
+    /// it continues at `at` when it's back.
+    EndedEarly {
+        generation: u64,
+        at: Duration,
+        online: bool,
+    },
     Synced(Result<SyncReport>),
     Opened {
         generation: u64,
@@ -397,8 +416,22 @@ pub struct Session {
     pub cast_devices: Arc<[crate::cast::Device]>,
     pub cast_scanning: bool,
     /// Where to continue the track that is being opened (after a switch
-    /// between local and cast output).
+    /// between local and cast output, or after the connection came back).
     resume_at: Option<Duration>,
+    /// A request failed for want of a connection; a probe runs until
+    /// YouTube Music answers again (`probing`).
+    offline: bool,
+    probing: bool,
+    /// Playback stopped for want of a connection: it starts again (at
+    /// `resume_at`) when the connection is back, up to a few times.
+    waiting_for_network: bool,
+    network_retries: u32,
+    /// What failed for want of a connection, loaded again when it's back.
+    retry_home: bool,
+    retry_explore: bool,
+    retry_page: Option<String>,
+    /// The page being opened (by browse id), to open again after a failure.
+    page_request: Option<String>,
     /// A newer release (from the last check).
     pub update: Option<crate::update::Update>,
     checking_update: bool,
@@ -506,6 +539,14 @@ impl Session {
             cast_devices: Arc::from([]),
             cast_scanning: false,
             resume_at: None,
+            offline: false,
+            probing: false,
+            waiting_for_network: false,
+            network_retries: 0,
+            retry_home: false,
+            retry_explore: false,
+            retry_page: None,
+            page_request: None,
             update: None,
             checking_update: false,
             updating: false,
@@ -543,6 +584,7 @@ impl Session {
             casting: self.casting.clone(),
             update: self.update.as_ref().map(|u| u.version.clone()),
             updating: self.updating,
+            offline: self.offline,
         }
     }
 
@@ -678,10 +720,49 @@ impl Session {
                         }
                         self.track_started(duration);
                     }
+                    Err(err) if net::is_network(&err) => {
+                        let reason = net::describe(self.lang, &err);
+                        self.wait_for_network(None, reason);
+                    }
                     Err(err) => self.track_failed(format!("{err:#}")),
                 }
             }
             Background::Opened { .. } => {} // superseded by a newer selection
+            Background::Online(true) => {
+                self.probing = false;
+                if std::mem::take(&mut self.offline) {
+                    self.set_info(tr!(self.lang, "Back online", "Інтернет знову є"));
+                }
+                if std::mem::take(&mut self.waiting_for_network) {
+                    self.play_current();
+                }
+                if std::mem::take(&mut self.retry_home) {
+                    self.load_home(true);
+                }
+                if std::mem::take(&mut self.retry_explore) {
+                    self.load_explore(true);
+                }
+                if let Some(id) = self.retry_page.take() {
+                    self.open_page(&id);
+                }
+            }
+            Background::Online(false) => {
+                self.set_error(net::offline_text(self.lang));
+                self.went_offline();
+            }
+            Background::EndedEarly {
+                generation,
+                at,
+                online,
+            } if generation == self.generation => {
+                if online {
+                    self.track_ended();
+                } else {
+                    let reason = net::offline_text(self.lang).to_owned();
+                    self.wait_for_network(Some(at), reason);
+                }
+            }
+            Background::EndedEarly { .. } => {}
             Background::Preloaded { generation, result } if self.preload == Some(generation) => {
                 match result {
                     Ok(opened) => {
@@ -743,29 +824,24 @@ impl Session {
     fn on_player_event(&mut self, event: PlayerEvent) {
         match event {
             PlayerEvent::Ended { generation } if generation == self.generation => {
-                self.drop_preload();
-                if self.sleep == Some(Sleep::EndOfTrack) {
-                    self.sleep = None;
-                    self.set_info(tr!(
-                        self.lang,
-                        "Sleep timer: stopped after the track",
-                        "Таймер сну: зупинено після пісні"
-                    ));
-                    self.stopped();
-                } else if self.queue.repeat == Repeat::One || self.queue.advance().is_some() {
-                    self.play_current();
-                } else if self.deps.autoplay
-                    && let Some(seed) = self.queue.current().cloned()
-                {
-                    self.set_info(trf!(
-                        self.lang,
-                        "Autoplay: radio of {}",
-                        "Автоплей: радіо за {}",
-                        seed.title
-                    ));
-                    self.fetch_radio(seed, true);
+                // Well before its end: the stream may have run dry for want
+                // of a connection. Ask before moving on.
+                let s = &self.player_status;
+                let early = self.casting.is_none()
+                    && s.duration
+                        .is_some_and(|d| d.saturating_sub(s.position) > EARLY_END);
+                if early {
+                    let (tx, at) = (self.tx.clone(), s.position);
+                    tokio::spawn(async move {
+                        let online = net::online().await;
+                        let _ = tx.send(Background::EndedEarly {
+                            generation,
+                            at,
+                            online,
+                        });
+                    });
                 } else {
-                    self.stopped();
+                    self.track_ended();
                 }
             }
             PlayerEvent::Started { generation } if self.preload == Some(generation) => {
@@ -785,9 +861,115 @@ impl Session {
             PlayerEvent::Error {
                 generation,
                 message,
-            } if generation == self.generation => self.track_failed(message),
+            } if generation == self.generation => {
+                if net::problem_in_text(&message) == net::Problem::Other {
+                    self.track_failed(message);
+                } else {
+                    let at = self.player_status.position;
+                    let reason = net::offline_text(self.lang).to_owned();
+                    self.wait_for_network(Some(at), reason);
+                }
+            }
             _ => {}
         }
+    }
+
+    /// The track played to its end: the next one, radio, or stop.
+    fn track_ended(&mut self) {
+        self.drop_preload();
+        if self.sleep == Some(Sleep::EndOfTrack) {
+            self.sleep = None;
+            self.set_info(tr!(
+                self.lang,
+                "Sleep timer: stopped after the track",
+                "Таймер сну: зупинено після пісні"
+            ));
+            self.stopped();
+        } else if self.queue.repeat == Repeat::One || self.queue.advance().is_some() {
+            self.play_current();
+        } else if self.deps.autoplay
+            && let Some(seed) = self.queue.current().cloned()
+        {
+            self.set_info(trf!(
+                self.lang,
+                "Autoplay: radio of {}",
+                "Автоплей: радіо за {}",
+                seed.title
+            ));
+            self.fetch_radio(seed, true);
+        } else {
+            self.stopped();
+        }
+    }
+
+    /// Playback stopped for want of a connection: keep the track (and,
+    /// mid-song, the place) and start again when the connection is back,
+    /// instead of failing through the queue.
+    fn wait_for_network(&mut self, at: Option<Duration>, reason: String) {
+        self.loading = false;
+        self.network_retries += 1;
+        if self.network_retries > MAX_NETWORK_RETRIES {
+            self.network_retries = 0;
+            self.track_failed(reason);
+            return;
+        }
+        if at.is_some() {
+            self.resume_at = at;
+        }
+        self.waiting_for_network = true;
+        self.went_offline();
+        self.set_error(trf!(
+            self.lang,
+            "{reason} — playback continues when it's back",
+            "{reason} — відтворення продовжиться, щойно він з'явиться"
+        ));
+    }
+
+    /// A request failed for want of a connection: watch for it to return.
+    fn went_offline(&mut self) {
+        self.offline = true;
+        if std::mem::replace(&mut self.probing, true) {
+            return;
+        }
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(PROBE_EVERY).await;
+                if net::online().await {
+                    let _ = tx.send(Background::Online(true));
+                    break;
+                }
+            }
+        });
+    }
+
+    /// `err` is a network failure: note it (and start watching). The
+    /// status line then says so in plain words via [`net::describe`].
+    pub(crate) fn network_failed(&mut self, err: &anyhow::Error) -> bool {
+        let network = net::is_network(err);
+        if network {
+            self.went_offline();
+        }
+        network
+    }
+
+    /// A request failed for want of a connection, and none has worked since.
+    pub fn is_offline(&self) -> bool {
+        self.offline
+    }
+
+    /// "Retry": checks the connection now and, if it's there, loads again
+    /// whatever failed for want of it.
+    pub fn retry(&mut self) {
+        let tx = self.tx.clone();
+        self.set_info(tr!(
+            self.lang,
+            "Checking the connection…",
+            "Перевіряю з'єднання…"
+        ));
+        tokio::spawn(async move {
+            let _ = tx.send(Background::Online(net::online().await));
+        });
     }
 
     fn on_media(&mut self, action: MediaAction) {
@@ -816,6 +998,7 @@ impl Session {
         let Some(track) = self.queue.current().cloned() else {
             return;
         };
+        self.network_retries = 0;
         if let Some(media) = &mut self.media {
             media.set_track(&track, duration);
         }
@@ -1132,6 +1315,7 @@ impl Session {
     }
 
     fn play_current(&mut self) {
+        self.waiting_for_network = false;
         self.drop_preload();
         let Some(track) = self.queue.current().cloned() else {
             return;

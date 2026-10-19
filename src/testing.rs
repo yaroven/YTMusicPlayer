@@ -102,11 +102,13 @@ impl Playback for FakePlayer {
     }
 }
 
-/// Every track is unavailable, or every resolve hangs (track "loading").
+/// Every track is unavailable, every resolve hangs (track "loading"), or
+/// yt-dlp can't reach YouTube (no connection).
 #[derive(Clone, Copy)]
 pub(crate) enum Resolves {
     Fail,
     Hang,
+    Offline,
 }
 
 impl Extractor for Resolves {
@@ -122,6 +124,14 @@ impl Extractor for Resolves {
                 )
             }
             Self::Hang => Box::pin(std::future::pending()),
+            Self::Offline => Box::pin(async move {
+                Err(ExtractorError::Failed {
+                    status: std::process::ExitStatus::default(),
+                    message: format!(
+                        "ERROR: [youtube] {video_id}: Unable to download webpage: <urlopen error [Errno 8] nodename nor servname provided, or not known>"
+                    ),
+                })
+            }),
         }
     }
     fn search<'a>(&'a self, _: &'a str, _: u8) -> BoxFuture<'a, extractor::Result<Vec<Track>>> {

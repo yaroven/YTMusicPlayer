@@ -5,13 +5,25 @@ struct HomeView: View {
     @State private var shelves: [Shelf] = []
     /// Signed in or not when `shelves` were loaded.
     @State private var loadedAs: Bool?
-    @State private var error: String?
+    @State private var error: Error?
     @Environment(Library.self) private var library
     @Environment(Account.self) private var account
+    @Environment(Router.self) private var router
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 28) {
+                if !Connectivity.shared.online, !library.downloads.isEmpty {
+                    HStack(spacing: 12) {
+                        Image(systemName: "wifi.slash").foregroundStyle(.secondary)
+                        Text("You're offline. Your downloaded songs still play.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                        Button("Downloads") { router.openDownloads() }
+                    }
+                    .padding(.horizontal)
+                }
                 if !library.history.isEmpty {
                     ShelfView(shelf: Shelf(title: String(localized: "Listen again"), items: library.history.prefix(20).map(\.item)))
                 }
@@ -22,17 +34,17 @@ struct HomeView: View {
         .overlay {
             if shelves.isEmpty {
                 if let error {
-                    ContentUnavailableView {
-                        Label("Can't load Home", systemImage: "wifi.exclamationmark")
-                    } description: {
-                        Text(error)
-                    } actions: {
-                        Button("Retry") { Task { await load() } }
+                    if library.history.isEmpty {
+                        ErrorView(error: error) { Task { await load() } }
                     }
                 } else if library.history.isEmpty {
-                    ProgressView()
+                    LoadingView()
                 }
             }
+        }
+        // Back online after a failure: load again without being asked.
+        .onChange(of: Connectivity.shared.cameBack) {
+            if error != nil || shelves.isEmpty { Task { await load() } }
         }
         .navigationTitle("Home")
         // Signed in, Home is the account's own.
@@ -48,7 +60,7 @@ struct HomeView: View {
             loadedAs = account.signedIn
             error = nil
         } catch {
-            self.error = error.localizedDescription
+            self.error = error
         }
     }
 }
@@ -67,9 +79,10 @@ struct SearchView: View {
     @State private var results: [Item] = []
     @State private var searched = ""
     @State private var searching = false
-    @State private var error: String?
+    @State private var error: Error?
     @State private var task: Task<Void, Never>?
     @State private var explore: [Shelf] = []
+    @State private var exploreError: Error?
     @State private var suggestions: [String] = []
     @State private var suggestTask: Task<Void, Never>?
     @Environment(\.isSearching) private var isSearching
@@ -94,7 +107,15 @@ struct SearchView: View {
                     }
                     .padding(.vertical)
                 }
-                .overlay { if explore.isEmpty { ProgressView() } }
+                .overlay {
+                    if explore.isEmpty {
+                        if let exploreError {
+                            ErrorView(error: exploreError) { Task { await loadExplore() } }
+                        } else {
+                            LoadingView()
+                        }
+                    }
+                }
             } else {
                 resultsList
             }
@@ -104,7 +125,20 @@ struct SearchView: View {
         .onSubmit(of: .search) { run() }
         .onChange(of: kind) { run() }
         .onChange(of: query) { _, text in suggest(text) }
-        .task { if explore.isEmpty { explore = (try? await Services.catalog.explore()) ?? [] } }
+        .task { if explore.isEmpty { await loadExplore() } }
+        .onChange(of: Connectivity.shared.cameBack) {
+            if explore.isEmpty { Task { await loadExplore() } }
+            if error != nil { run() }
+        }
+    }
+
+    private func loadExplore() async {
+        do {
+            explore = try await Services.catalog.explore()
+            exploreError = nil
+        } catch {
+            exploreError = error
+        }
     }
 
     private var resultsList: some View {
@@ -126,10 +160,9 @@ struct SearchView: View {
         .listStyle(.plain)
         .overlay {
             if searching {
-                ProgressView()
+                LoadingView()
             } else if let error {
-                ContentUnavailableView("Search failed", systemImage: "exclamationmark.triangle",
-                                       description: Text(error))
+                ErrorView(error: error) { run() }
             } else if results.isEmpty, !searched.isEmpty {
                 ContentUnavailableView.search(text: searched)
             }
@@ -171,7 +204,7 @@ struct SearchView: View {
             } catch {
                 guard !Task.isCancelled else { return }
                 results = []
-                self.error = error.localizedDescription
+                self.error = error
             }
             searching = false
         }
@@ -181,7 +214,7 @@ struct SearchView: View {
 struct PageView: View {
     let id: String
     @State private var page: Page?
-    @State private var error: String?
+    @State private var error: Error?
     @State private var showAll = false
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
@@ -194,9 +227,9 @@ struct PageView: View {
             if let page {
                 content(page)
             } else if let error {
-                ContentUnavailableView("Can't open", systemImage: "exclamationmark.triangle", description: Text(error))
+                ErrorView(error: error) { Task { await load() } }
             } else {
-                ProgressView()
+                LoadingView()
             }
         }
         .navigationTitle(page?.title ?? "")
@@ -212,11 +245,19 @@ struct PageView: View {
         }
         .task {
             guard page == nil else { return }
-            do {
-                page = try await Services.catalog.page(id)
-            } catch {
-                self.error = error.localizedDescription
-            }
+            await load()
+        }
+        .onChange(of: Connectivity.shared.cameBack) {
+            if page == nil { Task { await load() } }
+        }
+    }
+
+    private func load() async {
+        error = nil
+        do {
+            page = try await Services.catalog.page(id)
+        } catch {
+            self.error = error
         }
     }
 
@@ -234,11 +275,11 @@ struct PageView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                 HStack {
-                    Button { player.play(page.tracks) } label: {
+                    Button { player.playFrom(page.tracks, at: 0) } label: {
                         Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    Button { player.play(page.tracks.shuffled()) } label: {
+                    Button { player.playFrom(page.tracks.shuffled(), at: 0) } label: {
                         Label("Shuffle", systemImage: "shuffle").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -431,11 +472,11 @@ struct TrackListView: View {
         List {
             if !tracks.isEmpty {
                 HStack {
-                    Button { player.play(tracks) } label: {
+                    Button { player.playFrom(tracks, at: 0) } label: {
                         Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    Button { player.play(tracks.shuffled()) } label: {
+                    Button { player.playFrom(tracks.shuffled(), at: 0) } label: {
                         Label("Shuffle", systemImage: "shuffle").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)

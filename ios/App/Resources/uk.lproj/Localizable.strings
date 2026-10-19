@@ -99,3 +99,24 @@
 "Age-restricted songs can't be saved for offline play" = "Пісні 18+ не можна зберегти для офлайну";
 "Crossfade: off (gapless)" = "Перехід: вимкнено (без пауз)";
 "Crossfade: %lld s" = "Перехід: %lld с";
+
+/* No or bad connection */
+"No internet connection" = "Немає інтернету";
+"The connection is too slow" = "Інтернет надто повільний";
+"YouTube Music isn't answering" = "YouTube Music не відповідає";
+"Waiting for the internet connection…" = "Чекаю на інтернет…";
+"Slow connection: still loading…" = "Повільний інтернет: ще завантажую…";
+"You're offline" = "Немає інтернету";
+"Slow connection" = "Повільний інтернет";
+"Sign in needed" = "Потрібен вхід";
+"Something went wrong" = "Щось пішло не так";
+"Connect to the internet to see this. Downloaded songs still play." = "Підключись до інтернету, щоб побачити це. Завантажені пісні грають і без нього.";
+"YouTube Music took too long to answer." = "YouTube Music надто довго не відповідав.";
+"Its servers have a problem right now. Try again in a minute." = "У його серверів зараз проблема. Спробуй ще раз за хвилину.";
+"Back online" = "Інтернет знову є";
+"No internet connection · downloaded songs still play" = "Немає інтернету · завантажені пісні грають";
+"No internet connection. Playback continues when it's back." = "Немає інтернету. Відтворення продовжиться, щойно він з'явиться.";
+"Slow connection, buffering…" = "Повільний інтернет, буферизую…";
+"No internet: only downloaded songs play offline" = "Немає інтернету: офлайн грають лише завантажені пісні";
+"You're offline. Your downloaded songs still play." = "Немає інтернету. Завантажені пісні грають і так.";
+"The video needs the internet. The song itself plays if it's downloaded." = "Для відео потрібен інтернет. Сама пісня грає, якщо її завантажено.";

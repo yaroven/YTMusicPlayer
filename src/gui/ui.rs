@@ -64,6 +64,9 @@ slint::slint! {
         in property <string> lyrics-tab: "LYRICS";
         in property <string> related-tab: "RELATED";
         in property <string> loading: "Loading…";
+        in property <string> offline-banner: "No internet connection · downloaded songs still play";
+        in property <string> offline-empty: "You're offline. This needs the internet — your downloads still play.";
+        in property <string> retry: "Retry";
         in property <string> loading-video: "Loading the video…";
         in property <string> looking-for-lyrics: "Looking for lyrics…";
         in property <string> no-lyrics: "No lyrics for this song";
@@ -1256,6 +1259,8 @@ slint::slint! {
         callback cycle-sort();
         callback save-queue-as(string);
         callback clear-history();
+        // Checks the connection and loads again what failed for want of it.
+        callback retry();
         // "Clear the history?"
         property <bool> history-dialog;
         in property <bool> can-back;
@@ -1317,6 +1322,8 @@ slint::slint! {
         in property <string> status-text;
         in property <bool> status-error;
         in property <bool> syncing;
+        // A request failed for want of a connection (until one works).
+        in property <bool> offline;
         // Songs still being downloaded (0: none).
         in property <int> downloading;
         // The clip is open in the video window.
@@ -1764,6 +1771,34 @@ slint::slint! {
                                 }
                             }
                             Rectangle { height: 1px; background: Yt.divider; }
+                            if root.offline: Rectangle {
+                                height: 44px;
+                                background: rgb(58, 58, 60);
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 4px;
+                                    padding-top: 4px;
+                                    padding-bottom: 4px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: L.offline-banner;
+                                        color: Yt.text;
+                                        font-size: 13px;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+                                    Pill { text: L.retry; clicked => { root.retry(); keys.focus(); } }
+                                }
+                            }
+                            if root.list-mode == 2 && root.tracks.length == 0 && root.shelves.length == 0: Text {
+                                text: root.offline ? L.offline-empty : L.loading;
+                                color: Yt.secondary;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                wrap: word-wrap;
+                                vertical-stretch: 1;
+                            }
                             if (root.list-mode == 0 && root.tracks.length == 0) || (root.list-mode == 1 && root.cards.length == 0): Text {
                                 text: search.text != "" ? L.no-match-prefix + search.text + L.no-match-suffix
                                     : root.nav == 6 ? L.nothing-found

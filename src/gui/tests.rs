@@ -81,6 +81,7 @@ fn session_view() -> SessionView {
         casting: None,
         update: None,
         updating: false,
+        offline: false,
     }
 }
 

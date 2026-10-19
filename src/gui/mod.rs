@@ -97,6 +97,8 @@ enum Cmd {
     MoveInPlaylist(Playlist, usize, usize),
     RemoveFromHistory(Arc<str>),
     ClearHistory,
+    /// Check the connection, load again what failed for want of it.
+    Retry,
     /// Switch the window to the video: the audio pauses.
     #[cfg(any(target_os = "macos", windows))]
     VideoOn,
@@ -1121,6 +1123,7 @@ impl View {
         ui.set_syncing(view.syncing);
         ui.set_searching(view.searching);
         ui.set_downloading(view.downloading as i32);
+        ui.set_offline(view.offline);
         ui.set_watching(view.watching);
         ui.set_signed_in(view.signed_in);
         ui.set_signing_in(view.signing_in);
@@ -1388,6 +1391,9 @@ fn apply_language(ui: &MainWindow, lang: Lang) {
     l.set_empty_playlist(t.empty_playlist.into());
     l.set_empty_history(t.empty_history.into());
     l.set_empty_downloads(t.empty_downloads.into());
+    l.set_offline_banner(t.offline_banner.into());
+    l.set_offline_empty(t.offline_empty.into());
+    l.set_retry(t.retry.into());
     l.set_empty_albums(t.empty_albums.into());
     l.set_empty_artists(t.empty_artists.into());
     l.set_no_match_prefix(t.no_match_prefix.into());
@@ -2085,6 +2091,7 @@ fn wire_callbacks(
         Cmd::ClearHistory,
         tx
     ));
+    on!(on_retry, [tx, view, ui], || send(Cmd::Retry, tx));
     on!(on_cycle_sort, [tx, view, ui], || {
         let mut v = view.borrow_mut();
         {
@@ -2479,6 +2486,7 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::MoveInPlaylist(playlist, from, to) => session.move_in_playlist(playlist, from, to),
         Cmd::RemoveFromHistory(id) => session.remove_from_history(id),
         Cmd::ClearHistory => session.clear_history(),
+        Cmd::Retry => session.retry(),
         #[cfg(any(target_os = "macos", windows))]
         Cmd::VideoOn => session.pause_for_video(),
         #[cfg(any(target_os = "macos", windows))]

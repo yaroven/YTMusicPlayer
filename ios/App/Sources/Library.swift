@@ -136,7 +136,7 @@ final class Library {
             save()
             error = nil
         } catch {
-            self.error = String(localized: "Sync failed: \(error.localizedDescription)")
+            self.error = String(localized: "Sync failed: \(error.friendly)")
         }
     }
 
@@ -159,7 +159,7 @@ final class Library {
             do {
                 try await body()
             } catch {
-                self.error = String(localized: "\(what) failed: \(error.localizedDescription)")
+                self.error = String(localized: "\(what) failed: \(error.friendly)")
                 undo?()
             }
         }
@@ -405,7 +405,7 @@ final class Library {
                                             duration: stream.duration, loudnessDb: stream.loudnessDb), at: 0)
                 save()
             } catch {
-                self.error = String(localized: "Download failed: \(error.localizedDescription)")
+                self.error = String(localized: "Download failed: \(error.friendly)")
             }
         }
     }
