@@ -30,6 +30,22 @@ the config.
 - "isn't signed in to YouTube": that browser has no YouTube login, or the
   account isn't age-verified.
 
+## "No internet connection"
+
+The player says so in plain words (the window also shows a bar with
+**Retry**, the terminal UI a ⚠ in its status line) and doesn't skip through
+the queue: the song waits and continues at the same place when YouTube Music
+answers again — the player checks every few seconds, so there's nothing to
+do. Home, Explore and pages that failed load again by themselves.
+Downloaded songs (**Downloads**) play without a connection.
+
+- **"The connection is too slow":** YouTube didn't answer in time. The song
+  is tried again a few times; on a very slow connection, downloading the
+  songs beforehand works better.
+- **Online, but it still says offline:** a proxy or firewall may block
+  `music.youtube.com` / `googlevideo.com`; the log
+  (`<cache_dir>/logs/ytm.log`) has the underlying error.
+
 ## Other
 
 - **"Sign-in expired" after a week:** that is the optional Data API sign-in,

@@ -28,6 +28,10 @@ setup.
 - English or Ukrainian: **Settings → YTM Player → Language** (or Library →
   Language).
 - No yt-dlp and no server: the app asks YouTube for the audio link itself.
+- **No or bad internet:** a bar says "No internet connection"; screens say
+  what's wrong with **Retry** and load again by themselves when it's back;
+  offline only downloaded songs play (the rest are dimmed), and a song cut
+  off by a lost connection continues where it stopped once it returns.
 
 ## Requirements
 

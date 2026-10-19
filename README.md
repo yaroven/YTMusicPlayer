@@ -1,8 +1,8 @@
 # ytm-player
 
 A lightweight player for YouTube Music — a desktop window styled after
-YouTube Music, a terminal UI, and a native iPhone app. macOS, Linux,
-Windows, iOS.
+YouTube Music, a terminal UI, and native iPhone and Android apps. macOS,
+Linux, Windows, iOS, Android.
 
 - **Browse and play:** home feed, Explore (charts, new releases, moods and
   genres), search with suggestions, album, artist and playlist pages, song
@@ -20,8 +20,14 @@ Windows, iOS.
 - **Light:** the terminal UI takes ~10 MB of memory idle and ~15 MB while
   playing, the window ~50 MB playing and ~30 MB closed to the tray; near-zero
   CPU. A YouTube Music browser tab typically takes several hundred MB.
+- **No or bad internet:** a clear "No internet connection" instead of error
+  chains, screens that load again by themselves when the connection is back,
+  and a song that waits for the network (and continues where it stopped)
+  instead of the queue being skipped through. Downloaded songs keep playing.
 - **iPhone:** the same core as a SwiftUI app, installed with SideStore —
   [docs/iphone.md](docs/iphone.md).
+- **Android:** a Kotlin / Jetpack Compose app, installed from the APK —
+  [docs/android.md](docs/android.md).
 - Audio comes from [yt-dlp](https://github.com/yt-dlp/yt-dlp), which the app
   downloads and keeps updated by itself.
 
@@ -54,6 +60,7 @@ Windows, iOS.
 | Windows 10/11 | `…-setup-x64.exe` | run it (no admin rights) |
 | macOS 11+ | `…-macos.pkg` | open it |
 | iPhone (iOS 17+) | SideStore source | [docs/iphone.md](docs/iphone.md) |
+| Android 8+ | `…apk` | open it on the phone — [docs/android.md](docs/android.md) |
 
 The installers aren't signed with a paid certificate, so macOS and Windows
 each ask once — that, the install scripts and building from source are in
@@ -68,6 +75,7 @@ each ask once — that, the install scripts and building from source are in
 | [google-account.md](docs/google-account.md) | signing in, library sync, the optional Data API |
 | [configuration.md](docs/configuration.md) | `config.toml`, Chromecast, Last.fm, Discord, offline |
 | [iphone.md](docs/iphone.md) | the iPhone app: install, sign in, limits |
+| [android.md](docs/android.md) | the Android app: install, sign in, offline, building |
 | [troubleshooting.md](docs/troubleshooting.md) | age-restricted songs, sound, sign-in, playback |
 | [internals.md](docs/internals.md) | how the player works inside, flow by flow |
 
@@ -96,4 +104,5 @@ cargo test -- --ignored   # tests that hit the network
 
 Architecture, decisions and the testing setup are in
 [CLAUDE.md](CLAUDE.md); domain terms in [CONTEXT.md](CONTEXT.md). The iPhone
-app lives in [`ios/`](ios) and is built by CI.
+app lives in [`ios/`](ios), the Android app in [`android/`](android); CI
+builds both.

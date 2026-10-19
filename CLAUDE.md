@@ -1,8 +1,8 @@
 # ytm-player
 
 Lightweight cross-platform (macOS, Linux, Windows) music player in Rust (TUI
-and a Slint desktop window),
-synced with a YouTube Music account. Its reason to exist is being a much
+and a Slint desktop window), plus native iPhone (Swift) and Android (Kotlin)
+apps, synced with a YouTube Music account. Its reason to exist is being a much
 lighter alternative to the YouTube Music browser tab: RAM, CPU and disk
 footprint are first-class requirements. Measure, don't guess.
 
@@ -78,6 +78,17 @@ stdout/stderr — the terminal belongs to the TUI.
 - OAuth login / sync / likes need the user's Google account: the user tests.
   The auto-mode classifier blocks Claude from moving client secrets; the user
   imports them (`ytm import-client`).
+- Android (`android/`): JDK 17 at `/opt/homebrew/opt/openjdk@17` (export
+  `JAVA_HOME=…/libexec/openjdk.jdk/Contents/Home`), SDK in
+  `~/Library/Android/sdk` (`local.properties`, not committed). `./gradlew
+  :core:test` (plain JVM; `YTM_LIVE=1` for the live half),
+  `:app:assembleRelease`, `:app:lintRelease`. Emulator: AVD `ytm`
+  (android-35 google_apis arm64), `emulator -avd ytm -no-window -no-audio
+  -gpu swiftshader_indirect -no-snapshot`; drive it with `adb shell input
+  tap/text/keyevent`, screenshots via `adb shell screencap` + `sips` to a
+  small JPEG; offline with `adb shell svc wifi disable; svc data disable`.
+  The software GPU doesn't draw WebView video (it plays: the page reports
+  `currentTime`, logged as `ytm-video` in debug builds).
 - Linux/Windows: Docker is available — `rust:latest` for clippy/tests and
   `cargo check --target x86_64-pc-windows-gnu` (with `gcc-mingw-w64`);
   `mcr.microsoft.com/powershell` to parse `install.ps1`. No audio device or
@@ -115,9 +126,12 @@ main services the CFRunLoop for media keys).
 | `media` | souvlaki: media keys + Now Playing (macOS, Linux/MPRIS, Windows SMTC with the GUI's HWND via `set_window_handle`) |
 | `gui` (feature `gui`) | Slint window on the main thread; `Session` on a "core" thread with its own runtime; UI sends `Cmd`s, core pushes `Snapshot`s (`SessionView` + changes + page/home/lyrics/related) via `upgrade_in_event_loop`; `TracksModel` reads rows straight from the `LibraryView` (or the queue); `Cards`/`Shelves` models fill art by URL as it arrives; `tray` (tray-icon / ksni); `ui.rs` is assembled Slint (keep `#rrggbb` colours out of Rust tokenization: `3e…` parses as an exponent — use `rgb()`) |
 | `fmt` | display formatting shared by both UIs |
+| `net` | network failures told apart (`problem`: offline / slow / other, from reqwest / io errors and yt-dlp's messages), plain-words `describe`, `online()` probe (TCP connect to music.youtube.com) |
 | `packaging/` | Linux .desktop, Arch PKGBUILD, Inno Setup script, macOS pkg builder |
 | `config::{paths, settings}` | per-OS dirs; `config.toml` (template on first run, `store_client` / `store_value` rewrite keys in place, keeping comments) |
 | `ios/YTMKit` (Swift package) | iPhone core, no UI: InnerTube catalog + LRCLIB lyrics ported from `catalog.rs` / `lyrics.rs` (same lenient `findAll` parsing), `Resolver` = on-device stream URLs (no yt-dlp), client list overridable by `ios/clients.json` on main; `swift run YTMKitChecks [--live]` (no XCTest in CLT) |
+| `android/core` (Kotlin/JVM) | port of YTMKit: InnerTube catalog + library writes, `Resolver` (same clients, `ios/clients.json`), LRCLIB lyrics, yt-dlp-ejs solver behind `JsEngine`; plain `HttpURLConnection` + `org.json` (Android's own; `compileOnly`) |
+| `android/app` (Compose, Media3) | `Player` (whole queue in ExoPlayer as `ytm://id` items, `ResolvingDataSource` → stream URL), `PlaybackService` (MediaSessionService, square art), `Library` (JSON), `Network` (connectivity flow, `describe`), `SecureStore` (Keystore AES-GCM cookies), `WebViewJs`, `ui/*` |
 | `ios/App` (SwiftUI, iOS 17) | `Player` (AVQueuePlayer, next song resolved ahead, radio autoplay, Now Playing / remote commands, queue saved to `queue.json`), `Library` (the account's liked music / playlists / saved pages synced from YouTube Music and written back, plus history, in one JSON), `Router` (per-tab paths); `project.yml` → XcodeGen in CI; `ios/player-check.sh` runs `Player` on macOS, muted, live |
 
 Domain terms are defined in `CONTEXT.md`.
@@ -529,7 +543,49 @@ Domain terms are defined in `CONTEXT.md`.
   end of a song, a 3.7 MB download played from the file, the handover at
   5.8 s into the next song with a 6 s fade).
 
+- **Android app is native Kotlin** (user's choice 2026-10-19, over Rust +
+  Slint on Android: no yt-dlp there either, so the resolver had to be
+  ported anyway; JNI/NDK/oboe and the media notification would be harder).
+  Compose + Media3 + Coil; `core` is a plain JVM module so the parsing and
+  the live checks run on the Mac. **Whole queue in ExoPlayer**: items are
+  `ytm://<id>`, resolved lazily on ExoPlayer's loader thread by a
+  `ResolvingDataSource` (blocking `runBlocking { resolver.stream }` is fine
+  there), so preload / gapless / notification next-previous are
+  ExoPlayer's; `NeedsHls` swaps an item to `ytmhls://` + M3U8 (age-
+  restricted, signed in); `ErrorPolicy` doesn't retry what can't improve
+  (YouTube refused, 403/410, offline). googlevideo answers ExoPlayer's
+  open-ended `Range: bytes=0-` with 206 for the VISIONOS URL (checked
+  live 2026-10-19). Crossfade = a short-lived second ExoPlayer finishing
+  the old song (started 1.5 s ahead, swapped in when ready), so the media
+  session keeps one player. Sign-in: Google's page in a WebView with "; wv"
+  stripped from the UA, cookies from `CookieManager`, then cleared.
+  Release APK 2.3 MB (R8). Memory, emulator android-35, release, playing,
+  `dumpsys meminfo` PSS: ~82 MB Now Playing open, ~73 MB background (the
+  software GPU's buffers land in native heap; a real GPU puts them in
+  "Graphics").
+- **No / bad internet, every frontend** (user's request 2026-10-19): a
+  network failure waits instead of skipping and shows plain words, not the
+  error chain. Desktop: `net::problem`; the session sets `offline`
+  (`SessionView.offline`: window banner + Retry, TUI ⚠ in the status line),
+  probes every 4 s (`PROBE_EVERY`), and on success replays the waiting song
+  at `resume_at`, reloads Home / Explore / the failed page. A track ending
+  more than 8 s (`EARLY_END`) before its length asks the probe first (the
+  stream ran dry when the connection went). At most 5 waits in a row per
+  song (`MAX_NETWORK_RETRIES`), then the old failure path. Phones: the OS
+  connectivity API (NWPathMonitor / default-network callback, using the
+  callback's own capabilities: right after `onLost` the lost network can
+  still be `activeNetwork`), screens reload on reconnect, offline taps play
+  only downloaded songs, slow hint after 4–6 s. Verified on the emulator:
+  wifi + data off mid-song → buffer runs out → "waiting" → on → resumes at
+  the same second, Explore reloads.
+
 ## Open TODOs
+
+- Android: try on a real phone (Google sign-in in the WebView — Google may
+  refuse embedded browsers; video rendering; notification on Android 13+);
+  release signing: CI needs `ANDROID_KEYSTORE_BASE64` / `_PASSWORD` /
+  `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` secrets, else every CI APK
+  is signed with that runner's debug key and won't update over the last.
 
 - iPhone: verify signed-in age-restricted playback on a real account,
   memory measurement on a real device; the video pane and crossfade on a

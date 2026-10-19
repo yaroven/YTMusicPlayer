@@ -169,6 +169,42 @@ SwiftUI player: AVQueuePlayer with the next song resolved ahead, the library
 synced from and written back to the account, karaoke lyrics, and the queue
 saved as JSON. CI builds the unsigned `.ipa`; SideStore installs it.
 
+## The Android app
+
+`android/core` is the same catalog, lyrics and resolver logic in plain
+Kotlin (it runs and is tested on the desktop JVM: `./gradlew :core:test`);
+`android/app` is the Compose UI and the player. The whole queue sits in
+ExoPlayer's playlist as `ytm://<video id>` items; a `ResolvingDataSource`
+turns each into its googlevideo URL (the resolver runs on ExoPlayer's
+loader thread) when ExoPlayer starts loading it. So preloading the next
+song, gapless changes and the notification's next / previous are
+ExoPlayer's own. A song that only plays as HLS (age-restricted, signed in)
+fails its first load with `NeedsHls` and is put back as an HLS item.
+Crossfade starts a short-lived second player on the old song a moment
+ahead and lets the main one move on, so the media session never switches
+players. `PlaybackService` only puts the session in the notification.
+
+## No internet, bad internet
+
+Every frontend tells a network failure apart from other errors and acts on
+it instead of showing the error chain:
+
+- **Desktop** (`net`): `net::problem` reads reqwest / io errors and yt-dlp's
+  messages ("Unable to download webpage", "nodename nor servname"…) as
+  *offline* or *slow*. The session then marks itself `offline` (the window
+  shows a banner with Retry, the terminal UI a ⚠ in the status bar) and
+  probes YouTube Music with a TCP connect every 4 s. A song that couldn't
+  be opened, or that stopped well before its end for want of data, waits
+  (`wait_for_network`, at most 5 times in a row) instead of being skipped;
+  when the probe succeeds it continues at the same position, and Home,
+  Explore or the page that failed load again.
+- **iPhone** (`Connectivity`, NWPathMonitor) and **Android** (`Network`,
+  ConnectivityManager's default-network callback) know the connection
+  state directly: a banner, error screens with Retry that reload by
+  themselves on reconnect, a "slow connection" hint on long loads and long
+  buffering, offline taps that play only downloaded songs, and a player
+  that waits and resumes in place.
+
 ## Testing it
 
 - `cargo test` — unit tests, terminal-UI snapshots (insta) and window tests
@@ -177,4 +213,7 @@ saved as JSON. CI builds the unsigned `.ipa`; SideStore installs it.
   them).
 - `ios/player-check.sh`, `swift run YTMKitChecks [--live]` — the phone's core
   and player without Xcode.
+- `android/`: `./gradlew :core:test` (`YTM_LIVE=1` for the live half), and
+  the app on an emulator (`emulator -avd … -no-window`, `adb shell svc wifi
+  disable` / `svc data disable` for the offline paths).
 - Manual: real audio, memory (`footprint`), macOS-only behaviour.
