@@ -101,6 +101,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import dev.ytmplayer.android.App
+import dev.ytmplayer.android.Covers
 import dev.ytmplayer.android.R
 import dev.ytmplayer.android.formatTime
 import dev.ytmplayer.core.Item
@@ -140,7 +141,8 @@ private fun resized(url: String, px: Int): String {
 @Composable
 fun Artwork(art: Art, size: Dp, modifier: Modifier = Modifier, round: Boolean = false) {
     val first = when (art) {
-        is Art.Video -> "https://i.ytimg.com/vi/${art.id}/" +
+        // A downloaded song's own cover, also offline.
+        is Art.Video -> Covers.local(art.id)?.let { "file://${it.path}" } ?: "https://i.ytimg.com/vi/${art.id}/" +
             (if (size > 240.dp) "maxresdefault" else if (size > 120.dp) "hqdefault" else "mqdefault") + ".jpg"
         is Art.Url -> resized(art.url, (size.value * 3).toInt())
         Art.None -> null

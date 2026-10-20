@@ -64,11 +64,13 @@ private class SquareArtLoader : BitmapLoader {
     override fun supportsMimeType(mimeType: String): Boolean = mimeType.startsWith("image/")
 
     override fun decodeBitmap(data: ByteArray): ListenableFuture<Bitmap> =
-        executor.submit<Bitmap> { square(BitmapFactory.decodeByteArray(data, 0, data.size) ?: error("not an image")) }
+        executor.submit<Bitmap> { square(BitmapFactory.decodeByteArray(data, 0, data.size) ?: error("not an image"), 512) }
 
     override fun loadBitmap(uri: Uri): ListenableFuture<Bitmap> = executor.submit<Bitmap> {
+        // A downloaded song's cover is on the phone (offline too).
+        if (uri.scheme == "file") return@submit BitmapFactory.decodeFile(uri.path) ?: error("no art")
         val urls = listOf(uri.toString(), uri.toString().replace("maxresdefault", "hqdefault")).distinct()
-        urls.firstNotNullOfOrNull(::fetch)?.let(::square) ?: error("no art")
+        urls.firstNotNullOfOrNull(::fetch)?.let { square(it, 512) } ?: error("no art")
     }
 
     private fun fetch(url: String): Bitmap? = runCatching {
@@ -81,16 +83,4 @@ private class SquareArtLoader : BitmapLoader {
             c.disconnect()
         }
     }.getOrNull()
-
-    private fun square(image: Bitmap): Bitmap {
-        val w = image.width
-        val h = image.height
-        // 4:3 with bars: the picture is the middle 16:9 band.
-        val band = if (kotlin.math.abs(w.toDouble() / h - 4.0 / 3.0) < 0.01) w * 9 / 16 else h
-        val side = minOf(w, band)
-        val square = Bitmap.createBitmap(image, (w - side) / 2, (h - side) / 2, side, side)
-        val scaled = if (side > 512) Bitmap.createScaledBitmap(square, 512, 512, true) else square
-        if (scaled !== square) square.recycle()
-        return scaled
-    }
 }

@@ -801,11 +801,12 @@ final class Player {
 
     private func loadArtwork(_ track: Track) {
         Task {
+            // A downloaded song's cover is on the phone (offline too); else
             // maxresdefault is the sharpest, but not every video has one.
-            let urls = [track.largeThumbnailURL, track.fallbackThumbnailURL].compactMap { $0 }
+            let urls = [Covers.local(track.videoId), track.largeThumbnailURL, track.fallbackThumbnailURL].compactMap { $0 }
             for url in urls {
                 guard let (data, response) = try? await URLSession.shared.data(from: url),
-                      (response as? HTTPURLResponse)?.statusCode == 200,
+                      url.isFileURL || (response as? HTTPURLResponse)?.statusCode == 200,
                       let image = squareCover(data) else { continue }
                 guard current?.videoId == track.videoId else { return }
                 artwork = (track.videoId, image)

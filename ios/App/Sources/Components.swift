@@ -4,6 +4,7 @@ import YTMKit
 struct RootView: View {
     @Environment(Player.self) private var player
     @Environment(Router.self) private var router
+    @Environment(Library.self) private var library
 
     init() {
         #if os(iOS)
@@ -52,6 +53,9 @@ struct RootView: View {
             }
         }
         .task { Updater.shared.checkDaily() }
+        // Covers for songs downloaded before they were kept with them.
+        .task { await library.fetchMissingCovers() }
+        .onChange(of: Connectivity.shared.cameBack) { Task { await library.fetchMissingCovers() } }
         .overlay(alignment: .bottom) { NoticeToast() }
         .animation(.easeInOut(duration: 0.25), value: Notice.shared.text)
     }

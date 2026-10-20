@@ -519,6 +519,15 @@ final class Library {
         downloads.insert(Downloaded(track: track, file: file, bytes: bytes,
                                     duration: stream.duration, loudnessDb: stream.loudnessDb), at: 0)
         save()
+        await Covers.fetch(track)
+    }
+
+    /// Songs downloaded before covers were kept get theirs (once online).
+    func fetchMissingCovers() async {
+        guard Connectivity.shared.online else { return }
+        for item in downloads where Covers.local(item.track.videoId) == nil {
+            await Covers.fetch(item.track)
+        }
     }
 
     /// Stops what is downloading and forgets what was waiting.
@@ -534,6 +543,7 @@ final class Library {
     func removeDownload(_ track: Track) {
         guard let (url, _) = download(of: track.videoId) else { return }
         try? FileManager.default.removeItem(at: url)
+        Covers.remove(track.videoId)
         downloads.removeAll { $0.track.videoId == track.videoId }
         save()
     }
@@ -543,6 +553,7 @@ final class Library {
         cancelDownloads()
         for item in downloads {
             try? FileManager.default.removeItem(at: Self.downloadsDirectory.appendingPathComponent(item.file))
+            Covers.remove(item.track.videoId)
         }
         downloads = []
         save()

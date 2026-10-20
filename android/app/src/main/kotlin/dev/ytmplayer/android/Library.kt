@@ -496,6 +496,12 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         downloads = listOf(Downloaded(track, name, bytes, stream.duration, stream.loudnessDb, exported)) +
             downloads.filter { it.track.videoId != track.videoId }
         save()
+        Covers.fetch(track)
+    }
+
+    /** Songs downloaded before covers were kept get theirs (once online). */
+    suspend fun fetchMissingCovers() {
+        downloads.filter { Covers.local(it.track.videoId) == null }.forEach { Covers.fetch(it.track) }
     }
 
     /** Stops what is downloading and forgets what was waiting. */
@@ -512,6 +518,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         val (file, item) = download(track.videoId) ?: return
         file.delete()
         unexport(item)
+        Covers.remove(track.videoId)
         downloads = downloads.filter { it.track.videoId != track.videoId }
         save()
     }
@@ -522,6 +529,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         downloads.forEach { item ->
             File(downloadsDir, item.file).delete()
             unexport(item)
+            Covers.remove(item.track.videoId)
         }
         downloadsDir.listFiles()?.forEach { it.delete() }
         downloads = emptyList()

@@ -641,6 +641,12 @@ Domain terms are defined in `CONTEXT.md`.
   `more_home`, the next batch fetched right after the first answer and on
   scroll). Not ported: Last.fm and Chromecast on phones, a persistent
   shuffle mode (phones shuffle the upcoming songs instead).
+  **Covers go with downloads** (user's lock screen offline showed a grey
+  square, 2026-10-20): the cover came from i.ytimg.com at play time. Now
+  each download keeps its centre square at 544 px as JPEG (60–90 KB;
+  iPhone Application Support/covers, Android files/covers), used first by
+  the lists, the lock screen / notification and Now Playing; deleted with
+  the song; older downloads get theirs once online.
 
 - **Phones stream in ranges** (user: "a 32-minute song didn't load in over
   a minute", 2026-10-20): googlevideo throttles big reads to the song's

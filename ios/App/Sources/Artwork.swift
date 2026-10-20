@@ -65,6 +65,8 @@ struct Artwork: View {
     private var url: URL? {
         switch source {
         case let .video(id):
+            // A downloaded song's own cover, also offline.
+            if let local = Covers.local(id) { return local }
             let name = size > 240 ? "maxresdefault" : size > 120 ? "hqdefault" : "mqdefault"
             return URL(string: "https://i.ytimg.com/vi/\(id)/\(name).jpg")
         case let .url(url): return resized(url, Int(size * 3))
@@ -86,18 +88,90 @@ struct Artwork: View {
 
 /// Lock screen art: the centre square of a (letterboxed) video thumbnail.
 func squareCover(_ data: Data) -> MPMediaItemArtwork? {
-    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
-    let w = image.width, h = image.height
-    // 4:3 with bars: the picture is the middle 16:9 band.
-    let band = abs(Double(w) / Double(h) - 4.0 / 3.0) < 0.01 ? w * 9 / 16 : h
-    let side = min(w, band)
-    guard let square = image.cropping(to: CGRect(x: (w - side) / 2, y: (h - side) / 2, width: side, height: side))
-    else { return nil }
+    guard let square = squareImage(data) else { return nil }
+    let side = square.width
     #if canImport(UIKit)
     let picture = UIImage(cgImage: square)
     #else
     let picture = NSImage(cgImage: square, size: NSSize(width: side, height: side))
     #endif
     return MPMediaItemArtwork(boundsSize: picture.size) { _ in picture }
+}
+
+/// The centre square of a (letterboxed) video thumbnail.
+func squareImage(_ data: Data) -> CGImage? {
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+          let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+    let w = image.width, h = image.height
+    // 4:3 with bars: the picture is the middle 16:9 band.
+    let band = abs(Double(w) / Double(h) - 4.0 / 3.0) < 0.01 ? w * 9 / 16 : h
+    let side = min(w, band)
+    return image.cropping(to: CGRect(x: (w - side) / 2, y: (h - side) / 2, width: side, height: side))
+}
+
+/// Covers of downloaded songs, kept next to them so the lock screen and the
+/// lists show them offline: Application Support/covers/<video id>.jpg,
+/// the centre square at up to 544 px (~90 KB each).
+enum Covers {
+    static let directory: URL = {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let dir = support.appendingPathComponent("covers", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    /// Which covers are on disk (read once, then kept up to date).
+    nonisolated(unsafe) private static var saved: Set<String> = {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        return Set(names.filter { $0.hasSuffix(".jpg") }.map { String($0.dropLast(4)) })
+    }()
+    private static let lock = NSLock()
+
+    static func file(_ videoId: String) -> URL { directory.appendingPathComponent("\(videoId).jpg") }
+
+    /// The cover's file, when this song's cover is on the phone.
+    static func local(_ videoId: String) -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+        return saved.contains(videoId) ? file(videoId) : nil
+    }
+
+    /// Fetches and keeps the song's cover (maxresdefault, else hqdefault).
+    static func fetch(_ track: Track) async {
+        guard local(track.videoId) == nil else { return }
+        for url in [track.largeThumbnailURL, track.fallbackThumbnailURL].compactMap({ $0 }) {
+            guard let (data, response) = try? await URLSession.shared.data(from: url),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let jpeg = squareJPEG(data, side: 544) else { continue }
+            guard (try? jpeg.write(to: file(track.videoId), options: .atomic)) != nil else { return }
+            lock.lock()
+            saved.insert(track.videoId)
+            lock.unlock()
+            return
+        }
+    }
+
+    static func remove(_ videoId: String) {
+        try? FileManager.default.removeItem(at: file(videoId))
+        lock.lock()
+        saved.remove(videoId)
+        lock.unlock()
+    }
+
+    /// The centre square, scaled down to `side` px, as JPEG.
+    private static func squareJPEG(_ data: Data, side: Int) -> Data? {
+        guard let square = squareImage(data) else { return nil }
+        let out = min(side, square.width)
+        guard let context = CGContext(data: nil, width: out, height: out, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(square, in: CGRect(x: 0, y: 0, width: out, height: out))
+        guard let scaled = context.makeImage() else { return nil }
+        let result = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(result, "public.jpeg" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, scaled, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return result as Data
+    }
 }

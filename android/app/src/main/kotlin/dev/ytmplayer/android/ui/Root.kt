@@ -1,5 +1,7 @@
 package dev.ytmplayer.android.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
@@ -56,6 +58,9 @@ fun Root() {
             app.updater.error = null
         }
     }
+    // Covers for songs downloaded before they were kept with them, once online.
+    val online by app.network.online.collectAsState()
+    LaunchedEffect(online) { if (online) library.fetchMissingCovers() }
     LaunchedEffect(library.error) {
         library.error?.let {
             snackbar.showSnackbar(it)

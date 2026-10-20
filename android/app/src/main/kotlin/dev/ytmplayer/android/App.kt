@@ -36,6 +36,7 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        Covers.init(this)
         settings = Settings(this)
         network = Network(this)
         val store = SecureStore(this)

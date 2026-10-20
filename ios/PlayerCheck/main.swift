@@ -1,4 +1,5 @@
 import Foundation
+import MediaPlayer
 import YTMKit
 
 // Drives the app's Player on macOS (muted): play, gapless advance, skip,
@@ -17,6 +18,13 @@ import YTMKit
     }
     await wait("first song plays") { player.isPlaying && player.position > 0.5 }
     await wait("real duration") { abs(player.duration - 230.4) < 1 }
+    // The lock screen / Control Center: the cover, and ⏸ while it plays.
+    func nowPlaying(_ key: String) -> Any? { MPNowPlayingInfoCenter.default().nowPlayingInfo?[key] }
+    await wait("now playing has the cover", 10) { nowPlaying(MPMediaItemPropertyArtwork) != nil }
+    await wait("now playing says playing") { (nowPlaying(MPNowPlayingInfoPropertyPlaybackRate) as? Double) == 1 }
+    await wait("now playing position moves on") {
+        abs(((nowPlaying(MPNowPlayingInfoPropertyElapsedPlaybackTime) as? Double) ?? -10) - player.position) < 3
+    }
     await wait("history") { library.history.first?.videoId == a.videoId }
     await wait("radio appended (autoplay)") { player.queue.count > 2 }
     player.seek(to: 226)
@@ -28,6 +36,7 @@ import YTMKit
     await wait("previous") { player.index == 1 && player.isPlaying }
     player.togglePlay()
     await wait("paused") { !player.isPlaying }
+    await wait("now playing says paused") { (nowPlaying(MPNowPlayingInfoPropertyPlaybackRate) as? Double) == 0 }
     let at = player.position
     try await Task.sleep(for: .seconds(2))
     await wait("stays paused") { !player.isPlaying && abs(player.position - at) < 0.1 }
@@ -55,11 +64,17 @@ import YTMKit
     await wait("download", 60) { library.isDownloaded(a.videoId) }
     let size = library.downloads.first?.bytes ?? 0
     print(size > 3_000_000 ? "ok  " : "FAIL", "downloaded size", size)
+    // Its cover is kept with it, for the lock screen offline.
+    await wait("cover kept with the download", 10) { Covers.local(a.videoId) != nil }
+    if let cover = Covers.local(a.videoId), let data = try? Data(contentsOf: cover), let image = squareImage(data) {
+        print(image.width == image.height && data.count < 120_000 ? "ok  " : "FAIL", "cover", image.width, "px,", data.count, "bytes")
+    }
     player.play([a])
     await wait("plays the downloaded file") { player.isPlaying && player.position > 0.5 }
     await wait("its real duration") { abs(player.duration - 230.4) < 1 }
     library.removeDownload(a)
     await wait("download removed") { !library.isDownloaded(a.videoId) }
+    await wait("its cover removed") { Covers.local(a.videoId) == nil }
 
     // Crossfade: the next song starts 6 s before the end of this one, and
     // takes over once the fade is done (so it is ~6 s in by then).

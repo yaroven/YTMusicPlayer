@@ -423,7 +423,7 @@ class Player(
                 MediaMetadata.Builder()
                     .setTitle(track.title)
                     .setArtist(track.artist)
-                    .setArtworkUri(Uri.parse(track.largeThumbnailUrl))
+                    .setArtworkUri(Covers.local(track.videoId)?.let(Uri::fromFile) ?: Uri.parse(track.largeThumbnailUrl))
                     .build(),
             )
         val downloaded = library.download(track.videoId)
