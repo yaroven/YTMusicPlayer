@@ -82,9 +82,10 @@ stdout/stderr — the terminal belongs to the TUI.
   `JAVA_HOME=…/libexec/openjdk.jdk/Contents/Home`), SDK in
   `~/Library/Android/sdk` (`local.properties`, not committed). `./gradlew
   :core:test` (plain JVM; `YTM_LIVE=1` for the live half),
-  `:app:assembleRelease`, `:app:lintRelease`. Emulator: AVD `ytm`
-  (android-35 google_apis arm64), `emulator -avd ytm -no-window -no-audio
-  -gpu swiftshader_indirect -no-snapshot`; drive it with `adb shell input
+  `:app:assembleRelease`, `:app:lintRelease`. Emulator: AVD `ytm-play`
+  (android-35 google_apis_playstore arm64, `hw.keyboard=yes`; the user's
+  Google account and the official YouTube Music app for side-by-side
+  comparisons), `emulator -avd ytm-play -no-audio -no-boot-anim`; drive it with `adb shell input
   tap/text/keyevent`, screenshots via `adb shell screencap` + `sips` to a
   small JPEG; offline with `adb shell svc wifi disable; svc data disable`.
   The software GPU doesn't draw WebView video (it plays: the page reports
