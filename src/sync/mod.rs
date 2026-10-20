@@ -240,6 +240,54 @@ mod tests {
             "Synced 5 playlists, 812 tracks (3 unchanged, 21 API units) · 120 liked (YouTube Music)"
         );
     }
+    /// The signed-in Home has the account's own mixes ("Mixed for you": My
+    /// Supermix, My Mix 1…, Discover Mix…), they open as playlists and have
+    /// songs. Read-only, opt-in like `live_session_sync`:
+    /// `YTM_COOKIES=<data_dir>/youtube-cookies.txt cargo test -- --ignored live_home_mixes --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn live_home_mixes() {
+        use crate::youtube_session::{InMemory, YouTubeSession, parse_cookies_txt};
+
+        let Ok(path) = std::env::var("YTM_COOKIES") else {
+            return;
+        };
+        let cookies = parse_cookies_txt(&std::fs::read_to_string(path).unwrap());
+        let file =
+            std::env::temp_dir().join(format!("yarek-live-mixes-{}.txt", std::process::id()));
+        let session = YouTubeSession::load(InMemory::default(), file.clone());
+        session.sign_in(cookies).unwrap();
+        let catalog = Catalog::new(reqwest::Client::new()).with_session(session);
+        let mut feed = catalog.home_feed(None).await.unwrap();
+        let mut shelves = std::mem::take(&mut feed.shelves);
+        let mut next = feed.continuation.clone();
+        for _ in 0..4 {
+            let Some(token) = next else { break };
+            let (more, token) = catalog
+                .more_home(&token, feed.visitor.as_deref())
+                .await
+                .unwrap();
+            shelves.extend(more);
+            next = token;
+        }
+        std::fs::remove_file(&file).ok();
+        for shelf in &shelves {
+            println!("shelf {:?}: {} items", shelf.title, shelf.items.len());
+        }
+        let mixes: Vec<_> = shelves
+            .iter()
+            .flat_map(|s| &s.items)
+            .filter(|i| i.id.starts_with("VLRDTMAK") || i.id.starts_with("RDTMAK"))
+            .collect();
+        for mix in &mixes {
+            println!("mix {:?} ({})", mix.title, mix.id);
+        }
+        assert!(!mixes.is_empty(), "no personal mixes on the signed-in Home");
+        let page = catalog.page(&mixes[0].id).await.unwrap();
+        println!("{:?}: {} songs", page.title, page.tracks.len());
+        assert!(!page.tracks.is_empty(), "the mix opened without songs");
+    }
+
     /// The signed-in library, read-only on the account. Needs the user's own
     /// sign-in, so it's opt-in:
     /// `YTM_COOKIES=<data_dir>/youtube-cookies.txt cargo test -- --ignored live_session_sync`

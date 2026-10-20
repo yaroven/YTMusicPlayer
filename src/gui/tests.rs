@@ -72,7 +72,7 @@ fn session_view() -> SessionView {
         downloading: 0,
         signed_in: true,
         signing_in: false,
-        youtube_signed_in: false,
+        youtube_signed_in: true,
         youtube_signing_in: false,
         client_id: String::new(),
         memory: String::new(),
@@ -635,6 +635,11 @@ fn screens_png() {
             .unwrap();
         println!("wrote {}", out.display());
     };
+
+    // --- Signed out: the sign-in screen and nothing else ----------------------
+    settle(20);
+    save("signin");
+    ui.set_yt_signed_in(true);
 
     // --- 0. The library list it starts on -----------------------------------
     settle(20);

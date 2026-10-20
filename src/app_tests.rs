@@ -227,3 +227,24 @@ async fn the_terminal_ui_speaks_ukrainian() {
     }
     insta::assert_snapshot!(s);
 }
+
+/// Signed out, the terminal shows only the sign-in screen (no anonymous
+/// suggestions), and the player's keys do nothing until then.
+#[tokio::test]
+async fn signed_out_shows_only_the_sign_in_screen() {
+    let mut app = app().await;
+    app.session.sign_out_for_tests();
+    char(&mut app, '?');
+    let s = screen(&mut app);
+    assert!(s.contains("Sign in with your Google account"), "{s}");
+    assert!(
+        !s.contains("Shape of You"),
+        "the library stays hidden:\n{s}"
+    );
+    assert!(
+        matches!(app.mode, Mode::Normal),
+        "keys don't reach the player"
+    );
+    // How to sign in differs by platform (a window, or a browser's sign-in).
+    assert!(s.contains("Enter"), "{s}");
+}

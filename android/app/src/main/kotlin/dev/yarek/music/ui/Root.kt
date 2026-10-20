@@ -1,5 +1,21 @@
 package dev.yarek.music.ui
 
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.Alignment
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
 import androidx.activity.compose.BackHandler
@@ -40,6 +56,12 @@ import dev.yarek.music.R
 @Composable
 fun Root() {
     val app = App.instance
+    // Signed out: only the welcome screen (the app shows nothing but the
+    // account's own music, never anonymous suggestions).
+    if (!app.account.signedIn) {
+        WelcomeScreen()
+        return
+    }
     val player = app.player
     val library = app.library
     val snackbar = remember { SnackbarHostState() }
@@ -135,4 +157,34 @@ fun Root() {
             exit = slideOutVertically { it },
         ) { NowPlaying() }
     }
+}
+
+/** Signed out: the app, what it shows (only the account's own music) and the sign-in. */
+@Composable
+private fun WelcomeScreen() {
+    var signingIn by remember { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxSize().background(YT.background).systemBarsPadding().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.weight(1f))
+        Image(painterResource(R.drawable.ic_launcher_foreground), null, Modifier.size(180.dp))
+        Text("Yarek Music", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Spacer(Modifier.height(8.dp))
+        Text(stringResource(R.string.gate_title), fontSize = 18.sp, color = Color.White)
+        Spacer(Modifier.height(12.dp))
+        Text(
+            stringResource(R.string.gate_text), fontSize = 15.sp, color = YT.secondary,
+            textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp),
+        )
+        Spacer(Modifier.weight(1f))
+        Box(
+            Modifier.fillMaxWidth().height(52.dp).clip(CircleShape).background(Color.White)
+                .clickable { signingIn = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(stringResource(R.string.sign_in_google), color = Color.Black, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+        }
+    }
+    if (signingIn) SignInDialog { signingIn = false }
 }

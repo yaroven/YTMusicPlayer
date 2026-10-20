@@ -1387,6 +1387,9 @@ fn apply_language(ui: &MainWindow, lang: Lang) {
     l.set_sign_in(t.sign_in.into());
     l.set_sign_out(t.sign_out.into());
     l.set_sign_in_google(t.sign_in_google.into());
+    l.set_gate_title(t.gate_title.into());
+    l.set_gate_text(t.gate_text.into());
+    l.set_other_options(t.other_options.into());
     l.set_signing_in(t.signing_in.into());
     l.set_syncing(t.syncing.into());
     l.set_searching(t.searching.into());
@@ -1695,10 +1698,9 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Resu
 
     let ui = open_window()?;
     ui.set_autoplay(deps.autoplay);
-    // First start: nothing works without an account, so ask right away.
-    if !deps.account.signed_in() && !deps.youtube.signed_in() {
+    // Not signed in: the window shows its sign-in screen (ui.rs).
+    if !deps.youtube.signed_in() {
         ui.set_download_file(downloaded_client_name().into());
-        ui.set_account_open(true);
     }
     #[cfg(windows)]
     if let Some(hwnd) = window_handle(&ui) {

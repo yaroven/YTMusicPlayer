@@ -119,6 +119,21 @@ impl YouTubeSession {
         Self::load(InMemory::default(), PathBuf::new())
     }
 
+    /// Signed in with made-up cookies, in memory only (tests: the frontends
+    /// show nothing but their sign-in screen while signed out).
+    #[cfg(test)]
+    pub fn signed_in_for_tests() -> Self {
+        let session = Self::none();
+        *session
+            .inner
+            .cookies
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = [("SAPISID", "test"), ("SID", "test")]
+            .map(|(k, v)| (k.to_owned(), v.to_owned()))
+            .into();
+        session
+    }
+
     pub fn signed_in(&self) -> bool {
         is_signed_in(&self.read())
     }

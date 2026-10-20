@@ -945,6 +945,18 @@ impl Session {
 
     // --- account ------------------------------------------------------------------
 
+    /// Signed in to YouTube ("Sign in with Google"): what the player needs
+    /// before it shows anything (it shows only the account's own music).
+    pub fn youtube_signed_in(&self) -> bool {
+        self.deps.youtube.signed_in()
+    }
+
+    /// Forgets the (made-up) YouTube sign-in of the test session.
+    #[cfg(test)]
+    pub(crate) fn sign_out_for_tests(&mut self) {
+        self.deps.youtube = crate::youtube_session::YouTubeSession::none();
+    }
+
     pub fn signed_in(&self) -> bool {
         self.deps.account.signed_in()
     }

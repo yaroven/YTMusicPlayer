@@ -300,6 +300,7 @@ async fn the_youtube_sign_in_can_edit_the_library() {
     use crate::youtube_session::{Cookies, InMemory, YouTubeSession};
 
     let (mut s, _, _) = session(Resolves::Fail).await;
+    s.deps.youtube = YouTubeSession::none();
     assert!(!s.can_edit(), "no account at all");
     assert!(s.status.as_ref().is_some_and(|st| st.is_error));
 
@@ -399,6 +400,7 @@ async fn songs_move_in_a_playlist_and_history_entries_go() {
 #[tokio::test]
 async fn saving_the_queue_needs_an_account() {
     let (mut s, _, _) = session(Resolves::Hang).await;
+    s.deps.youtube = crate::youtube_session::YouTubeSession::none();
     s.play(tracks("q", 3), 0);
     s.save_queue_as_playlist("Road mix");
     let status = s.status.as_ref().unwrap();

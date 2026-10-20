@@ -5,6 +5,7 @@ struct RootView: View {
     @Environment(Player.self) private var player
     @Environment(Router.self) private var router
     @Environment(Library.self) private var library
+    @Environment(Account.self) private var account
 
     init() {
         #if os(iOS)
@@ -25,9 +26,15 @@ struct RootView: View {
     }
 
     var body: some View {
+        // Signed out: only the welcome screen (the app shows nothing but the
+        // account's own music).
+        if account.signedIn { tabs } else { WelcomeView() }
+    }
+
+    private var tabs: some View {
         @Bindable var router = router
         @Bindable var player = player
-        TabView(selection: $router.tab) {
+        return TabView(selection: $router.tab) {
             NavigationStack(path: $router.home) { HomeView().routes() }
                 .miniPlayer()
                 .tabItem { Label("Home", systemImage: router.tab == .home ? "house.fill" : "house") }

@@ -163,3 +163,43 @@ func videoIdIn(_ text: String) -> String {
     if let url = URL(string: text), url.host?.hasSuffix("youtu.be") == true { return String(url.path.dropFirst()) }
     return text
 }
+
+/// Signed out: nothing but this. The app shows only the account's own
+/// music (its Home and mixes, likes, playlists), never anonymous
+/// suggestions, so it asks for the Google sign-in first.
+struct WelcomeView: View {
+    @State private var signingIn = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image("Logo")
+                .resizable()
+                .frame(width: 120, height: 120)
+            Text(verbatim: "Yarek Music")
+                .font(.system(size: 32, weight: .bold))
+            Text("Your YouTube Music, lighter")
+                .font(.system(size: 18))
+            Text("Sign in with your Google account. Yarek Music shows only your own music: your Home and mixes, likes, playlists and albums.")
+                .font(.system(size: 15))
+                .foregroundStyle(YT.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Spacer()
+            Button { signingIn = true } label: {
+                Text("Sign in with Google")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.black)
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .background(.white, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(YT.background)
+        .foregroundStyle(.white)
+        .sheet(isPresented: $signingIn) { SignInView() }
+    }
+}

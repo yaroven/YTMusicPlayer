@@ -37,6 +37,9 @@ slint::slint! {
         in property <string> sign-in: "Sign in";
         in property <string> sign-out: "Sign out";
         in property <string> sign-in-google: "Sign in with Google";
+        in property <string> gate-title: "Your YouTube Music, lighter";
+        in property <string> gate-text: "Sign in with your Google account. Yarek Music shows only your own music: your Home and mixes, likes, playlists and albums.";
+        in property <string> other-options: "Other ways to sign in";
         in property <string> signing-in: "Signing in…";
         in property <string> syncing: "Syncing…";
         in property <string> searching: "Searching…";
@@ -2225,6 +2228,72 @@ slint::slint! {
                         Icon { name: "search"; color: Yt.secondary; width: 16px; height: 16px; y: (parent.height - self.height) / 2; }
                         Text { text: s; color: Yt.text; overflow: elide; vertical-alignment: center; }
                     }
+                }
+            }
+        }
+
+        // --- Sign-in screen: nothing else until YouTube is signed in, so the
+        // window only ever shows the account's own music, never anonymous
+        // suggestions. The account dialog (other ways) opens above it. ---
+        if !root.yt-signed-in: Rectangle {
+            background: Yt.bg;
+            TouchArea { } // nothing behind it reacts
+            VerticalLayout {
+                alignment: center;
+                spacing: 16px;
+                padding: 24px;
+                HorizontalLayout {
+                    alignment: center;
+                    Image { source: @image-url("../../assets/yarek-music.png"); width: 120px; height: 120px; }
+                }
+                Text { text: "Yarek Music"; color: Yt.text; font-size: 32px; font-weight: 700; horizontal-alignment: center; }
+                Text { text: L.gate-title; color: Yt.text; font-size: 18px; horizontal-alignment: center; }
+                HorizontalLayout {
+                    alignment: center;
+                    Text {
+                        width: min(440px, root.width - 48px);
+                        text: root.yt-window ? L.gate-text : L.yt-sign-in-long-import;
+                        color: Yt.secondary;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                    }
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 8px;
+                    Pill {
+                        text: root.yt-signing-in ? L.signing-in : root.yt-window ? L.sign-in-google : L.import;
+                        icon: "account";
+                        filled: !root.yt-signing-in;
+                        clicked => {
+                            if (root.yt-signing-in) { return; }
+                            if (root.yt-window) { root.yt-sign-in(); } else { root.yt-import(); }
+                        }
+                    }
+                    if !root.yt-window: Pill {
+                        text: root.set-cookies == "" ? L.pick-browser : root.set-cookies;
+                        icon: "dropdown";
+                        clicked => { root.cookies-cycle(); }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    other := Text {
+                        text: L.other-options;
+                        color: other-touch.has-hover ? Yt.text : Yt.secondary;
+                        font-size: 13px;
+                        other-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.account-opened(); root.account-open = true; }
+                        }
+                    }
+                }
+                if root.status-text != "": Text {
+                    text: root.status-text;
+                    color: root.status-error ? #ff6b6b : Yt.secondary;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
                 }
             }
         }

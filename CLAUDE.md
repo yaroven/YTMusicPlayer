@@ -692,6 +692,20 @@ Domain terms are defined in `CONTEXT.md`.
   next to it. Desktop 1.0.0 can't self-update (asset and binary names
   changed): reinstall once.
 
+- **Sign-in first, everywhere** (user's call 2026-10-20: the app must not
+  show anonymous "fake" suggestions, only the account's own music): until
+  YouTube is signed in, the window shows only its sign-in screen (ui.rs,
+  above everything but the account dialog), the TUI only a sign-in box
+  (Enter = window / import a browser's sign-in, `b` browser, `q` quit),
+  the phones only `WelcomeView` / `WelcomeScreen`; `Session::load_home`
+  does nothing while signed out. The legacy Data API sign-in alone isn't
+  enough (its Home would be anonymous). Tests run signed in
+  (`YouTubeSession::signed_in_for_tests`, made-up cookies in memory);
+  `sign_out_for_tests` for the signed-out cases. Personal mixes ("Mixed
+  for you": My Supermix, My Mix 1–7, Discover / Replay / Archive Mix) come
+  with the signed-in Home as playlists `VLRDTMAK…` — checked live 2026-10-20
+  (`sync::tests::live_home_mixes`, the user's cookies).
+
 ## Open TODOs
 
 - Android: try on a real phone (Google sign-in in the WebView — Google may

@@ -21,6 +21,10 @@ use crate::{
 pub const ACCENT: Color = Color::Red;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    if !app.session.youtube_signed_in() {
+        draw_sign_in(frame, app);
+        return;
+    }
     let [main, player, status] = Layout::vertical([
         Constraint::Min(5),
         Constraint::Length(3),
@@ -127,6 +131,54 @@ fn centered(outer: Rect, width: u16, height: u16) -> Rect {
         .flex(Flex::Center)
         .areas(area);
     area
+}
+
+/// Signed out: nothing but this. The player shows only the account's own
+/// music, so it asks for the sign-in first.
+fn draw_sign_in(frame: &mut Frame, app: &App) {
+    let lang = app.session.lang;
+    let [body, status] =
+        Layout::vertical([Constraint::Min(5), Constraint::Length(1)]).areas(frame.area());
+    let how = if crate::app::sign_in_window() {
+        tr!(
+            lang,
+            "Enter  sign in with Google (opens a window)",
+            "Enter  увійти через Google (відкриється вікно)"
+        )
+        .to_owned()
+    } else {
+        let browser = crate::audio::extractor::COOKIE_BROWSERS[app.gate_browser];
+        tr!(
+            lang,
+            "Sign in at youtube.com in a browser on this computer, then:\nb  browser: {browser}\nEnter  import its sign-in",
+            "Увійди на youtube.com у браузері на цьому комп'ютері, потім:\nb  браузер: {browser}\nEnter  імпортувати його вхід"
+        )
+        .replace("{browser}", browser)
+    };
+    let mut lines = vec![
+        Line::from("Yarek Music".bold().fg(ACCENT)),
+        Line::from(""),
+        Line::from(tr!(
+            lang,
+            "Sign in with your Google account: Yarek Music shows only your own",
+            "Увійди зі своїм акаунтом Google: Yarek Music показує лише твою"
+        )),
+        Line::from(tr!(
+            lang,
+            "music — your Home and mixes, likes, playlists and albums.",
+            "музику — твою Головну й мікси, вподобання, плейлисти й альбоми."
+        )),
+        Line::from(""),
+    ];
+    lines.extend(how.lines().map(|l| Line::from(l.to_owned())));
+    lines.push(Line::from(tr!(lang, "q  quit", "q  вийти").dim()));
+    let height = lines.len() as u16 + 2;
+    let area = centered(body, 76, height);
+    frame.render_widget(
+        Paragraph::new(lines).centered().block(Block::bordered()),
+        area,
+    );
+    views::now_playing::draw_status(frame, status, app);
 }
 
 /// Lyrics of the playing track; the current line of synced lyrics is

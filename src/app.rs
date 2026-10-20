@@ -144,6 +144,9 @@ pub struct App {
     pub(crate) areas: Areas,
     quit: bool,
     last_click: Option<(Instant, usize)>,
+    /// The browser whose sign-in the sign-in screen imports (Linux: no
+    /// window for Google's page), an index into `COOKIE_BROWSERS`.
+    pub(crate) gate_browser: usize,
 }
 
 pub async fn run(deps: Deps) -> Result<()> {
@@ -181,6 +184,7 @@ impl App {
             mode: Mode::Normal,
             areas: Areas::default(),
             quit: false,
+            gate_browser: 0,
             last_click: None,
         };
         app.list_replaced();
@@ -342,6 +346,12 @@ impl App {
     // --- input -----------------------------------------------------------------
 
     fn on_key(&mut self, key: KeyEvent) {
+        // Signed out: only the sign-in screen (the player shows nothing but
+        // the account's own music).
+        if !self.session.youtube_signed_in() {
+            self.on_sign_in_key(key);
+            return;
+        }
         match &mut self.mode {
             Mode::Help => {
                 self.mode = Mode::Normal;
@@ -754,9 +764,33 @@ impl App {
         }
     }
 
+    /// The sign-in screen's keys: Enter signs in (Google's page in a window,
+    /// or on Linux the chosen browser's sign-in), `b` picks the browser, `q`
+    /// quits.
+    fn on_sign_in_key(&mut self, key: KeyEvent) {
+        let ctrl_c = key.code == KeyCode::Char('c')
+            && key
+                .modifiers
+                .contains(crossterm::event::KeyModifiers::CONTROL);
+        match key.code {
+            _ if ctrl_c => self.quit = true,
+            KeyCode::Char('q') | KeyCode::Esc => self.quit = true,
+            KeyCode::Enter if sign_in_window() => self.session.sign_in_youtube(None),
+            KeyCode::Enter => {
+                let browser = crate::audio::extractor::COOKIE_BROWSERS[self.gate_browser];
+                self.session.sign_in_youtube(Some(browser.to_owned()));
+            }
+            KeyCode::Char('b') if !sign_in_window() => {
+                self.gate_browser =
+                    (self.gate_browser + 1) % crate::audio::extractor::COOKIE_BROWSERS.len();
+            }
+            _ => {}
+        }
+    }
+
     fn on_mouse(&mut self, mouse: MouseEvent) {
         tracing::trace!(?mouse, progress = ?self.areas.progress, "mouse");
-        if !matches!(self.mode, Mode::Normal) {
+        if !self.session.youtube_signed_in() || !matches!(self.mode, Mode::Normal) {
             return;
         }
         let (x, y) = (mouse.column, mouse.row);
@@ -1016,3 +1050,9 @@ impl App {
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
+
+/// Google's sign-in page opens in a window here (macOS, Windows); Linux
+/// imports a browser's sign-in instead.
+pub(crate) fn sign_in_window() -> bool {
+    cfg!(any(target_os = "macos", windows))
+}

@@ -200,4 +200,6 @@
     <string name="subscribed">Subscribed</string>
 <string name="new_">New</string>
     <string name="auto_playlist">Auto playlist</string>
+<string name="gate_title">Your YouTube Music, lighter</string>
+    <string name="gate_text">Sign in with your Google account. Yarek Music shows only your own music: your Home and mixes, likes, playlists and albums.</string>
 </resources>

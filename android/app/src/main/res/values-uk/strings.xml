@@ -191,4 +191,6 @@
     <string name="subscribed">Ви підписані</string>
 <string name="new_">Новий</string>
     <string name="auto_playlist">Автоплейлист</string>
+<string name="gate_title">Твій YouTube Music, тільки легший</string>
+    <string name="gate_text">Увійди зі своїм акаунтом Google. Yarek Music показує лише твою музику: твою Головну й мікси, вподобання, плейлисти й альбоми.</string>
 </resources>
