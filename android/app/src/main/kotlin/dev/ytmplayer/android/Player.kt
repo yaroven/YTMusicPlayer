@@ -173,7 +173,8 @@ class Player(
             .setConnectTimeoutMs(dev.ytmplayer.core.Http.CONNECT_TIMEOUT_MS)
             .setReadTimeoutMs(dev.ytmplayer.core.Http.READ_TIMEOUT_MS)
             .setAllowCrossProtocolRedirects(true)
-        val resolving = ResolvingDataSource.Factory(DefaultDataSource.Factory(context, http)) { spec ->
+        // Ranges, not one long read: googlevideo throttles those (ChunkedHttp.kt).
+        val resolving = ResolvingDataSource.Factory(DefaultDataSource.Factory(context, ChunkedHttpDataSource.Factory(http))) { spec ->
             val scheme = spec.uri.scheme
             if (scheme != "ytm" && scheme != "ytmhls") return@Factory spec
             val id = spec.uri.host ?: throw ResolveFailed(IllegalArgumentException("no video id"))

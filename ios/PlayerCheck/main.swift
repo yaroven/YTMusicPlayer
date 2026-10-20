@@ -76,6 +76,19 @@ import YTMKit
     player.togglePlay()
     await wait("pause after a fade") { !player.isPlaying }
     player.crossfade = 0
+
+    // A long song (Pink Floyd's Echoes, 23 min, 23 MB): googlevideo
+    // throttles big reads of it to ~32 KB/s, so it starts only because the
+    // file comes in ranges; a seek to its middle plays too.
+    let long = Track(videoId: "OF4rw3LOfqY", title: "Echoes", artist: "Pink Floyd", durationSecs: 1413)
+    let start = Date()
+    player.play([long])
+    await wait("long song starts", 15) { player.isPlaying && player.position > 0.5 }
+    print(Date().timeIntervalSince(start) < 10 ? "ok  " : "FAIL", "long song started in",
+          String(format: "%.1f s", Date().timeIntervalSince(start)))
+    player.seek(to: 900)
+    await wait("long song plays after a seek to 15:00", 15) { player.isPlaying && player.position > 901 }
+    player.togglePlay()
 }
 try await run()
 exit(0)

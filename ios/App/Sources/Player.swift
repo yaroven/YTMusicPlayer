@@ -101,6 +101,8 @@ final class Player {
     @ObservationIgnored private var preloadTask: Task<Void, Never>?
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var itemObservations: [ObjectIdentifier: NSKeyValueObservation] = [:]
+    /// Each streamed item's range loader.
+    @ObservationIgnored private var loaders: [ObjectIdentifier: ChunkedLoader] = [:]
     @ObservationIgnored private var videoObservations: [ObjectIdentifier: NSKeyValueObservation] = [:]
     @ObservationIgnored private var timeObserver: Any?
     /// Songs whose URL was already refreshed once after a failure.
@@ -353,7 +355,19 @@ final class Player {
         }
         let stream = try await Services.resolver.stream(track.videoId)
         try Task.checkCancellation()
-        let item = AVPlayerItem(url: stream.url)
+        let item: AVPlayerItem
+        if stream.hls {
+            item = AVPlayerItem(url: stream.url)
+        } else {
+            // In ranges, not AVPlayer's own big reads: googlevideo throttles
+            // those (ChunkedLoader.swift).
+            let loader = ChunkedLoader(url: stream.url, length: stream.contentLength, video: stream.hasVideo)
+            let asset = AVURLAsset(url: loader.assetURL)
+            asset.resourceLoader.setDelegate(loader, queue: ChunkedLoader.queue)
+            item = AVPlayerItem(asset: asset)
+            // The resource loader holds its delegate weakly.
+            loaders[ObjectIdentifier(item)] = loader
+        }
         if stream.hasVideo {
             // A muxed MP4 (age-restricted songs): decode only its audio.
             videoObservations[ObjectIdentifier(item)] = item.observe(\.tracks, options: [.new]) { item, _ in
@@ -613,6 +627,7 @@ final class Player {
 
     private func forgetItem(_ item: AVPlayerItem?) {
         if let item {
+            loaders.removeValue(forKey: ObjectIdentifier(item))?.cancelAll()
             itemObservations[ObjectIdentifier(item)] = nil
             videoObservations[ObjectIdentifier(item)] = nil
         }

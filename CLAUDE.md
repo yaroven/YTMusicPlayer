@@ -631,6 +631,18 @@ Domain terms are defined in `CONTEXT.md`.
   scroll). Not ported: Last.fm and Chromecast on phones, a persistent
   shuffle mode (phones shuffle the upcoming songs instead).
 
+- **Phones stream in ranges** (user: "a 32-minute song didn't load in over
+  a minute", 2026-10-20): googlevideo throttles big reads to the song's
+  bitrate — an open-ended request for a 23 MB song came at ~32 KB/s (not
+  even 1 MB in 15 s; a 39 MB mix took 20 min), 1 MB ranges of the same URL
+  at ~10 MB/s; files under ~10 MB were never throttled, so only long songs
+  stalled. AVPlayer and ExoPlayer both read big ranges, so: Android
+  `ChunkedHttpDataSource` (4 MB ranges under ExoPlayer's one read), iPhone
+  `ChunkedLoader` (an `AVAssetResourceLoaderDelegate` on a `ytmchunk://`
+  copy of the URL, 1 MB ranges). Verified: Echoes (23 min) starts in
+  2–3 s and seeks to 15:00 / 17:00 in ~1 s on both (`ios/player-check.sh`
+  checks it). Downloads already used 1 MB ranges; the desktop reads 256 KB.
+
 ## Open TODOs
 
 - Android: try on a real phone (Google sign-in in the WebView — Google may
