@@ -1,5 +1,6 @@
 package dev.yarek.music.ui
 
+import androidx.compose.ui.draw.alpha
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.animation.core.tween
@@ -172,7 +173,14 @@ fun NowPlaying() {
         }
     }
     // Another song: back to its audio, from its start.
-    LaunchedEffect(track?.videoId) { if (video) { video = false; videoAt = null } }
+    // Another song while the clip was on: the clip goes, the song plays.
+    LaunchedEffect(track?.videoId) {
+        if (video) {
+            video = false
+            videoAt = null
+            player.resumeAfterVideo(null)
+        }
+    }
 
     // Swipe down anywhere (but the scrubber, pills and cover, which move
     // sideways) folds the player away, as in YouTube Music.
@@ -215,8 +223,8 @@ fun NowPlaying() {
                     player.showNowPlaying = false
                 }) { Icon(Icons.Default.ExpandMore, stringResource(R.string.close), Modifier.size(32.dp)) }
                 Spacer(Modifier.weight(1f))
-                // Only songs with a clip offer "Video" (YouTube Music's switch).
-                if (track != null && (pair?.video != null || video)) MediaSwitch(video, ::setVideo)
+                // "Video" works only for songs with a clip (dimmed otherwise).
+                if (track != null) MediaSwitch(video, pair?.video != null || video, ::setVideo)
                 Spacer(Modifier.weight(1f))
                 if (track != null) {
                     Box {
@@ -357,16 +365,19 @@ private fun Backdrop(track: Track) {
 
 /** YouTube Music's "Song | Video" switch over the cover. */
 @Composable
-private fun MediaSwitch(video: Boolean, onChange: (Boolean) -> Unit) {
+private fun MediaSwitch(video: Boolean, hasVideo: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.clip(CircleShape).background(Color.White.copy(alpha = 0.1f)).padding(2.dp)) {
         listOf(false to R.string.song, true to R.string.video).forEach { (value, label) ->
+            // Without a clip "Video" is dimmed and does nothing.
+            val enabled = !value || hasVideo
             Box(
                 Modifier
                     .width(70.dp)
                     .height(32.dp)
                     .clip(CircleShape)
+                    .alpha(if (enabled) 1f else 0.35f)
                     .background(if (video == value) Color.White.copy(alpha = 0.2f) else Color.Transparent)
-                    .clickable { onChange(value) },
+                    .clickable(enabled = enabled) { onChange(value) },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(

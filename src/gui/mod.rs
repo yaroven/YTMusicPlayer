@@ -1330,6 +1330,14 @@ impl View {
         let Some(ui) = ui else {
             return;
         };
+        // Another song while its clip was on: the clip goes, the new song
+        // plays (it had kept playing over the new song's sound).
+        if changed && ui.get_video_on() {
+            #[cfg(any(target_os = "macos", windows))]
+            drop(self.video.take());
+            ui.set_video_on(false);
+            let _ = self.tx.send(Cmd::VideoOff(None));
+        }
         self.render_player(ui);
         if snap.changes.account && signed_in {
             ui.set_account_open(false);

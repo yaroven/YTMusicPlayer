@@ -31,6 +31,8 @@ struct VideoPane: View {
 /// YouTube Music's ♪ / ▶ switch over the cover.
 struct MediaSwitch: View {
     @Binding var video: Bool
+    /// The song has a clip; without one "Video" is dimmed and does nothing.
+    var hasVideo = true
 
     var body: some View {
         HStack(spacing: 4) {
@@ -50,6 +52,8 @@ struct MediaSwitch: View {
                 .background(video == value ? Color.white.opacity(0.15) : .clear, in: Capsule())
         }
         .buttonStyle(.plain)
+        .disabled(value && !hasVideo)
+        .opacity(value && !hasVideo ? 0.35 : 1)
         .accessibilityLabel(value ? "Video" : "Song")
     }
 }

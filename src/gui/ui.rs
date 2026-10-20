@@ -848,6 +848,8 @@ slint::slint! {
     // YouTube Music's song / video switch, over the cover.
     component MediaSwitch inherits Rectangle {
         in property <bool> video;
+        // The song has a clip; without one "Video" is shown dimmed and does nothing.
+        in property <bool> has-video: true;
         callback choose(bool);
         width: 92px;
         height: 36px;
@@ -879,6 +881,7 @@ slint::slint! {
                 border-radius: 14px;
                 background: root.video ? #ffffff26 : transparent;
                 animate background { duration: 140ms; }
+                opacity: root.has-video ? 1 : 0.35;
                 Icon {
                     name: "video";
                     color: root.video ? Yt.text : Yt.secondary;
@@ -888,7 +891,8 @@ slint::slint! {
                     y: (parent.height - self.height) / 2;
                 }
                 TouchArea {
-                    mouse-cursor: pointer;
+                    enabled: root.has-video;
+                    mouse-cursor: root.has-video ? pointer : default;
                     clicked => { root.choose(true); }
                 }
             }
@@ -1967,9 +1971,10 @@ slint::slint! {
                                 spacing: 16px;
                                 HorizontalLayout {
                                     alignment: center;
-                                    // Only songs with a clip (or a video on) offer "Video".
-                                    if root.has-video || root.video-on: MediaSwitch {
+                                    // "Video" works only for songs with a clip (dimmed otherwise).
+                                    MediaSwitch {
                                         video: root.video-on;
+                                        has-video: root.has-video || root.video-on;
                                         choose(v) => {
                                             if (v != root.video-on) { root.watch-video(); }
                                             keys.focus();
@@ -2024,8 +2029,9 @@ slint::slint! {
                             spacing: 16px;
                             HorizontalLayout {
                                 alignment: center;
-                                if root.has-video || root.video-on: MediaSwitch {
+                                MediaSwitch {
                                     video: root.video-on;
+                                    has-video: root.has-video || root.video-on;
                                     choose(v) => {
                                         if (v != root.video-on) { root.watch-video(); }
                                         keys.focus();

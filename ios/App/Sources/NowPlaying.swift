@@ -141,8 +141,8 @@ struct NowPlayingView: View {
             }
             .buttonStyle(.plain)
             Spacer()
-            // Only songs with a clip offer "Video" (YouTube Music's switch).
-            if pair?.video != nil || video { MediaSwitch(video: $video) }
+            // "Video" works only for songs with a clip (dimmed otherwise).
+            MediaSwitch(video: $video, hasVideo: pair?.video != nil || video)
             Spacer()
             #if os(iOS)
             AirPlayButton().frame(width: 40, height: 40)

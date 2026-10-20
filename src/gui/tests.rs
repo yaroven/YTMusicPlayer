@@ -861,3 +861,28 @@ fn sorting_saving_the_queue_and_clearing_history() {
     let cmds = h.commands();
     assert!(matches!(&cmds[..], [Cmd::SaveQueue(name), Cmd::ClearHistory] if name == "Road mix"));
 }
+
+/// "Video" is dimmed without a clip, and another song while a clip is on
+/// closes the clip and plays the song (the clip used to keep playing).
+#[test]
+fn another_song_closes_the_clip() {
+    let mut h = harness();
+    let mut view = session_view();
+    view.now = Some(track("Song"));
+    view.video = None;
+    h.absorb(snapshot(view.clone(), Changes::default()));
+    assert!(!h.ui.get_has_video(), "no clip, no Video");
+    view.video = Some((Arc::from("clipclipcli"), 5.0));
+    h.absorb(snapshot(view.clone(), Changes::default()));
+    assert!(h.ui.get_has_video());
+    h.ui.set_video_on(true);
+    h.commands();
+    view.now = Some(track("Next"));
+    view.video = None;
+    h.absorb(snapshot(view, Changes::default()));
+    assert!(!h.ui.get_video_on(), "the clip is off for the next song");
+    assert!(
+        matches!(&h.commands()[..], [Cmd::VideoOff(None)]),
+        "the audio carries on"
+    );
+}
