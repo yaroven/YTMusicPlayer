@@ -136,7 +136,7 @@ Release. The workflow also installs each package in a clean Debian, Ubuntu,
 Fedora, Arch, Windows and macOS environment and runs it.
 
 ```bash
-git tag v0.9.8 && git push origin v0.9.8
+git tag v1.0.0 && git push origin v1.0.0
 ```
 
 **Actions → Release → Run workflow** builds everything as workflow artifacts
