@@ -225,8 +225,14 @@ Domain terms are defined in `CONTEXT.md`.
   runs; prefetch starts only after the current track plays anyway.
 - **Launchers**: `install.sh` makes `~/Applications/ytm-player.app` (real
   binary copied in, ad-hoc signed, opens the GUI when started from the
-  bundle) and a Linux `.desktop` entry + icon (`assets/`, icon drawn with a
-  Swift CoreGraphics script, `.icns` via `iconutil`).
+  bundle) and a Linux `.desktop` entry + icon (`assets/`).
+- **App icon** (user's pick 2026-10-20, concept "D": a tilted red tile with
+  a white note on a dark, red-glowing background): drawn by
+  `packaging/icon/draw-icon.swift`; `packaging/icon/make-icons.sh` writes
+  every copy — `.icns` (Apple's 824/1024 grid), `.ico` (PNG frames
+  16–256), `assets/ytm-player{,-64}.png` (Linux, window, tray), the
+  iPhone's opaque 1024 (also SideStore's icon), Android's legacy mipmaps
+  and the adaptive foreground (`#121212` background, tile in the safe zone).
 - **install.sh must run on macOS bash 3.2**: no `mapfile`, assoc arrays or
   `${x,,}`; check with `/bin/bash -n install.sh`. It removes other
   ytm-player binaries/apps (identified by `--help` banner / bundle id) so
