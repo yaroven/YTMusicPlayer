@@ -1,5 +1,15 @@
 package dev.ytmplayer.android.ui
 
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.material.icons.filled.Sensors
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material.icons.filled.MoreVert
@@ -110,7 +120,18 @@ fun TopBar(title: String, back: Boolean = false, actions: @Composable () -> Unit
  * cards), more of them loading as you scroll, over the colours of the first
  * picture.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+/** Home's and Explore's header: the logo, search and the account. */
+@Composable
+fun HomeHeader() {
+    Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 16.dp, end = 8.dp, top = 4.dp).height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+        YTLogo()
+        Spacer(Modifier.weight(1f))
+        IconButton(onClick = { Router.open(Route.Search) }) { Icon(Icons.Default.Search, stringResource(R.string.search)) }
+        Box(Modifier.padding(horizontal = 8.dp)) { AvatarButton() }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen() {
     val app = App.instance
@@ -136,22 +157,25 @@ fun HomeScreen() {
     }
     val shelves = home.value?.shelves.orEmpty() + more
     Box(Modifier.fillMaxSize()) {
-        AmbientBackdrop(shelves.firstOrNull()?.items?.firstOrNull()?.let { it.track?.thumbnailUrl ?: it.thumbnail })
+        // The colours scroll away with the top of the list, as in YouTube Music.
+        Box(Modifier.graphicsLayer { translationY = if (list.firstVisibleItemIndex == 0) -list.firstVisibleItemScrollOffset.toFloat() else -10000f }) {
+            AmbientBackdrop(shelves.firstOrNull()?.items?.firstOrNull()?.let { it.track?.thumbnailUrl ?: it.thumbnail })
+        }
         PullToRefreshBox(home.loading && home.value != null, onRefresh = home::retry, Modifier.fillMaxSize()) {
             val history = library.history.take(20).map { it.toItem() }
-            LazyColumn(state = list, contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
-                item {
-                    Column {
-                        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            YTLogo()
-                            Spacer(Modifier.weight(1f))
-                            AvatarButton()
-                        }
-                        if (chips.isNotEmpty()) {
-                            LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                items(chips, key = { it.params }) { c ->
-                                    ChipButton(c.title, chip == c) { chip = if (chip == c) null else c }
-                                }
+            LazyColumn(state = list, contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                item { HomeHeader() }
+                // The mood chips stay at the top while the shelves scroll under them.
+                if (chips.isNotEmpty()) {
+                    stickyHeader {
+                        val stuck = list.firstVisibleItemIndex >= 1
+                        LazyRow(
+                            Modifier.fillMaxWidth().background(if (stuck) YT.background else Color.Transparent)
+                                .then(if (stuck) Modifier.statusBarsPadding() else Modifier).padding(vertical = 8.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            items(chips, key = { it.params }) { c ->
+                                ChipButton(c.title, chip == c) { chip = if (chip == c) null else c }
                             }
                         }
                     }
@@ -219,19 +243,21 @@ fun SearchScreen() {
         keyboard?.hide()
     }
 
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(Unit) { if (searched.isEmpty()) runCatching { focus.requestFocus() } }
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        // YouTube Music's search bar: a dark rounded field.
+        // YouTube Music's search bar: ←, a dark rounded field.
+        Row(Modifier.fillMaxWidth().padding(end = 16.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = { Router.back() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).height(44.dp)
-                .clip(RoundedCornerShape(22.dp)).background(YT.surface).padding(horizontal = 14.dp),
+            Modifier.weight(1f).height(44.dp)
+                .clip(RoundedCornerShape(22.dp)).background(YT.surface).padding(start = 18.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Default.Search, null, tint = YT.secondary)
-            Spacer(Modifier.width(10.dp))
             Box(Modifier.weight(1f)) {
                 if (query.isEmpty()) Text(stringResource(R.string.search_prompt), color = YT.secondary, fontSize = 16.sp)
                 androidx.compose.foundation.text.BasicTextField(
-                    query, { query = it }, Modifier.fillMaxWidth(), singleLine = true,
+                    query, { query = it }, Modifier.fillMaxWidth().focusRequester(focus), singleLine = true,
                     textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp),
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(Color.White),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -242,8 +268,9 @@ fun SearchScreen() {
                 IconButton(onClick = {
                     query = ""
                     searched = ""
-                }) { Icon(Icons.Default.Clear, stringResource(R.string.clear), tint = YT.secondary) }
+                }) { Icon(Icons.Default.Clear, stringResource(R.string.clear)) }
             }
+        }
         }
         when {
             suggestions.isNotEmpty() && query.trim() != searched -> LazyColumn {
@@ -259,19 +286,34 @@ fun SearchScreen() {
                     }
                 }
             }
-            searched.isEmpty() -> Explore()
+            searched.isEmpty() -> RecentSearches { run(it) }
             else -> Results(searched, kind) { kind = it }
         }
     }
 }
 
+/** The Explore tab: the header, then YouTube Music's Explore shelves (new releases, moods…). */
 @Composable
-private fun Explore() {
+fun ExploreScreen() {
     val explore = rememberLoad(Unit) { App.instance.catalog.explore() }
-    Loaded(explore) { shelves ->
-        LazyColumn(contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
-            items(shelves, key = { it.id }) { ShelfView(it) }
+    Column(Modifier.fillMaxSize()) {
+        HomeHeader()
+        Loaded(explore) { shelves ->
+            LazyColumn(contentPadding = PaddingValues(top = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
+                items(shelves, key = { it.id }) { ShelfView(it) }
+            }
         }
+    }
+}
+
+/** Before anything is typed: the songs played lately, to search for again. */
+@Composable
+private fun RecentSearches(onPick: (String) -> Unit) {
+    val history = App.instance.library.history.take(12)
+    if (history.isEmpty()) return
+    LazyColumn {
+        item { Text(stringResource(R.string.recently_played), Modifier.padding(16.dp), fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+        itemsIndexed(history) { i, t -> TrackRow(t, history, i) }
     }
 }
 
@@ -279,7 +321,7 @@ private fun Explore() {
 private fun Results(query: String, kind: SearchKind, onKind: (SearchKind) -> Unit) {
     val results = rememberLoad(query to kind) { App.instance.catalog.search(query, kind) }
     Column {
-        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(Modifier.padding(vertical = 8.dp), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(SearchKind.entries) { k ->
                 ChipButton(kindLabel(k), k == kind) { onKind(k) }
             }
@@ -341,17 +383,20 @@ fun PageScreen(id: String) {
     }
     val loaded = page.value
     val preview = PageCache.preview(id)
+    // An artist's picture fills the top, under the bar; other pages start below it.
+    val artist = (loaded?.kind ?: preview?.kind) == ItemKind.Artist
     Box(Modifier.fillMaxSize()) {
-        AmbientBackdrop(loaded?.thumbnail ?: preview?.thumbnail, 520.dp)
+        if (!artist) AmbientBackdrop(loaded?.thumbnail ?: preview?.thumbnail, 520.dp)
         Column(Modifier.fillMaxSize()) {
-        TopBar("", back = true)
-        when {
-            loaded != null -> PageContent(loaded, preview?.title.orEmpty(), showAll) { showAll = true }
-            // The card's title and art at once, the songs when they come.
-            preview != null -> PagePreview(preview, page)
-            else -> Loaded(page) {}
+            if (!artist) TopBar("", back = true)
+            when {
+                loaded != null -> PageContent(loaded, preview?.title.orEmpty(), showAll) { showAll = true }
+                // The card's title and art at once, the songs when they come.
+                preview != null -> PagePreview(preview, page)
+                else -> Loaded(page) {}
+            }
         }
-        }
+        if (artist) TopBar("", back = true)
     }
 }
 
@@ -409,10 +454,15 @@ private fun PageContent(page: Page, cardTitle: String, showAll: Boolean, onShowA
         }
         if (page.kind == ItemKind.Artist && page.tracks.isNotEmpty()) {
             item {
-                Text(stringResource(R.string.top_songs), Modifier.padding(horizontal = 16.dp, vertical = 8.dp), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(stringResource(R.string.top_songs), Modifier.weight(1f), fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    OutlinePill(stringResource(R.string.play_all)) { playFrom(page.tracks, 0) }
+                }
             }
         }
-        itemsIndexed(shown) { i, t -> TrackRow(t, page.tracks, i, number = if (page.kind == ItemKind.Album) i + 1 else null) }
+        itemsIndexed(shown) { i, t ->
+            TrackRow(t, page.tracks, i, number = if (page.kind == ItemKind.Album) i + 1 else null, art = if (page.kind == ItemKind.Artist) 56.dp else 48.dp)
+        }
         if (shown.size < page.tracks.size) {
             item {
                 Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
@@ -428,55 +478,113 @@ private fun PageContent(page: Page, cardTitle: String, showAll: Boolean, onShowA
 }
 
 /**
- * Art, title, subtitle, then YouTube Music's three circles: download all,
- * play, and ⋮ with save / shuffle / radio (also before the songs are in).
+ * Art, title, subtitle, then YouTube Music's circles: download, save, play,
+ * share and ⋮ (also before the songs are in). Artists get their own header.
  */
 @Composable
 private fun PageHeader(title: String, subtitle: String, thumbnail: String?, round: Boolean, tracks: List<Track>, page: Page?) {
+    if (round) return ArtistHeader(title, subtitle, thumbnail, tracks, page)
     val library = App.instance.library
-    Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Artwork(thumbnail?.let { Art.Url(it) } ?: Art.None, if (round) 200.dp else 250.dp, round = round)
-        Spacer(Modifier.height(16.dp))
-        Text(title, fontSize = 26.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+    val context = LocalContext.current
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Artwork(thumbnail?.let { Art.Url(it) } ?: Art.None, 220.dp)
+        Spacer(Modifier.height(20.dp))
+        Text(title, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, lineHeight = 34.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (subtitle.isNotEmpty()) {
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(6.dp))
             Text(subtitle, fontSize = 14.sp, color = YT.secondary, textAlign = TextAlign.Center)
         }
-        Spacer(Modifier.height(18.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+        Spacer(Modifier.height(20.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
             DownloadAllButton(tracks)
+            val saved = page != null && library.isSaved(page.id)
+            CircleIcon(
+                if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                stringResource(if (saved) R.string.remove_from_library else R.string.save), enabled = page != null,
+            ) { page?.let(library::toggleSaved) }
             CircleIcon(Icons.Default.PlayArrow, stringResource(R.string.play), 64.dp, filled = true, enabled = tracks.isNotEmpty()) {
                 playFrom(tracks, 0)
             }
+            CircleIcon(Icons.Default.Share, stringResource(R.string.share), enabled = page != null) {
+                page?.let { share(context, "https://music.youtube.com/browse/${it.id}") }
+            }
             Box {
                 var menu by remember { mutableStateOf(false) }
-                CircleIcon(Icons.Default.MoreVert, stringResource(R.string.more)) { menu = true }
+                CircleIcon(Icons.Default.MoreVert, stringResource(R.string.more), enabled = tracks.isNotEmpty()) { menu = true }
                 DropdownMenu(menu, { menu = false }) {
-                    if (page != null) {
-                        val saved = library.isSaved(page.id)
-                        DropdownMenuItem(
-                            text = { Text(stringResource(if (saved) R.string.remove_from_library else R.string.save)) },
-                            leadingIcon = { Icon(if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, null) },
-                            onClick = {
-                                menu = false
-                                library.toggleSaved(page)
-                            },
-                        )
-                    }
-                    if (tracks.isNotEmpty()) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.shuffle)) },
-                            leadingIcon = { Icon(Icons.Default.Shuffle, null) },
-                            onClick = {
-                                menu = false
-                                playFrom(tracks.shuffled(), 0)
-                            },
-                        )
-                    }
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.shuffle)) },
+                        leadingIcon = { Icon(Icons.Default.Shuffle, null) },
+                        onClick = {
+                            menu = false
+                            playFrom(tracks.shuffled(), 0)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.start_mix)) },
+                        leadingIcon = { Icon(Icons.Default.Sensors, null) },
+                        onClick = {
+                            menu = false
+                            tracks.firstOrNull()?.let(App.instance.player::startRadio)
+                        },
+                    )
                 }
             }
         }
+        Spacer(Modifier.height(16.dp))
     }
+}
+
+/**
+ * An artist: the picture across the whole width with the name over its
+ * bottom, then Subscribe, radio and play.
+ */
+@Composable
+private fun ArtistHeader(title: String, subtitle: String, thumbnail: String?, tracks: List<Track>, page: Page?) {
+    val library = App.instance.library
+    Column(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1.05f)) {
+            coil.compose.AsyncImage(
+                thumbnail?.let { heroUrl(it, 1080, 1028) }, null, Modifier.fillMaxSize().background(YT.surface),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            )
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.35f), 0.25f to Color.Transparent, 0.6f to Color.Transparent, 1f to YT.background)))
+            Column(Modifier.align(Alignment.BottomStart).padding(horizontal = 16.dp)) {
+                Text(title, fontSize = 40.sp, fontWeight = FontWeight.Bold, lineHeight = 44.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (subtitle.isNotEmpty()) Text(subtitle, fontSize = 14.sp, color = YT.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            val saved = page != null && library.isSaved(page.id)
+            Box(
+                Modifier.height(40.dp).clip(CircleShape)
+                    .background(if (saved) Color.White.copy(alpha = 0.1f) else Color.White)
+                    .clickable(enabled = page != null) { page?.let(library::toggleSaved) }
+                    .padding(horizontal = 18.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    stringResource(if (saved) R.string.subscribed else R.string.subscribe),
+                    color = if (saved) Color.White else Color.Black, fontWeight = FontWeight.Medium, fontSize = 15.sp,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            CircleIcon(Icons.Default.Sensors, stringResource(R.string.start_mix), 40.dp, enabled = tracks.isNotEmpty()) {
+                tracks.firstOrNull()?.let(App.instance.player::startRadio)
+            }
+            Spacer(Modifier.width(12.dp))
+            CircleIcon(Icons.Default.PlayArrow, stringResource(R.string.play), 56.dp, filled = true, enabled = tracks.isNotEmpty()) {
+                playFrom(tracks, 0)
+            }
+        }
+    }
+}
+
+fun share(context: android.content.Context, url: String) {
+    val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+        .setType("text/plain")
+        .putExtra(android.content.Intent.EXTRA_TEXT, url)
+    context.startActivity(android.content.Intent.createChooser(send, null))
 }
 
 /** Play and shuffle for a list (liked songs, a playlist…). */

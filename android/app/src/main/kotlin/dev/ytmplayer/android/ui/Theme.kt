@@ -110,12 +110,14 @@ fun AvatarButton() {
 fun ChipButton(title: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
+            .height(32.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(if (selected) Color.White else YT.raised)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = if (selected) Color.Black else Color.White)
+        Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = if (selected) Color.Black else Color.White)
     }
 }
 
@@ -127,9 +129,9 @@ fun OutlinePill(title: String, onClick: () -> Unit) {
             .clip(CircleShape)
             .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 7.dp),
+            .padding(horizontal = 10.dp, vertical = 3.dp),
     ) {
-        Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Text(title, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
 

@@ -19,14 +19,11 @@
     <string name="clear">Очистити</string>
     <string name="save">Зберегти</string>
     <string name="delete">Видалити</string>
-    <string name="remove">Прибрати</string>
     <string name="rename">Перейменувати</string>
 
     <string name="play_next">Грати наступною</string>
     <string name="add_to_queue">У чергу</string>
-    <string name="start_radio">Увімкнути радіо</string>
     <string name="like">Подобається</string>
-    <string name="remove_from_liked">Прибрати з вподобаних</string>
     <string name="add_to_playlist">Додати в плейлист</string>
     <string name="new_playlist">Новий плейлист</string>
     <string name="download">Завантажити</string>
@@ -184,5 +181,14 @@
     <string name="mix">Мікс</string>
     <string name="recent_activity">Останні дії</string>
     <string name="a_to_z">А–Я</string>
-    <string name="shuffle_all">Перемішати все</string>
+<string name="your_queue">Ваша черга</string>
+    <string name="reorder">Перетягніть, щоб змінити порядок</string>
+<string name="start_mix">Запустити мікс</string>
+    <string name="save_to_playlist">Зберегти в плейлист</string>
+<string name="explore">Огляд</string>
+    <string name="recently_played">Нещодавно відтворені</string>
+<string name="subscribe">Підписатися</string>
+    <string name="subscribed">Ви підписані</string>
+<string name="new_">Новий</string>
+    <string name="auto_playlist">Автоплейлист</string>
 </resources>

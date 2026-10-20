@@ -1,5 +1,22 @@
 package dev.ytmplayer.android.ui
 
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sensors
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.ThumbDown
+import androidx.compose.material.icons.outlined.ThumbUp
+import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -100,6 +117,13 @@ sealed interface Art {
 
 val Item.art: Art get() = track?.let { Art.Video(it.videoId) } ?: thumbnail?.let { Art.Url(it) } ?: Art.None
 
+/** An artist's picture big enough for the whole width, cropped to `w`×`h` by Google. */
+fun heroUrl(url: String, w: Int, h: Int): String {
+    if (!url.contains("googleusercontent.com")) return url
+    val cut = url.lastIndexOf("=w").takeIf { it >= 0 } ?: return url
+    return url.substring(0, cut) + "=w$w-h$h-p-l90-rj"
+}
+
 /** googleusercontent thumbnails take their size in the URL (`=w226-h226…`). */
 private fun resized(url: String, px: Int): String {
     if (!url.contains("googleusercontent.com")) return url
@@ -192,6 +216,7 @@ fun TrackRow(
     extra: List<MenuAction> = emptyList(),
     /** Shown when the list is sorted by plays. */
     plays: Int? = null,
+    art: Dp = 48.dp,
 ) {
     val app = App.instance
     val player = app.player
@@ -206,20 +231,21 @@ fun TrackRow(
             .combinedClickable(onClick = { playFrom(list, index) }, onLongClick = { menu = true })
             // Offline, what can't play is dimmed.
             .alpha(if (!online && !downloaded) 0.4f else 1f)
-            .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            .height(art + 16.dp)
+            .padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (number != null) {
             Text(
-                "$number", Modifier.width(28.dp), fontSize = 15.sp,
+                "$number", Modifier.width(40.dp), fontSize = 16.sp, textAlign = TextAlign.Center,
                 color = if (current) Color.White else YT.secondary,
             )
         } else {
             Box {
-                Artwork(Art.Video(track.videoId), 56.dp)
+                Artwork(Art.Video(track.videoId), art)
                 if (current) {
                     Box(
-                        Modifier.size(56.dp).clip(RoundedCornerShape(5.dp)).background(Color.Black.copy(alpha = 0.5f)),
+                        Modifier.size(art).clip(RoundedCornerShape(5.dp)).background(Color.Black.copy(alpha = 0.5f)),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -232,7 +258,7 @@ fun TrackRow(
         }
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
-            Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 17.sp)
+            Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (track.explicit) {
                     ExplicitBadge()
@@ -254,46 +280,93 @@ fun TrackRow(
     }
 }
 
-/** A song's actions: queue, radio, like, playlists, download, artist. */
+/**
+ * A song's actions in YouTube Music's sheet: the song with 👍 and ✕, three
+ * tiles (play next, save to playlist, share), then the rest as a list.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TrackMenu(track: Track, open: Boolean, onDismiss: () -> Unit, extra: List<MenuAction> = emptyList()) {
     val app = App.instance
     val player = app.player
     val library = app.library
+    val context = LocalContext.current
     var choosing by remember { mutableStateOf(false) }
-    DropdownMenu(open, onDismiss) {
-        @Composable
-        fun entry(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean = true, run: () -> Unit) =
-            DropdownMenuItem(
-                text = { Text(label) }, leadingIcon = { Icon(icon, null) }, enabled = enabled,
-                onClick = {
-                    onDismiss()
-                    run()
-                },
-            )
-        entry(stringResource(R.string.play_next), Icons.AutoMirrored.Filled.PlaylistPlay) { player.playNext(track) }
-        entry(stringResource(R.string.add_to_queue), Icons.AutoMirrored.Filled.QueueMusic) { player.addToQueue(track) }
-        entry(stringResource(R.string.start_radio), Icons.Default.Radio) { player.startRadio(track) }
-        HorizontalDivider()
-        val liked = library.isLiked(track)
-        entry(
-            stringResource(if (liked) R.string.remove_from_liked else R.string.like),
-            if (liked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-        ) { library.toggleLike(track) }
-        entry(stringResource(R.string.add_to_playlist), Icons.AutoMirrored.Filled.PlaylistAdd) { choosing = true }
-        when {
-            library.isDownloaded(track.videoId) ->
-                entry(stringResource(R.string.remove_download), Icons.Default.Delete) { library.removeDownload(track) }
-            track.videoId in library.downloading ->
-                entry(stringResource(R.string.downloading), Icons.Default.Download, enabled = false) {}
-            else -> entry(stringResource(R.string.download), Icons.Default.Download) { library.download(track) }
-        }
-        entry(stringResource(R.string.dislike), Icons.Default.ThumbDown) { player.dislike(track) }
-        entry(stringResource(R.string.go_to_artist), Icons.Default.Person) { Router.openArtist(track) }
-        if (extra.isNotEmpty()) HorizontalDivider()
-        extra.forEach { entry(it.label, it.icon, run = it.run) }
-    }
     if (choosing) PlaylistChooser(track) { choosing = false }
+    if (!open) return
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        modifier = Modifier.padding(horizontal = 8.dp),
+        shape = RoundedCornerShape(12.dp),
+        containerColor = YT.surface, contentColor = Color.White,
+        dragHandle = null,
+    ) {
+        fun run(action: () -> Unit) {
+            onDismiss()
+            action()
+        }
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 8.dp)) {
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(track.title, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val duration = track.durationSecs?.let { " • " + formatTime(it.toDouble()) }.orEmpty()
+                    Text(track.artist + duration, fontSize = 14.sp, color = YT.secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                val liked = library.isLiked(track)
+                IconButton(onClick = { library.toggleLike(track) }) {
+                    Icon(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp, stringResource(R.string.like))
+                }
+                IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, stringResource(R.string.close)) }
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+            Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                @Composable
+                fun tile(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, action: () -> Unit) {
+                    Column(Modifier.weight(1f).clickable { run(action) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            Modifier.fillMaxWidth().height(64.dp).clip(RoundedCornerShape(8.dp)).background(Color.White.copy(alpha = 0.1f)),
+                            contentAlignment = Alignment.Center,
+                        ) { Icon(icon, null) }
+                        Spacer(Modifier.height(8.dp))
+                        Text(label, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                tile(Icons.AutoMirrored.Filled.PlaylistPlay, stringResource(R.string.play_next)) { player.playNext(track) }
+                tile(Icons.AutoMirrored.Filled.PlaylistAdd, stringResource(R.string.save_to_playlist)) { choosing = true }
+                tile(Icons.Default.Share, stringResource(R.string.share)) {
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+                        .setType("text/plain")
+                        .putExtra(android.content.Intent.EXTRA_TEXT, "https://music.youtube.com/watch?v=${track.videoId}")
+                    context.startActivity(android.content.Intent.createChooser(send, null))
+                }
+            }
+            @Composable
+            fun entry(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean = true, action: () -> Unit) {
+                Row(
+                    Modifier.fillMaxWidth().height(52.dp).clickable(enabled = enabled) { run(action) }.padding(horizontal = 24.dp)
+                        .alpha(if (enabled) 1f else 0.4f),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(icon, null)
+                    Spacer(Modifier.width(24.dp))
+                    Text(label, fontSize = 16.sp)
+                }
+            }
+            entry(stringResource(R.string.start_mix), Icons.Default.Sensors) { player.startRadio(track) }
+            entry(stringResource(R.string.add_to_queue), Icons.AutoMirrored.Filled.QueueMusic) { player.addToQueue(track) }
+            when {
+                library.isDownloaded(track.videoId) ->
+                    entry(stringResource(R.string.remove_download), Icons.Default.DownloadDone) { library.removeDownload(track) }
+                track.videoId in library.downloading ->
+                    entry(stringResource(R.string.downloading), Icons.Default.Download, enabled = false) {}
+                else -> entry(stringResource(R.string.download), Icons.Default.Download) { library.download(track) }
+            }
+            extra.forEach { entry(it.label, it.icon, action = it.run) }
+            entry(stringResource(R.string.go_to_artist), Icons.Outlined.Person) { Router.openArtist(track) }
+            entry(stringResource(R.string.dislike), Icons.Outlined.ThumbDown) { player.dislike(track) }
+        }
+    }
 }
 
 /** "Add to playlist": the playlists, and a new one. */
@@ -357,11 +430,11 @@ fun ItemRow(item: Item) {
     LaunchedEffect(item.browseId) { PageCache.note(item) }
     Row(
         Modifier.fillMaxWidth().prefetchOnPress(item).clickable { Router.open(Route.Page(item.browseId)) }
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+            .height(72.dp).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Artwork(item.art, 56.dp, round = item.kind == ItemKind.Artist)
-        Spacer(Modifier.width(14.dp))
+        Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp, modifier = Modifier.weight(1f, fill = false))
@@ -404,7 +477,7 @@ private fun MoodTile(item: Item) {
 fun Card(item: Item, songs: List<Track>, wide: Boolean = false) {
     var menu by remember { mutableStateOf(false) }
     val track = item.track
-    val width = if (wide) 280.dp else 160.dp
+    val width = if (wide) 347.dp else 173.dp
     val round = item.kind == ItemKind.Artist
     LaunchedEffect(item.browseId) { PageCache.note(item) }
     Column(
@@ -438,13 +511,13 @@ fun Card(item: Item, songs: List<Track>, wide: Boolean = false) {
             if (item.explicit) Box(Modifier.align(Alignment.BottomStart).padding(6.dp)) { ExplicitBadge() }
             if (track != null) TrackMenu(track, menu, { menu = false })
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
         Text(
-            item.title, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            item.title, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
             textAlign = if (round) TextAlign.Center else TextAlign.Start,
         )
         Text(
-            item.subtitle, fontSize = 13.sp, color = YT.secondary, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            item.subtitle, fontSize = 14.sp, color = YT.secondary, maxLines = 2, overflow = TextOverflow.Ellipsis,
             textAlign = if (round) TextAlign.Center else TextAlign.Start,
         )
     }
@@ -462,31 +535,20 @@ fun ShelfView(shelf: Shelf, showTitle: Boolean = true) {
     Column {
         if (showTitle && shelf.title.isNotEmpty()) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 12.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 shelf.straplineArt?.let {
-                    Artwork(Art.Url(it), 36.dp, round = true)
+                    Artwork(Art.Url(it), 40.dp, round = true)
                     Spacer(Modifier.width(12.dp))
                 }
                 Column(Modifier.weight(1f)) {
                     if (shelf.strapline.isNotEmpty()) {
                         Text(shelf.strapline.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = YT.secondary)
                     }
-                    Text(shelf.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(shelf.title, fontSize = 24.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                // Videos keep "Play all"; song shelves show YouTube Music's ›, which plays them.
-                if (songs.size > 1) {
-                    if (shelf.style == ShelfStyle.Wide) {
-                        OutlinePill(stringResource(R.string.play_all)) { playFrom(songs, 0) }
-                    } else {
-                        Box(
-                            Modifier.size(36.dp).clip(CircleShape).border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
-                                .clickable { playFrom(songs, 0) },
-                            contentAlignment = Alignment.Center,
-                        ) { Icon(Icons.Default.ChevronRight, stringResource(R.string.play_all), Modifier.size(22.dp)) }
-                    }
-                }
+                if (songs.size > 1) OutlinePill(stringResource(R.string.play_all)) { playFrom(songs, 0) }
             }
         }
         when {
@@ -498,70 +560,35 @@ fun ShelfView(shelf: Shelf, showTitle: Boolean = true) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) { items(shelf.items, key = { it.id }) { MoodTile(it) } }
             shelf.style == ShelfStyle.Grid && songs.isNotEmpty() -> QuickPicks(songs)
-            else -> LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            else -> LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 items(shelf.items, key = { it.id }) { Card(it, songs, wide = shelf.style == ShelfStyle.Wide) }
             }
         }
     }
 }
 
-/** "Quick picks": square tiles three rows high with the title over the picture, paged sideways, dots under them. */
+/**
+ * "Quick picks" and other song shelves, as YouTube Music draws them on
+ * Android: columns of four rows (art, title, artist, ⋮), paged sideways
+ * with the next column peeking in.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun QuickPicks(songs: List<Track>) {
-    val player = App.instance.player
+    val state = rememberLazyListState()
+    val columns = songs.chunked(4)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val tile = (maxWidth - 32.dp - 12.dp) / 3
-        val state = rememberLazyGridState()
-        val pages = (songs.size + 8) / 9
-        Column {
-            LazyHorizontalGrid(
-                rows = GridCells.Fixed(3),
-                state = state,
-                flingBehavior = rememberSnapFlingBehavior(state),
-                modifier = Modifier.height(tile * 3 + 12.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                itemsIndexed(songs, key = { _, t -> t.videoId }) { i, track ->
-                    var menu by remember { mutableStateOf(false) }
-                    Box(
-                        Modifier
-                            .size(tile)
-                            .clip(RoundedCornerShape(5.dp))
-                            .combinedClickable(onClick = { playFrom(songs, i) }, onLongClick = { menu = true })
-                            .then(
-                                if (player.current?.videoId == track.videoId) {
-                                    Modifier.border(3.dp, Color.White, RoundedCornerShape(5.dp))
-                                } else {
-                                    Modifier
-                                },
-                            ),
-                        contentAlignment = Alignment.BottomStart,
-                    ) {
-                        Artwork(Art.Video(track.videoId), tile)
-                        Box(
-                            Modifier.matchParentSize().background(
-                                Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.75f)),
-                            ),
-                        )
-                        Text(
-                            track.title, Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
-                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        )
-                        TrackMenu(track, menu, { menu = false })
-                    }
-                }
-            }
-            if (pages > 1) {
-                val page = ((state.firstVisibleItemIndex + 4) / 9).coerceIn(0, pages - 1)
-                Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.Center) {
-                    repeat(pages) { p ->
-                        Box(
-                            Modifier.padding(horizontal = 3.dp).size(7.dp).clip(CircleShape)
-                                .background(Color.White.copy(alpha = if (p == page) 1f else 0.35f)),
-                        )
+        val width = maxWidth - 32.dp
+        LazyRow(
+            state = state,
+            flingBehavior = rememberSnapFlingBehavior(state),
+        ) {
+            itemsIndexed(columns) { c, column ->
+                Column(Modifier.width(width)) {
+                    column.forEachIndexed { r, track ->
+                        Box(Modifier.height(72.dp), contentAlignment = Alignment.Center) {
+                            TrackRow(track, songs, c * 4 + r, art = 56.dp)
+                        }
                     }
                 }
             }

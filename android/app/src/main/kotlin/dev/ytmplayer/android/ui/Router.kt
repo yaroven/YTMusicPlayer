@@ -13,7 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-enum class Tab { Home, Search, Library }
+enum class Tab { Home, Explore, Library }
 
 sealed interface Route {
     /** Album, artist or playlist page by browse id. */
@@ -21,6 +21,8 @@ sealed interface Route {
     data class List(val list: LocalList) : Route
     object AgeTest : Route
     object Settings : Route
+    /** Search, opened from the magnifier in a screen's header. */
+    object Search : Route
 }
 
 /** Each tab's back stack, so "Go to artist" works from anywhere. */

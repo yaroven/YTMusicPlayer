@@ -13,11 +13,11 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -79,7 +79,7 @@ fun Root() {
                     NavigationBar(containerColor = YT.background, tonalElevation = 0.dp) {
                         listOf(
                             Triple(Tab.Home, Icons.Filled.Home to Icons.Outlined.Home, R.string.home),
-                            Triple(Tab.Search, Icons.Filled.Search to Icons.Outlined.Search, R.string.search),
+                            Triple(Tab.Explore, Icons.Filled.Explore to Icons.Outlined.Explore, R.string.explore),
                             Triple(Tab.Library, Icons.Filled.Bookmark to Icons.Outlined.BookmarkBorder, R.string.library),
                         ).forEach { (tab, icons, label) ->
                             val selected = Router.tab == tab
@@ -87,7 +87,7 @@ fun Root() {
                                 selected = selected,
                                 onClick = { Router.select(tab) },
                                 icon = { Icon(if (selected) icons.first else icons.second, null) },
-                                label = { Text(stringResource(label), fontSize = 11.sp) },
+                                label = { Text(stringResource(label), fontSize = 12.sp) },
                                 colors = NavigationBarItemDefaults.colors(
                                     selectedIconColor = Color.White, selectedTextColor = Color.White,
                                     unselectedIconColor = YT.secondary, unselectedTextColor = YT.secondary,
@@ -111,13 +111,14 @@ fun Root() {
                         when (route) {
                             null -> when (Router.tab) {
                                 Tab.Home -> HomeScreen()
-                                Tab.Search -> SearchScreen()
+                                Tab.Explore -> ExploreScreen()
                                 Tab.Library -> LibraryScreen()
                             }
                             is Route.Page -> PageScreen(route.id)
                             is Route.List -> TrackListScreen(route.list)
                             Route.AgeTest -> AgeTestScreen()
                             Route.Settings -> SettingsScreen()
+                            Route.Search -> SearchScreen()
                         }
                     }
                 }
