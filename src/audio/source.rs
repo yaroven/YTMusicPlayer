@@ -300,7 +300,7 @@ impl TrackSource {
     /// temp file first (~1 s), then played and seeked like a download. The
     /// last few stay, for replays and the preloaded next track.
     async fn hls_audio(&self, stream: &AudioStream) -> Result<Media> {
-        let dir = std::env::temp_dir().join("ytm-player-hls");
+        let dir = std::env::temp_dir().join("yarek-music-hls");
         tokio::fs::create_dir_all(&dir).await?;
         let path = dir.join(format!("{}.aac", stream.video_id));
         if !path.is_file() {
@@ -419,7 +419,7 @@ impl TrackSource {
         Ok(removed)
     }
 
-    /// The media URL alone (`ytm resolve`, for debugging).
+    /// The media URL alone (`yarek resolve`, for debugging).
     pub async fn resolve(&self, video_id: &str) -> Result<AudioStream> {
         Ok(self.resolver.resolve(video_id).await?)
     }
@@ -695,7 +695,7 @@ mod tests {
     /// takes the finished ones with their records.
     #[tokio::test]
     async fn cleans_leftovers_and_deletes_every_download() {
-        let dir = std::env::temp_dir().join(format!("ytm-downloads-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("yarek-downloads-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let (source, store) = downloading_source(&dir);

@@ -605,7 +605,7 @@ mod live {
 
     #[test]
     fn cache_keeps_downloads_and_the_last_ones() {
-        let dir = std::env::temp_dir().join(format!("ytm-lyrics-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("yarek-lyrics-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let cache = Cache::new(dir.clone());
         let lyrics = Lyrics {

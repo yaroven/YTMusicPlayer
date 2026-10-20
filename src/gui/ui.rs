@@ -131,7 +131,7 @@ slint::slint! {
         in property <string> pick-browser: "Pick browser";
         in property <string> browser: "Browser";
         in property <string> or-browser-sign-in: "Or use a browser's sign-in";
-        in property <string> browser-note: "Use the YouTube sign-in of this browser, only for such songs. macOS: needs Full Disk Access for ytm-player (System Settings → Privacy & Security).";
+        in property <string> browser-note: "Use the YouTube sign-in of this browser, only for such songs. macOS: needs Full Disk Access for Yarek Music (System Settings → Privacy & Security).";
         in property <string> off: "Off";
         in property <string> integrations-note: "Last.fm and Discord: see config.toml (README: Integrations).";
         in property <string> google-account: "Google account";
@@ -1224,9 +1224,9 @@ slint::slint! {
     }
 
     export component MainWindow inherits Window {
-        title: "ytm-player";
+        title: "Yarek Music";
         // Taskbar / window-switcher icon on Windows and X11 (macOS uses the bundle's).
-        icon: @image-url("../../assets/ytm-player-64.png");
+        icon: @image-url("../../assets/yarek-music-64.png");
         // The window's pixel buffers dominate GUI memory; keep the default modest.
         preferred-width: 1040px;
         preferred-height: 660px;
@@ -2372,7 +2372,7 @@ slint::slint! {
                 VerticalLayout {
                     horizontal-stretch: 1;
                     alignment: center;
-                    Text { text: "ytm-player " + root.app-version; color: Yt.text; }
+                    Text { text: "Yarek Music " + root.app-version; color: Yt.text; }
                     Text {
                         text: root.update-version != "" ? L.version-prefix + root.update-version + L.is-available-suffix : L.up-to-date;
                         color: root.update-version != "" ? Yt.red : Yt.secondary;
@@ -2742,7 +2742,7 @@ slint::slint! {
                 border-radius: Yt.radius;
                 VerticalLayout {
                     padding: 16px;
-                    Text { text: "ytm-player"; font-size: 18px; font-weight: 700; color: Yt.text; }
+                    Text { text: "Yarek Music"; font-size: 18px; font-weight: 700; color: Yt.text; }
                     AboutSlint {}
                 }
             }

@@ -33,7 +33,7 @@ const DEVICE_URL: &str = "https://oauth2.googleapis.com/device/code";
 const SCOPE: &str = "https://www.googleapis.com/auth/youtube";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 /// How to fix an expired or missing sign-in, in error messages.
-pub const SIGN_IN_AGAIN: &str = "sign in again (“Sign in” in the window, or `ytm login`)";
+pub const SIGN_IN_AGAIN: &str = "sign in again (“Sign in” in the window, or `yarek login`)";
 
 #[derive(Debug, Clone)]
 pub struct OAuthClient {

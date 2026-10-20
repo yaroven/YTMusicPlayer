@@ -585,7 +585,7 @@ fn open_named(name: &str) -> Result<MixerDeviceSink, String> {
         .output_devices()
         .map_err(|e| format!("cannot list audio devices: {e}"))?
         .find(|d| device_name(d).as_deref() == Some(name))
-        .ok_or_else(|| format!("audio device {name:?} not found (see `ytm devices`)"))?;
+        .ok_or_else(|| format!("audio device {name:?} not found (see `yarek devices`)"))?;
     DeviceSinkBuilder::from_device(device)
         .and_then(|b| b.open_stream())
         .map_err(|e| format!("cannot open audio device {name:?}: {e}"))

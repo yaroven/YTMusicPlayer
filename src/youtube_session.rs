@@ -13,9 +13,10 @@ use std::{
 use anyhow::{Context, Result, bail};
 use sha1::{Digest, Sha1};
 
+use crate::api::token_store::{SERVICE, take_old_secret};
+
 pub type Cookies = BTreeMap<String, String>;
 
-const SERVICE: &str = "ytm-player";
 const ACCOUNT: &str = "youtube-session";
 
 /// Where the cookies live: the OS credential store, or memory in tests.
@@ -38,7 +39,7 @@ impl SecretStore for Keyring {
     fn load(&self) -> Result<Option<String>> {
         match Self::entry()?.get_password() {
             Ok(value) => Ok(Some(value)),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring::Error::NoEntry) => Ok(take_old_secret(ACCOUNT)),
             Err(err) => Err(err).context("reading the YouTube session"),
         }
     }
@@ -113,7 +114,7 @@ impl YouTubeSession {
         session
     }
 
-    /// Signed out, in memory (tests, `ytm resolve`).
+    /// Signed out, in memory (tests, `yarek resolve`).
     pub fn none() -> Self {
         Self::load(InMemory::default(), PathBuf::new())
     }

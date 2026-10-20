@@ -1,6 +1,6 @@
 //! Watching the clip: the song's video in the system web view (WebKit on
 //! macOS, WebView2 on Windows), run as a child process
-//! (`ytm video-window <id> <seconds>`) so the player itself never loads a
+//! (`yarek video-window <id> <seconds>`) so the player itself never loads a
 //! browser engine — the same trick as the sign-in window (see `signin`).
 //! The child prints the position the video stopped at, so switching back to
 //! audio carries on there. Linux has no system web view: the clip opens in
@@ -71,11 +71,11 @@ pub async fn watch(video_id: &str, at: Duration) -> Result<Duration> {
     if !in_window() {
         bail!("no video window on this system");
     }
-    let exe = std::env::current_exe().context("finding the ytm binary")?;
+    let exe = std::env::current_exe().context("finding the yarek binary")?;
     let mut command = tokio::process::Command::new(exe);
     #[cfg(windows)]
     {
-        // ytm.exe is a console program: no console window for the child.
+        // yarek.exe is a console program: no console window for the child.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
@@ -142,7 +142,7 @@ mod window {
                 return;
             }
             let attributes = Window::default_attributes()
-                .with_title("Video — ytm-player")
+                .with_title("Video — Yarek Music")
                 .with_inner_size(LogicalSize::new(960.0, 540.0));
             let window = match event_loop.create_window(attributes) {
                 Ok(window) => window,
@@ -197,12 +197,12 @@ mod window {
         }
     }
 
-    /// `ytm video-window <id> <seconds>`: plays the clip, then prints where
+    /// `yarek video-window <id> <seconds>`: plays the clip, then prints where
     /// it stopped.
     pub fn run(video_id: &str, at: Duration) -> Result<()> {
         let event_loop = EventLoop::new().context("opening a window")?;
         // WebView2 wants a writable folder even when nothing is stored.
-        let data = std::env::temp_dir().join(format!("ytm-video-{}", std::process::id()));
+        let data = std::env::temp_dir().join(format!("yarek-video-{}", std::process::id()));
         let mut app = App {
             url: video_url(video_id, at),
             context: WebContext::new(Some(data.clone())),

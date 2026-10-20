@@ -12,7 +12,7 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "ytm-player"
+rootProject.name = "yarek-music"
 // core: YouTube Music, stream URLs, lyrics (plain Kotlin/JVM, tested on
 // the desktop); app: the Android UI and player.
 include(":core", ":app")

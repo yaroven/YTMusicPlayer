@@ -1,7 +1,7 @@
 //! The Google account: the OAuth client (ID + secret, saved in
 //! `config.toml`), sign-in (browser or device code), the stored token and
 //! the YouTube API client built from them. One module for the CLI
-//! (`ytm import-client`, `ytm login`, `ytm logout`) and both UIs.
+//! (`yarek import-client`, `yarek login`, `yarek logout`) and both UIs.
 //!
 //! The token lives behind the [`Tokens`] seam: the OS keyring in the app,
 //! memory in tests.
@@ -150,11 +150,11 @@ impl Account {
     ) -> Result<impl Future<Output = Result<()>> + Send + 'static> {
         let client = self.client(flow).cloned().with_context(|| match flow {
             Flow::Browser => "no Google OAuth client yet: add one under “Sign in” in the window \
-                              (`ytm gui`) or run `ytm import-client <downloaded.json>`"
+                              (`yarek gui`) or run `yarek import-client <downloaded.json>`"
                 .to_owned(),
             Flow::Device => format!(
                 "signing in with a code needs a \"TVs and Limited Input devices\" OAuth \
-                 client: run `ytm import-client <json> --device` or set \
+                 client: run `yarek import-client <json> --device` or set \
                  device_client_id/device_client_secret in {}",
                 self.config_file.display()
             ),
@@ -265,7 +265,7 @@ mod tests {
     const ID: &str = "123456789-abc.apps.googleusercontent.com";
 
     fn temp_config(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("ytm-account-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("yarek-account-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("config.toml")

@@ -2,11 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>ytm-player</string>
-  <key>CFBundleDisplayName</key><string>ytm-player</string>
-  <key>CFBundleIdentifier</key><string>dev.ytm-player.app</string>
-  <key>CFBundleExecutable</key><string>ytm-player</string>
-  <key>CFBundleIconFile</key><string>ytm-player</string>
+  <key>CFBundleName</key><string>Yarek Music</string>
+  <key>CFBundleDisplayName</key><string>Yarek Music</string>
+  <key>CFBundleIdentifier</key><string>dev.yarek.music</string>
+  <key>CFBundleExecutable</key><string>yarek-music</string>
+  <key>CFBundleIconFile</key><string>yarek-music</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>@VERSION@</string>
   <key>CFBundleVersion</key><string>@VERSION@</string>

@@ -1,6 +1,6 @@
 //! "Sign in with Google": Google's own sign-in page in the system web view
 //! (WebKit on macOS, WebView2 on Windows), run as a child process
-//! (`ytm sign-in-window`) so the player never loads a browser engine. When
+//! (`yarek sign-in-window`) so the player never loads a browser engine. When
 //! youtube.com has a session, the child prints its cookies as JSON on
 //! stdout and exits; the password only ever goes to Google. Linux (no
 //! system web view without webkit2gtk) imports the sign-in from a browser.
@@ -24,11 +24,11 @@ pub async fn with_window() -> Result<Cookies> {
     if !cfg!(all(feature = "gui", any(target_os = "macos", windows))) {
         bail!("sign in to YouTube in a browser, then use \"Import from browser\"");
     }
-    let exe = std::env::current_exe().context("finding the ytm binary")?;
+    let exe = std::env::current_exe().context("finding the yarek binary")?;
     let mut command = tokio::process::Command::new(exe);
     #[cfg(windows)]
     {
-        // ytm.exe is a console program: no console window for the child.
+        // yarek.exe is a console program: no console window for the child.
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
@@ -91,7 +91,7 @@ mod window {
                 return;
             }
             let attributes = Window::default_attributes()
-                .with_title("Sign in to YouTube — ytm-player")
+                .with_title("Sign in to YouTube — Yarek Music")
                 .with_inner_size(LogicalSize::new(480.0, 720.0));
             let window = match event_loop.create_window(attributes) {
                 Ok(window) => window,
@@ -175,12 +175,12 @@ mod window {
         }
     }
 
-    /// `ytm sign-in-window`: prints the cookies as JSON, or fails.
+    /// `yarek sign-in-window`: prints the cookies as JSON, or fails.
     pub fn run() -> Result<()> {
         let event_loop = EventLoop::new().context("opening a window")?;
         // A throwaway profile; incognito keeps it out of the disk anyway
         // (WebView2 still wants a writable folder).
-        let data = std::env::temp_dir().join(format!("ytm-sign-in-{}", std::process::id()));
+        let data = std::env::temp_dir().join(format!("yarek-sign-in-{}", std::process::id()));
         let mut app = App {
             proxy: event_loop.create_proxy(),
             context: WebContext::new(Some(data.clone())),

@@ -424,7 +424,7 @@ final class Library {
     // MARK: Downloads
 
     /// Documents/Downloads: the app's folder in the Files app ("On My
-    /// iPhone → YTM Player"), so the songs can be copied or shared.
+    /// iPhone → Yarek Music"), so the songs can be copied or shared.
     static var downloadsDirectory: URL {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let dir = documents.appendingPathComponent("Downloads", isDirectory: true)

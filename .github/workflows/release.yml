@@ -1,15 +1,15 @@
 # Builds installers and binaries when a `v*` tag is pushed and attaches them
 # (plus SHA256SUMS) to a GitHub Release:
 #
-#   Debian/Ubuntu  ytm-player_<v>_amd64.deb          (apt install ./…)
-#   Fedora         ytm-player-<v>-1.x86_64.rpm       (dnf install ./…)
-#   Arch           ytm-player-<v>-1-x86_64.pkg.tar.zst (pacman -U …)
-#   Windows        ytm-player-<v>-setup-x64.exe      (setup wizard)
-#   macOS          ytm-player-<v>-macos.pkg          (universal: arm64 + x86_64)
-#   install.sh / install.ps1 downloads: ytm-<target>.tar.gz / .zip
+#   Debian/Ubuntu  yarek-music_<v>_amd64.deb          (apt install ./…)
+#   Fedora         yarek-music-<v>-1.x86_64.rpm       (dnf install ./…)
+#   Arch           yarek-music-<v>-1-x86_64.pkg.tar.zst (pacman -U …)
+#   Windows        yarek-music-<v>-setup-x64.exe      (setup wizard)
+#   macOS          yarek-music-<v>-macos.pkg          (universal: arm64 + x86_64)
+#   install.sh / install.ps1 downloads: yarek-<target>.tar.gz / .zip
 #   uninstall.sh / uninstall.ps1
-#   iPhone         ytm-player-<v>.ipa + sidestore.json (SideStore source)
-#   Android        ytm-player-<v>.apk
+#   iPhone         yarek-music-<v>.ipa + sidestore.json (SideStore source)
+#   Android        yarek-music-<v>.apk
 #
 #   git tag v0.3.0 && git push origin v0.3.0
 #
@@ -48,11 +48,11 @@ jobs:
         run: |
           v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           mkdir -p dist
-          tar -czf dist/ytm-$TARGET.tar.gz -C target/$TARGET/release ytm
-          (cd dist && sha256sum ytm-$TARGET.tar.gz > ytm-$TARGET.tar.gz.sha256)
-          cargo deb --no-build --no-strip --target $TARGET --output dist/ytm-player_${v}_amd64.deb
-          cargo generate-rpm --target $TARGET --output dist/ytm-player-${v}-1.x86_64.rpm
-          cp target/$TARGET/release/ytm dist/ytm-linux-x86_64
+          tar -czf dist/yarek-$TARGET.tar.gz -C target/$TARGET/release yarek
+          (cd dist && sha256sum yarek-$TARGET.tar.gz > yarek-$TARGET.tar.gz.sha256)
+          cargo deb --no-build --no-strip --target $TARGET --output dist/yarek-music_${v}_amd64.deb
+          cargo generate-rpm --target $TARGET --output dist/yarek-music-${v}-1.x86_64.rpm
+          cp target/$TARGET/release/yarek dist/yarek-linux-x86_64
           ls -l dist
       - uses: actions/upload-artifact@v4
         with:
@@ -73,8 +73,8 @@ jobs:
         run: |
           v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           mkdir -p /tmp/pkg dist
-          cp packaging/arch/PKGBUILD packaging/linux/ytm-player.desktop assets/ytm-player.png /tmp/pkg/
-          cp linux/ytm-linux-x86_64 /tmp/pkg/ytm
+          cp packaging/arch/PKGBUILD packaging/linux/yarek-music.desktop assets/yarek-music.png /tmp/pkg/
+          cp linux/yarek-linux-x86_64 /tmp/pkg/yarek
           sed -i "s/^pkgver=.*/pkgver=$v/" /tmp/pkg/PKGBUILD
           useradd -m builder
           chown -R builder /tmp/pkg
@@ -86,8 +86,8 @@ jobs:
           sed -i '/^DownloadUser/d' /etc/pacman.conf
           pacman -Sy --noconfirm --disable-sandbox
           pacman -U --noconfirm --disable-sandbox dist/*.pkg.tar.zst
-          ytm --help | head -3
-          test -f /usr/share/applications/ytm-player.desktop
+          yarek --help | head -3
+          test -f /usr/share/applications/yarek-music.desktop
       - uses: actions/upload-artifact@v4
         with:
           name: arch
@@ -111,7 +111,7 @@ jobs:
           name: linux
           path: linux
       - run: ${{ matrix.install }}
-      - run: ytm --help | head -3 && test -f /usr/share/applications/ytm-player.desktop
+      - run: yarek --help | head -3 && test -f /usr/share/applications/yarek-music.desktop
 
   windows:
     runs-on: windows-latest
@@ -130,12 +130,12 @@ jobs:
           $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
           New-Item -ItemType Directory dist | Out-Null
           $bin = "target\$env:TARGET\release"
-          & "$bin\ytm.exe" --help | Select-Object -First 3
-          Compress-Archive "$bin\ytm.exe" "dist\ytm-$env:TARGET.zip"
-          $hash = (Get-FileHash "dist\ytm-$env:TARGET.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  ytm-$env:TARGET.zip" | Out-File -Encoding ascii "dist\ytm-$env:TARGET.zip.sha256"
+          & "$bin\yarek.exe" --help | Select-Object -First 3
+          Compress-Archive "$bin\yarek.exe" "dist\yarek-$env:TARGET.zip"
+          $hash = (Get-FileHash "dist\yarek-$env:TARGET.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  yarek-$env:TARGET.zip" | Out-File -Encoding ascii "dist\yarek-$env:TARGET.zip.sha256"
           choco install innosetup -y --no-progress | Out-Null
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Q "/DAppVersion=$v" "/DBinDir=$PWD\$bin" "/O$PWD\dist" packaging\windows\ytm-player.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Q "/DAppVersion=$v" "/DBinDir=$PWD\$bin" "/O$PWD\dist" packaging\windows\yarek-music.iss
           if ($LASTEXITCODE -ne 0) { throw "iscc failed" }
           Get-ChildItem dist
       - name: Silent install, run, uninstall
@@ -143,12 +143,12 @@ jobs:
         run: |
           $setup = Get-ChildItem dist\*-setup-x64.exe | Select-Object -First 1
           Start-Process $setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
-          $exe = "$env:LOCALAPPDATA\Programs\ytm-player\ytm.exe"
+          $exe = "$env:LOCALAPPDATA\Programs\yarek-music\yarek.exe"
           & $exe --help | Select-Object -First 3
-          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\ytm-player.lnk")) { throw 'no Start menu entry' }
-          Start-Process "$env:LOCALAPPDATA\Programs\ytm-player\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Yarek Music.lnk")) { throw 'no Start menu entry' }
+          Start-Process "$env:LOCALAPPDATA\Programs\yarek-music\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait
           Start-Sleep 2
-          if (Test-Path $exe) { throw 'uninstall left ytm.exe behind' }
+          if (Test-Path $exe) { throw 'uninstall left yarek.exe behind' }
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -172,18 +172,18 @@ jobs:
           v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           mkdir -p dist
           for t in aarch64-apple-darwin x86_64-apple-darwin; do
-            tar -czf dist/ytm-$t.tar.gz -C target/$t/release ytm
-            (cd dist && shasum -a 256 ytm-$t.tar.gz > ytm-$t.tar.gz.sha256)
+            tar -czf dist/yarek-$t.tar.gz -C target/$t/release yarek
+            (cd dist && shasum -a 256 yarek-$t.tar.gz > yarek-$t.tar.gz.sha256)
           done
-          packaging/macos/build-pkg.sh "$v" "dist/ytm-player-$v-macos.pkg" \
-            target/aarch64-apple-darwin/release/ytm target/x86_64-apple-darwin/release/ytm
+          packaging/macos/build-pkg.sh "$v" "dist/yarek-music-$v-macos.pkg" \
+            target/aarch64-apple-darwin/release/yarek target/x86_64-apple-darwin/release/yarek
           pkgutil --payload-files dist/*.pkg
       - name: Install and run
         run: |
           sudo installer -pkg dist/*-macos.pkg -target /
-          ytm --help | head -3
-          lipo -archs /Applications/ytm-player.app/Contents/MacOS/ytm-player
-          codesign --verify /Applications/ytm-player.app
+          yarek --help | head -3
+          lipo -archs "/Applications/Yarek Music.app/Contents/MacOS/yarek-music"
+          codesign --verify "/Applications/Yarek Music.app"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -210,7 +210,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          rm -f dist/ytm-linux-x86_64
+          rm -f dist/yarek-linux-x86_64
           cp uninstall.sh uninstall.ps1 dist/
           (cd dist && sha256sum -- * | grep -v '\.sha256$' > SHA256SUMS)
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --generate-notes

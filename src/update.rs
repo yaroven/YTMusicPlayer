@@ -158,7 +158,7 @@ fn method() -> Result<Method> {
 }
 
 fn is_writable(dir: &Path) -> bool {
-    let probe = dir.join(format!(".ytm-update-probe-{}", std::process::id()));
+    let probe = dir.join(format!(".yarek-update-probe-{}", std::process::id()));
     let ok = std::fs::write(&probe, b"").is_ok();
     let _ = std::fs::remove_file(&probe);
     ok
@@ -167,9 +167,9 @@ fn is_writable(dir: &Path) -> bool {
 /// This platform's release archive.
 fn tarball() -> Option<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("macos", "aarch64") => Some("ytm-aarch64-apple-darwin.tar.gz"),
-        ("macos", "x86_64") => Some("ytm-x86_64-apple-darwin.tar.gz"),
-        ("linux", "x86_64") => Some("ytm-x86_64-unknown-linux-gnu.tar.gz"),
+        ("macos", "aarch64") => Some("yarek-aarch64-apple-darwin.tar.gz"),
+        ("macos", "x86_64") => Some("yarek-x86_64-apple-darwin.tar.gz"),
+        ("linux", "x86_64") => Some("yarek-x86_64-unknown-linux-gnu.tar.gz"),
         _ => None,
     }
 }
@@ -180,13 +180,13 @@ pub async fn install(http: &reqwest::Client, update: &Update) -> Result<Installe
     match method()? {
         Method::LinuxPackage { kind } => {
             let (file, command) = match kind {
-                "deb" => (format!("ytm-player_{v}_amd64.deb"), "sudo apt install ./"),
+                "deb" => (format!("yarek-music_{v}_amd64.deb"), "sudo apt install ./"),
                 "arch" => (
-                    format!("ytm-player-{v}-1-x86_64.pkg.tar.zst"),
+                    format!("yarek-music-{v}-1-x86_64.pkg.tar.zst"),
                     "sudo pacman -U ",
                 ),
                 _ => (
-                    format!("ytm-player-{v}-1.x86_64.rpm"),
+                    format!("yarek-music-{v}-1.x86_64.rpm"),
                     "sudo dnf install ./",
                 ),
             };
@@ -196,7 +196,7 @@ pub async fn install(http: &reqwest::Client, update: &Update) -> Result<Installe
             )))
         }
         Method::MacPkg => {
-            let name = format!("ytm-player-{v}-macos.pkg");
+            let name = format!("yarek-music-{v}-macos.pkg");
             let pkg = download(http, update, &name).await?;
             let dest = std::env::temp_dir().join(&name);
             tokio::fs::write(&dest, &pkg).await?;
@@ -207,7 +207,7 @@ pub async fn install(http: &reqwest::Client, update: &Update) -> Result<Installe
             Ok(Installed::InstallerStarted { quit: false })
         }
         Method::WindowsSetup { exe } => {
-            let name = format!("ytm-player-{v}-setup-x64.exe");
+            let name = format!("yarek-music-{v}-setup-x64.exe");
             let setup = download(http, update, &name).await?;
             let dest = std::env::temp_dir().join(&name);
             tokio::fs::write(&dest, &setup).await?;
@@ -247,7 +247,7 @@ pub async fn install(http: &reqwest::Client, update: &Update) -> Result<Installe
                     .status();
                 // install.sh also put a copy on PATH.
                 if let Some(home) = directories::BaseDirs::new() {
-                    let cli = home.home_dir().join(".local/bin/ytm");
+                    let cli = home.home_dir().join(".local/bin/yarek");
                     if cli.is_file() && cli != exe {
                         let _ = replace(&cli, &binary);
                     }
@@ -297,18 +297,18 @@ async fn download(http: &reqwest::Client, update: &Update, name: &str) -> Result
     Ok(bytes)
 }
 
-/// The `ytm` binary out of a release tarball.
+/// The `yarek` binary out of a release tarball.
 fn unpack_binary(archive: &[u8]) -> Result<Vec<u8>> {
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
     for entry in tar.entries()? {
         let mut entry = entry?;
-        if entry.path()?.file_name().is_some_and(|n| n == "ytm") {
+        if entry.path()?.file_name().is_some_and(|n| n == "yarek") {
             let mut binary = Vec::new();
             entry.read_to_end(&mut binary)?;
             return Ok(binary);
         }
     }
-    bail!("the archive has no ytm binary")
+    bail!("the archive has no yarek binary")
 }
 
 /// Writes `binary` next to `exe` and renames it over (atomic; the running
@@ -373,7 +373,7 @@ mod tests {
         header.set_size(data.len() as u64);
         header.set_mode(0o755);
         header.set_cksum();
-        tar.append_data(&mut header, "ytm", &data[..]).unwrap();
+        tar.append_data(&mut header, "yarek", &data[..]).unwrap();
         let raw = tar.into_inner().unwrap();
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         std::io::Write::write_all(&mut gz, &raw).unwrap();
@@ -383,9 +383,9 @@ mod tests {
 
     #[test]
     fn replaces_a_file_atomically() {
-        let dir = std::env::temp_dir().join(format!("ytm-update-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("yarek-update-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let exe = dir.join("ytm");
+        let exe = dir.join("yarek");
         std::fs::write(&exe, b"old").unwrap();
         replace(&exe, b"new").unwrap();
         assert_eq!(std::fs::read(&exe).unwrap(), b"new");
@@ -396,7 +396,7 @@ mod tests {
     #[ignore]
     async fn checks_github_live() {
         let http = reqwest::Client::builder()
-            .user_agent("ytm-player-test")
+            .user_agent("yarek-music-test")
             .build()
             .unwrap();
         // Either "up to date" or a newer release with its assets.

@@ -2,7 +2,7 @@
 
 ## Desktop window
 
-Open **ytm-player** from your applications, or run `ytm gui`.
+Open **Yarek Music** from your applications, or run `yarek gui`.
 
 - **Sidebar:** Home, **Explore** (charts, new releases, moods and genres),
   your Library (History, Downloads, Albums, Artists),
@@ -60,18 +60,18 @@ the front.
 
 **Playing in the background:** with the tray icon on (default), closing the
 window keeps the music playing and frees the window's memory. The tray / menu
-bar icon has **Play / Pause**, **Next**, **Previous**, **Show ytm-player** and
+bar icon has **Play / Pause**, **Next**, **Previous**, **Show Yarek Music** and
 **Quit**; media keys keep working. On macOS the app also leaves the Dock until
 the window is shown again. (Linux needs a desktop with tray icons — on GNOME
 the AppIndicator extension; without one, closing the window quits.)
 
 The bottom of the sidebar shows the player's memory use (plus yt-dlp's while
-it fetches a track link). To make `ytm` open the window instead of the
+it fetches a track link). To make `yarek` open the window instead of the
 terminal UI, set `ui = "gui"` in the [config](configuration.md).
 
 ## Terminal UI
 
-Run `ytm` in a terminal.
+Run `yarek` in a terminal.
 
 | Key | Action |
 |---|---|
@@ -108,19 +108,19 @@ Volume, shuffle, repeat and the selected playlist are remembered.
 ## Commands
 
 ```bash
-ytm                         # open the player (terminal UI, or the window with ui = "gui")
-ytm gui | ytm tui           # open the window / the terminal UI
-ytm sign-in [--from <browser>]        # sign in to YouTube: library, age-restricted songs
-ytm sign-out                # forget the YouTube sign-in
-ytm sync                    # refresh the library (unchanged playlists are skipped)
-ytm play <url|id>           # play a single track without the UI
-ytm import-client <json> [--device]   # OAuth client for library sync, from Google's JSON
-ytm login [--device] | ytm logout     # the optional Data API sign-in (legacy library sync)
-ytm update                  # install the latest release
-ytm status                  # config, sign-in and library state
-ytm devices                 # audio outputs (for `audio_device`)
-ytm cast-devices            # Chromecasts on this network
-ytm lastfm-login            # connect Last.fm scrobbling
-ytm config                  # path of config.toml
-ytm uninstall [--purge]     # remove the app
+yarek                         # open the player (terminal UI, or the window with ui = "gui")
+yarek gui | yarek tui           # open the window / the terminal UI
+yarek sign-in [--from <browser>]        # sign in to YouTube: library, age-restricted songs
+yarek sign-out                # forget the YouTube sign-in
+yarek sync                    # refresh the library (unchanged playlists are skipped)
+yarek play <url|id>           # play a single track without the UI
+yarek import-client <json> [--device]   # OAuth client for library sync, from Google's JSON
+yarek login [--device] | yarek logout     # the optional Data API sign-in (legacy library sync)
+yarek update                  # install the latest release
+yarek status                  # config, sign-in and library state
+yarek devices                 # audio outputs (for `audio_device`)
+yarek cast-devices            # Chromecasts on this network
+yarek lastfm-login            # connect Last.fm scrobbling
+yarek config                  # path of config.toml
+yarek uninstall [--purge]     # remove the app
 ```

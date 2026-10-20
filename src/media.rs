@@ -44,8 +44,8 @@ impl MediaControls {
             return None;
         }
         let config = PlatformConfig {
-            display_name: "ytm-player",
-            dbus_name: "ytm_player",
+            display_name: "Yarek Music",
+            dbus_name: "yarek_music",
             hwnd,
         };
         let mut inner = souvlaki::MediaControls::new(config)

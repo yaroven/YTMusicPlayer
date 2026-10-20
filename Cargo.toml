@@ -1,21 +1,21 @@
 [package]
-name = "ytm-player"
+name = "yarek-music"
 version = "1.0.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Lightweight cross-platform YouTube Music player: terminal UI and a desktop window"
+description = "Yarek Music: a lightweight cross-platform YouTube Music player, terminal UI and a desktop window"
 repository = "https://github.com/yaroven/YTMusicPlayer"
 homepage = "https://github.com/yaroven/YTMusicPlayer"
 license = "MIT OR Apache-2.0"
 publish = false
 
 [[bin]]
-name = "ytm"
+name = "yarek"
 path = "src/main.rs"
 
 [features]
 default = ["gui"]
-# Desktop window (`ytm gui`); off => terminal-only, smaller binary.
+# Desktop window (`yarek gui`); off => terminal-only, smaller binary.
 gui = ["dep:slint", "dep:image", "dep:notify-rust", "dep:tray-icon", "dep:ksni", "dep:wry", "dep:winit"]
 
 [dependencies]
@@ -175,6 +175,9 @@ panic = "abort"
 # Shared-library deps are detected automatically; the window's X11/Wayland
 # libraries are loaded at runtime, so they are listed by hand.
 [package.metadata.deb]
+# Up to 1.0.0 the package was "ytm-player": installing this one replaces it.
+conflicts = "ytm-player"
+replaces = "ytm-player"
 maintainer = "yaroven <yaroven@users.noreply.github.com>"
 section = "sound"
 priority = "optional"
@@ -182,26 +185,30 @@ depends = "$auto, fontconfig, libxkbcommon0"
 recommends = "libxkbcommon-x11-0, libwayland-client0, libxcursor1, libxi6, libxrandr2, pipewire-alsa | libasound2-plugins, gnome-keyring | kwalletmanager"
 extended-description = """\
 Plays your YouTube Music likes and playlists with a fraction of the memory
-of the browser tab. Terminal UI (`ytm`) and a desktop window (`ytm gui`)."""
+of the browser tab. Terminal UI (`yarek`) and a desktop window (`yarek gui`)."""
 assets = [
-    ["target/release/ytm", "usr/bin/", "755"],
-    ["packaging/linux/ytm-player.desktop", "usr/share/applications/", "644"],
-    ["assets/ytm-player.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
-    ["README.md", "usr/share/doc/ytm-player/", "644"],
+    ["target/release/yarek", "usr/bin/", "755"],
+    ["packaging/linux/yarek-music.desktop", "usr/share/applications/", "644"],
+    ["assets/yarek-music.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+    ["README.md", "usr/share/doc/yarek-music/", "644"],
 ]
 
 [package.metadata.generate-rpm]
-name = "ytm-player"
+name = "yarek-music"
 # Automatic detection runs `ldd` on the (Ubuntu) build host and lists
 # transitive libraries under Debian sonames (libbz2.so.1.0), which Fedora
 # lacks. The binary itself needs libc, libgcc_s, libasound, libfontconfig.
 auto-req = "no"
 assets = [
-    { source = "target/release/ytm", dest = "/usr/bin/ytm", mode = "755" },
-    { source = "packaging/linux/ytm-player.desktop", dest = "/usr/share/applications/ytm-player.desktop", mode = "644" },
-    { source = "assets/ytm-player.png", dest = "/usr/share/icons/hicolor/256x256/apps/ytm-player.png", mode = "644" },
-    { source = "README.md", dest = "/usr/share/doc/ytm-player/README.md", mode = "644", doc = true },
+    { source = "target/release/yarek", dest = "/usr/bin/yarek", mode = "755" },
+    { source = "packaging/linux/yarek-music.desktop", dest = "/usr/share/applications/yarek-music.desktop", mode = "644" },
+    { source = "assets/yarek-music.png", dest = "/usr/share/icons/hicolor/256x256/apps/yarek-music.png", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/yarek-music/README.md", mode = "644", doc = true },
 ]
+
+[package.metadata.generate-rpm.obsoletes]
+# Up to 1.0.0 the package was "ytm-player".
+ytm-player = "*"
 
 [package.metadata.generate-rpm.requires]
 glibc = ">= 2.35"

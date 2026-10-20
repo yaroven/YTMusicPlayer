@@ -57,8 +57,8 @@ const MEMORY_SAMPLE: Duration = Duration::from_secs(2);
 fn not_signed_in(lang: Lang) -> &'static str {
     tr!(
         lang,
-        "Not signed in: Sign in → Sign in with Google (or `ytm sign-in`)",
-        "Вхід не виконано: «Увійти» → «Увійти через Google» (або `ytm sign-in`)"
+        "Not signed in: Sign in → Sign in with Google (or `yarek sign-in`)",
+        "Вхід не виконано: «Увійти» → «Увійти через Google» (або `yarek sign-in`)"
     )
 }
 /// Smallest memory change worth a redraw.

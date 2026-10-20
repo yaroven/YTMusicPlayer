@@ -83,7 +83,7 @@ pub enum ExtractorError {
     Cookies { browser: String, message: String },
     /// yt-dlp rejected our flags: it predates them.
     #[error(
-        "yt-dlp at {path} is too old ({message}); update or uninstall it so ytm can use its own copy"
+        "yt-dlp at {path} is too old ({message}); update or uninstall it so yarek can use its own copy"
     )]
     Outdated { path: PathBuf, message: String },
     #[error("yt-dlp exited with {status}: {message}")]
@@ -158,7 +158,7 @@ impl AudioStream {
 /// macOS keeps other apps' data private: reading a browser's cookies needs
 /// Full Disk Access for the player.
 #[cfg(target_os = "macos")]
-const MACOS_PRIVACY_HINT: &str = " — macOS: allow ytm-player in System Settings → Privacy & Security → Full Disk Access, then restart it (or use a cookies.txt file, see README)";
+const MACOS_PRIVACY_HINT: &str = " — macOS: allow Yarek Music in System Settings → Privacy & Security → Full Disk Access, then restart it (or use a cookies.txt file, see README)";
 #[cfg(not(target_os = "macos"))]
 const MACOS_PRIVACY_HINT: &str = "";
 
@@ -755,7 +755,7 @@ impl YtDlp {
     /// The browser's youtube.com cookies as a cookies.txt (yt-dlp reads
     /// them; we only keep YouTube's). For "Import from browser".
     pub async fn export_cookies(&self, browser: &str) -> Result<String> {
-        let file = std::env::temp_dir().join(format!("ytm-cookies-{}.txt", std::process::id()));
+        let file = std::env::temp_dir().join(format!("yarek-cookies-{}.txt", std::process::id()));
         let path = file.to_string_lossy().into_owned();
         let result = self
             .run(
@@ -1146,7 +1146,7 @@ cccc  yt-dlp_linux
         assert_eq!(cookies.browser().as_deref(), Some("chrome"));
         cookies.set("--exec=rm");
         assert_eq!(cookies.browser(), None);
-        let file = std::env::temp_dir().join(format!("ytm-cookies-{}.txt", std::process::id()));
+        let file = std::env::temp_dir().join(format!("yarek-cookies-{}.txt", std::process::id()));
         std::fs::write(&file, "# Netscape HTTP Cookie File\n").unwrap();
         cookies.set(&file.to_string_lossy());
         assert_eq!(cookie_flag(&cookies.browser().unwrap()), "--cookies");
@@ -1155,7 +1155,7 @@ cccc  yt-dlp_linux
 
     #[test]
     fn prefers_managed_copy() {
-        let dir = std::env::temp_dir().join(format!("ytm-find-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("yarek-find-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             YtDlp::find(&dir).is_none(),
@@ -1196,7 +1196,7 @@ cccc  yt-dlp_linux
     #[tokio::test]
     #[ignore]
     async fn resolves_real_video() {
-        let dir = std::env::temp_dir().join("ytm-player-test-bin");
+        let dir = std::env::temp_dir().join("yarek-music-test-bin");
         let ytdlp = YtDlp::ensure(&reqwest::Client::new(), &dir).await.unwrap();
         let stream = ytdlp.resolve("dQw4w9WgXcQ").await.unwrap();
         assert!(stream.url.starts_with("https://"));
@@ -1210,7 +1210,7 @@ cccc  yt-dlp_linux
         if onedir_asset().is_none() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("ytm-migrate-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("yarek-migrate-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(YtDlp::managed_path(&dir), b"").unwrap();

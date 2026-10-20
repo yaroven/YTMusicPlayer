@@ -1,13 +1,16 @@
 # Repackages the prebuilt Linux binary from the release workflow (built on
 # Ubuntu 22.04, glibc 2.35 — runs on current Arch). The workflow copies
-# `ytm`, the .desktop file and the icon next to this file and sets pkgver.
-pkgname=ytm-player
+# `yarek`, the .desktop file and the icon next to this file and sets pkgver.
+pkgname=yarek-music
 pkgver=0.0.0
 pkgrel=1
-pkgdesc="Lightweight YouTube Music player (terminal and desktop window)"
+pkgdesc="Yarek Music: lightweight YouTube Music player (terminal and desktop window)"
 arch=('x86_64')
 url="https://github.com/yaroven/YTMusicPlayer"
 license=('MIT OR Apache-2.0')
+# Up to 1.0.0 the package was "ytm-player".
+replaces=('ytm-player')
+conflicts=('ytm-player')
 depends=('glibc' 'gcc-libs' 'alsa-lib' 'fontconfig' 'libxkbcommon')
 optdepends=(
   'pipewire-alsa: sound on PipeWire systems'
@@ -17,11 +20,11 @@ optdepends=(
   'gnome-keyring: remember the Google sign-in (or KWallet)'
 )
 options=('!strip' '!debug')
-source=('ytm' 'ytm-player.desktop' 'ytm-player.png')
+source=('yarek' 'yarek-music.desktop' 'yarek-music.png')
 sha256sums=('SKIP' 'SKIP' 'SKIP')
 
 package() {
-  install -Dm755 ytm "$pkgdir/usr/bin/ytm"
-  install -Dm644 ytm-player.desktop "$pkgdir/usr/share/applications/ytm-player.desktop"
-  install -Dm644 ytm-player.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/ytm-player.png"
+  install -Dm755 yarek "$pkgdir/usr/bin/yarek"
+  install -Dm644 yarek-music.desktop "$pkgdir/usr/share/applications/yarek-music.desktop"
+  install -Dm644 yarek-music.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/yarek-music.png"
 }

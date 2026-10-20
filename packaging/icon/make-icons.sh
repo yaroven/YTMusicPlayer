@@ -9,12 +9,12 @@ swiftc -O -o "$work/draw-icon" "$repo/packaging/icon/draw-icon.swift"
 "$work/draw-icon" "$work"
 
 # macOS, Linux (256), window and tray (64)
-iconutil -c icns -o "$repo/assets/ytm-player.icns" "$work/ytm-player.iconset"
-cp "$work/rounded-256.png" "$repo/assets/ytm-player.png"
-cp "$work/rounded-64.png" "$repo/assets/ytm-player-64.png"
+iconutil -c icns -o "$repo/assets/yarek-music.icns" "$work/yarek-music.iconset"
+cp "$work/rounded-256.png" "$repo/assets/yarek-music.png"
+cp "$work/rounded-64.png" "$repo/assets/yarek-music-64.png"
 
 # Windows: an .ico of PNG frames
-python3 - "$repo/assets/ytm-player.ico" "$work" <<'PY'
+python3 - "$repo/assets/yarek-music.ico" "$work" <<'PY'
 import struct, sys
 out, work = sys.argv[1], sys.argv[2]
 sizes = [16, 24, 32, 48, 64, 128, 256]

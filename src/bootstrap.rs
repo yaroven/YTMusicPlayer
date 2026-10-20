@@ -28,7 +28,7 @@ use crate::{
 /// requests: idle sockets aren't kept around.
 pub fn http_client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
-        .user_agent(concat!("ytm-player/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("yarek-music/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(10))
         .pool_max_idle_per_host(1)
         .pool_idle_timeout(Duration::from_secs(30))
@@ -76,7 +76,7 @@ pub async fn ytdlp(
         .with_cookies(Cookies::new(cookies)))
 }
 
-/// `force_js` (`ytm resolve --js`) beats the `js_fallback` setting.
+/// `force_js` (`yarek resolve --js`) beats the `js_fallback` setting.
 pub fn js_policy(settings: &Settings, force_js: bool) -> JsPolicy {
     match (force_js, settings.js_fallback) {
         (true, _) => JsPolicy::Always,
@@ -85,7 +85,7 @@ pub fn js_policy(settings: &Settings, force_js: bool) -> JsPolicy {
     }
 }
 
-/// `store`: persist URLs and play downloads (off for `ytm resolve`).
+/// `store`: persist URLs and play downloads (off for `yarek resolve`).
 pub fn track_source(
     paths: &AppPaths,
     settings: &Settings,
@@ -151,7 +151,7 @@ fn listeners(
     if let Some(credentials) = lastfm_credentials(settings) {
         match lastfm::Scrobbler::new(http.clone(), credentials, paths.data_dir()) {
             Some(s) => listeners.push(Box::new(s)),
-            None => tracing::info!("Last.fm configured but not signed in: `ytm lastfm-login`"),
+            None => tracing::info!("Last.fm configured but not signed in: `yarek lastfm-login`"),
         }
     }
     let discord = settings.discord_client_id.trim();

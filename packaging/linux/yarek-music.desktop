@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Yarek Music
+GenericName=Music Player
+Comment=Your YouTube Music library
+Exec=yarek gui
+Icon=yarek-music
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;youtube;player;
+StartupWMClass=yarek

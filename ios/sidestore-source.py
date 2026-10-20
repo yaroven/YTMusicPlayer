@@ -15,12 +15,13 @@ import sys
 repo, version, build, ipa, out = sys.argv[1:6]
 raw = f"https://raw.githubusercontent.com/{repo}/main"
 description = (
-    "Lightweight YouTube Music player: search, albums, artists, radio, synced lyrics, "
+    "Yarek Music, a lightweight YouTube Music player: search, albums, artists, radio, synced lyrics, "
     "background playback, lock screen and AirPlay. No account needed; liked songs and "
     "playlists stay on the phone."
 )
 source = {
-    "name": "ytm-player",
+    "name": "Yarek Music",
+    # Kept from the "ytm-player" days: SideStore knows the source by it.
     "identifier": "dev.ytm-player.source",
     "subtitle": "A light YouTube Music player",
     "description": description,
@@ -29,8 +30,8 @@ source = {
     "tintColor": "#FF3B30",
     "apps": [
         {
-            "name": "YTM Player",
-            "bundleIdentifier": "dev.ytm-player.ios",
+            "name": "Yarek Music",
+            "bundleIdentifier": "dev.yarek.music",
             "developerName": repo.split("/")[0],
             "subtitle": "A light YouTube Music player",
             "localizedDescription": description,

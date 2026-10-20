@@ -162,7 +162,7 @@ pub(crate) async fn session_with(
 ) -> (Session, FakePlayer, UnboundedSender<PlayerEvent>) {
     let http = reqwest::Client::new();
     let config = std::env::temp_dir().join(format!(
-        "ytm-session-test-{}-{:?}.toml",
+        "yarek-session-test-{}-{:?}.toml",
         std::process::id(),
         std::thread::current().id()
     ));

@@ -1,6 +1,6 @@
 # XcodeGen spec for the iPhone app: `xcodegen generate` (CI does it; the
 # .xcodeproj isn't committed).
-name: YTMPlayer
+name: YarekMusic
 options:
   deploymentTarget:
     iOS: "17.0"
@@ -10,7 +10,7 @@ packages:
   YTMKit:
     path: YTMKit
 targets:
-  YTMPlayer:
+  YarekMusic:
     type: application
     platform: iOS
     sources:
@@ -22,8 +22,8 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: YTM Player
-        # English and Ukrainian: iOS offers the choice in Settings → YTM Player.
+        CFBundleDisplayName: Yarek Music
+        # English and Ukrainian: iOS offers the choice in Settings → Yarek Music.
         CFBundleDevelopmentRegion: en
         CFBundleLocalizations: [en, uk]
         CFBundleShortVersionString: $(MARKETING_VERSION)
@@ -31,7 +31,7 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         LSApplicationCategoryType: public.app-category.music
         UIBackgroundModes: [audio]
-        # Downloads show in the Files app (On My iPhone → YTM Player).
+        # Downloads show in the Files app (On My iPhone → Yarek Music).
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UILaunchScreen: {}
@@ -41,8 +41,8 @@ targets:
         UIUserInterfaceStyle: Dark
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.ytm-player.ios
-        PRODUCT_NAME: YTMPlayer
+        PRODUCT_BUNDLE_IDENTIFIER: dev.yarek.music
+        PRODUCT_NAME: YarekMusic
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"

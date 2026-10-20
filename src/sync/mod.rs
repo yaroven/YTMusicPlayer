@@ -255,7 +255,7 @@ mod tests {
             return;
         };
         let cookies = parse_cookies_txt(&std::fs::read_to_string(path).unwrap());
-        let file = std::env::temp_dir().join(format!("ytm-live-sync-{}.txt", std::process::id()));
+        let file = std::env::temp_dir().join(format!("yarek-live-sync-{}.txt", std::process::id()));
         let session = YouTubeSession::load(InMemory::default(), file.clone());
         session.sign_in(cookies).unwrap();
         let catalog = Catalog::new(reqwest::Client::new()).with_session(session);

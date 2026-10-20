@@ -1,14 +1,14 @@
 # Troubleshooting
 
-`ytm status` shows the config path, whether the OAuth client is set, the
+`yarek status` shows the config path, whether the OAuth client is set, the
 sign-in, the library size and the yt-dlp in use. Details of any failure are in
-the log (`ytm-player/logs` in the OS cache directory, `YTM_LOG=debug` for
+the log (`Yarek Music/logs` in the OS cache directory, `YTM_LOG=debug` for
 more).
 
 ## "age-restricted: YouTube wants a signed-in account"
 
 YouTube plays such songs to signed-in adults only. **Sign in → Sign in with
-Google** (or `ytm sign-in`) — see [google-account.md](google-account.md). The
+Google** (or `yarek sign-in`) — see [google-account.md](google-account.md). The
 session is kept in the OS credential store and is what the library and those
 songs use.
 
@@ -19,7 +19,7 @@ Instead of the in-app sign-in you can borrow a browser's: pick it under
 **Settings → Or use a browser's sign-in**, or set `cookies_from_browser` in
 the config.
 
-- **macOS** keeps other apps' data private: allow **ytm-player** in System
+- **macOS** keeps other apps' data private: allow **Yarek Music** in System
   Settings → Privacy & Security → **Full Disk Access**, then restart it.
   Chrome also asks once for its "Safe Storage" key — choose Always Allow.
 - **Without that permission** (or on Windows, where Chrome encrypts its
@@ -44,7 +44,7 @@ Downloaded songs (**Downloads**) play without a connection.
   songs beforehand works better.
 - **Online, but it still says offline:** a proxy or firewall may block
   `music.youtube.com` / `googlevideo.com`; the log
-  (`<cache_dir>/logs/ytm.log`) has the underlying error.
+  (`<cache_dir>/logs/yarek.log`) has the underlying error.
 
 ## Other
 
@@ -56,7 +56,7 @@ Downloaded songs (**Downloads**) play without a connection.
 - **No sound on Linux:** install your sound server's ALSA plugin
   (`pipewire-alsa` on PipeWire systems, `libasound2-plugins` /
   `alsa-plugins-pulseaudio` on PulseAudio), or pick an output from
-  `ytm devices` as `audio_device`.
+  `yarek devices` as `audio_device`.
 - **Sign-in isn't remembered on Linux:** a Secret Service provider is needed —
   GNOME Keyring or KWallet, unlocked.
 - **A track won't play:** yt-dlp updates itself when YouTube changes and the

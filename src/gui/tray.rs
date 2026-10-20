@@ -22,13 +22,13 @@ const ITEMS: [(&str, Action); 5] = [
     ("Play / Pause", Action::TogglePause),
     ("Next", Action::Next),
     ("Previous", Action::Prev),
-    ("Show ytm-player", Action::Show),
+    ("Show Yarek Music", Action::Show),
     ("Quit", Action::Quit),
 ];
 
 /// The app icon as RGBA pixels.
 fn icon_rgba() -> Result<(Vec<u8>, u32, u32)> {
-    let png = include_bytes!("../../assets/ytm-player-64.png");
+    let png = include_bytes!("../../assets/yarek-music-64.png");
     let img = image::load_from_memory_with_format(png, image::ImageFormat::Png)
         .context("decoding the tray icon")?
         .to_rgba8();
@@ -103,7 +103,7 @@ mod native {
             let (rgba, w, h) = icon_rgba()?;
             let icon = TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
-                .with_tooltip("ytm-player")
+                .with_tooltip("Yarek Music")
                 .with_icon(Icon::from_rgba(rgba, w, h)?)
                 .build()?;
             Ok(Self { icon })
@@ -137,10 +137,10 @@ mod sni {
 
     impl ksni::Tray for Item {
         fn id(&self) -> String {
-            "ytm-player".into()
+            "Yarek Music".into()
         }
         fn title(&self) -> String {
-            "ytm-player".into()
+            "Yarek Music".into()
         }
         fn icon_pixmap(&self) -> Vec<ksni::Icon> {
             vec![self.icon.clone()]
@@ -193,7 +193,7 @@ mod sni {
             }
             let item = Item {
                 handler: on_ui_thread(handler),
-                tooltip: "ytm-player".into(),
+                tooltip: "Yarek Music".into(),
                 icon: ksni::Icon {
                     width: w as i32,
                     height: h as i32,

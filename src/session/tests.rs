@@ -303,7 +303,7 @@ async fn the_youtube_sign_in_can_edit_the_library() {
     assert!(!s.can_edit(), "no account at all");
     assert!(s.status.as_ref().is_some_and(|st| st.is_error));
 
-    let cookies_file = std::env::temp_dir().join(format!("ytm-edit-test-{}", std::process::id()));
+    let cookies_file = std::env::temp_dir().join(format!("yarek-edit-test-{}", std::process::id()));
     let youtube = YouTubeSession::load(InMemory::default(), cookies_file.clone());
     youtube
         .sign_in(Cookies::from([

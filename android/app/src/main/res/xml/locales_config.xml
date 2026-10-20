@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android 13+: Settings → Apps → YTM Player → Language. -->
+<!-- Android 13+: Settings → Apps → Yarek Music → Language. -->
 <locale-config xmlns:android="http://schemas.android.com/apk/res/android">
     <locale android:name="en" />
     <locale android:name="uk" />

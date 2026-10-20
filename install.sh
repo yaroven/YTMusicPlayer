@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ytm-player installer for Linux and macOS.
-# Installs a prebuilt `ytm` from GitHub Releases when one is available,
+# Yarek Music installer for Linux and macOS.
+# Installs a prebuilt `yarek` from GitHub Releases when one is available,
 # otherwise builds it (installing build dependencies and Rust if missing).
 # Then helps with the Google OAuth client and sign-in, and starts the player.
 # Safe to re-run: use it again to update.
@@ -19,8 +19,8 @@ Usage: ./install.sh [options]
   -y, --yes        don't ask; accept defaults (never starts the TUI)
   --from-source    build from this checkout instead of downloading a release
   --no-deps        skip system package installation (source builds)
-  --no-launch      don't start ytm at the end
-  --launcher-only  only (re)create the app menu entry / ytm-player.app
+  --no-launch      don't start yarek at the end
+  --launcher-only  only (re)create the app menu entry / Yarek Music.app
   -h, --help       show this help
 EOF
 }
@@ -66,8 +66,8 @@ ask() {
 }
 
 cd "$(dirname "$0")"
-grep -q '^name = "ytm-player"' Cargo.toml 2>/dev/null ||
-  die "run this script from the ytm-player repository"
+grep -q '^name = "yarek-music"' Cargo.toml 2>/dev/null ||
+  die "run this script from the yarek-music repository"
 
 OS=$(uname -s)
 [[ $OS == Linux || $OS == Darwin ]] || die "unsupported OS: $OS (on Windows use install.ps1)"
@@ -96,7 +96,7 @@ sha256_check() {
 install_prebuilt() {
   local target asset tmp base="https://github.com/$REPO/releases/latest/download"
   target=$(target_triple) || return 1
-  asset="ytm-$target.tar.gz"
+  asset="yarek-$target.tar.gz"
   tmp=$(mktemp -d)
   # Public repo: plain download. Private repo: GitHub CLI with your login.
   if curl -fsSL -o "$tmp/$asset" "$base/$asset" 2>/dev/null &&
@@ -116,9 +116,9 @@ install_prebuilt() {
   }
   tar -xzf "$tmp/$asset" -C "$tmp"
   mkdir -p "$HOME/.local/bin"
-  install -m 755 "$tmp/ytm" "$HOME/.local/bin/ytm"
+  install -m 755 "$tmp/yarek" "$HOME/.local/bin/yarek"
   rm -rf "$tmp"
-  BIN="$HOME/.local/bin/ytm"
+  BIN="$HOME/.local/bin/yarek"
   # A binary that can't start (e.g. missing system audio library) is useless.
   "$BIN" --help >/dev/null 2>&1 || {
     warn "prebuilt binary doesn't run on this system; building instead"
@@ -129,13 +129,14 @@ install_prebuilt() {
 
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
-# Every ytm-player binary we can find (checked by its --help banner, so a
-# different program called `ytm` is never touched).
+# Every Yarek Music binary we can find, also the `ytm` of versions up to
+# 1.0.0 (checked by its --help banner, so a different program called
+# `yarek` or `ytm` is never touched).
 installed_binaries() {
   local f seen=" "
-  local candidates=("$HOME/.cargo/bin/ytm" "$HOME/.local/bin/ytm")
+  local candidates=("$HOME/.cargo/bin/yarek" "$HOME/.local/bin/yarek" "$HOME/.cargo/bin/ytm" "$HOME/.local/bin/ytm")
   # (No mapfile: macOS ships bash 3.2.)
-  while IFS= read -r f; do candidates+=("$f"); done < <(type -ap ytm 2>/dev/null)
+  while IFS= read -r f; do candidates+=("$f"); done < <(type -ap yarek ytm 2>/dev/null)
   for f in "${candidates[@]}"; do
     [[ -f $f && $seen != *" $f "* ]] || continue
     seen+="$f "
@@ -146,7 +147,7 @@ installed_binaries() {
   done
 }
 
-# Removes copies left by earlier installs, so exactly one `ytm` and one app
+# Removes copies left by earlier installs, so exactly one `yarek` and one app
 # remain (otherwise Launchpad/menus and PATH show stale duplicates).
 remove_old_installs() {
   local keep=$1 f app
@@ -157,15 +158,22 @@ remove_old_installs() {
 
   if [[ $OS == Darwin && -x $LSREGISTER ]]; then
     while IFS= read -r app; do
-      [[ $app == "$HOME/Applications/ytm-player.app" ]] && continue
+      [[ $app == "$HOME/Applications/Yarek Music.app" ]] && continue
       if [[ -d $app ]]; then
-        [[ $(defaults read "$app/Contents/Info" CFBundleIdentifier 2>/dev/null) == dev.ytm-player.app ]] ||
-          continue
+        case $(defaults read "$app/Contents/Info" CFBundleIdentifier 2>/dev/null) in
+          dev.yarek.music | dev.ytm-player.app) ;;
+          *) continue ;;
+        esac
         rm -rf "$app" && info "removed old app: $app"
       fi
       "$LSREGISTER" -u "$app" >/dev/null 2>&1 || true
     done < <("$LSREGISTER" -dump 2>/dev/null |
-      sed -n 's/^path: *\(.*ytm-player\.app\) (0x[0-9a-f]*)$/\1/p' | sort -u)
+      sed -n 's/^path: *\(.*\.app\) (0x[0-9a-f]*)$/\1/p' | grep -E '/(Yarek Music|ytm-player)\.app$' | sort -u)
+  fi
+  # The menu entry and icon of versions up to 1.0.0 ("ytm-player").
+  if [[ $OS != Darwin ]]; then
+    local share="${XDG_DATA_HOME:-$HOME/.local/share}"
+    rm -f "$share/applications/ytm-player.desktop" "$share/icons/hicolor/256x256/apps/ytm-player.png"
   fi
 }
 
@@ -175,9 +183,9 @@ if ((LAUNCHER_ONLY)); then
   while IFS= read -r f; do
     if [[ -z $BIN || $f -nt $BIN ]]; then BIN=$f; fi
   done < <(installed_binaries)
-  [[ -n $BIN ]] || die "ytm is not installed yet; run ./install.sh first"
+  [[ -n $BIN ]] || die "yarek is not installed yet; run ./install.sh first"
 elif ((!FROM_SOURCE)); then
-  say "Downloading ytm"
+  say "Downloading yarek"
   install_prebuilt || {
     info "no prebuilt release available here; building from source"
     BIN=""
@@ -251,9 +259,9 @@ build_from_source() {
   fi
   info "$(rustc --version)"
 
-  say "Building ytm (release, takes a few minutes the first time)"
+  say "Building yarek (release, takes a few minutes the first time)"
   run cargo install --path . --locked
-  BIN="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin/ytm"
+  BIN="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin/yarek"
   [[ -x $BIN ]] || die "build finished but $BIN is missing"
   info "installed: $BIN"
 }
@@ -263,7 +271,7 @@ remove_old_installs "$BIN"
 
 # --- App launcher -----------------------------------------------------------------------
 
-# Info.plist for ytm-player.app; the bundle runs the real binary (one process,
+# Info.plist for Yarek Music.app; the bundle runs the real binary (one process,
 # its own name and icon in Activity Monitor / Dock).
 write_info_plist() {
   local version
@@ -273,11 +281,11 @@ write_info_plist() {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>ytm-player</string>
-  <key>CFBundleDisplayName</key><string>ytm-player</string>
-  <key>CFBundleIdentifier</key><string>dev.ytm-player.app</string>
-  <key>CFBundleExecutable</key><string>ytm-player</string>
-  <key>CFBundleIconFile</key><string>ytm-player</string>
+  <key>CFBundleName</key><string>Yarek Music</string>
+  <key>CFBundleDisplayName</key><string>Yarek Music</string>
+  <key>CFBundleIdentifier</key><string>dev.yarek.music</string>
+  <key>CFBundleExecutable</key><string>yarek-music</string>
+  <key>CFBundleIconFile</key><string>yarek-music</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$version</string>
@@ -294,11 +302,11 @@ EOF
 
 install_launcher() {
   if [[ $OS == Darwin ]]; then
-    local app="$HOME/Applications/ytm-player.app"
+    local app="$HOME/Applications/Yarek Music.app"
     rm -rf "$app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-    cp "$BIN" "$app/Contents/MacOS/ytm-player"
-    cp assets/ytm-player.icns "$app/Contents/Resources/"
+    cp "$BIN" "$app/Contents/MacOS/yarek-music"
+    cp assets/yarek-music.icns "$app/Contents/Resources/"
     write_info_plist "$app/Contents/Info.plist"
     # Ad-hoc signature: a stable identity for the bundle (Keychain, Gatekeeper).
     codesign --force --sign - "$app" >/dev/null 2>&1 || warn "codesign failed; the app may still run"
@@ -308,30 +316,30 @@ install_launcher() {
   else
     local share="${XDG_DATA_HOME:-$HOME/.local/share}"
     mkdir -p "$share/icons/hicolor/256x256/apps" "$share/applications"
-    cp assets/ytm-player.png "$share/icons/hicolor/256x256/apps/ytm-player.png"
-    cat >"$share/applications/ytm-player.desktop" <<EOF
+    cp assets/yarek-music.png "$share/icons/hicolor/256x256/apps/yarek-music.png"
+    cat >"$share/applications/yarek-music.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=ytm-player
+Name=Yarek Music
 GenericName=Music Player
 Comment=Your YouTube Music library
 Exec="$BIN" gui
-Icon=ytm-player
+Icon=yarek-music
 Terminal=false
 Categories=AudioVideo;Audio;Player;
 Keywords=music;youtube;player;
-StartupWMClass=ytm
+StartupWMClass=yarek
 EOF
     update-desktop-database "$share/applications" >/dev/null 2>&1 || true
     gtk-update-icon-cache -q -t "$share/icons/hicolor" >/dev/null 2>&1 || true
-    info "menu entry: $share/applications/ytm-player.desktop"
+    info "menu entry: $share/applications/yarek-music.desktop"
   fi
 }
 
 # Only builds with the window (`gui` feature) get a launcher.
-if "$BIN" --help 2>/dev/null | grep -q 'ytm gui'; then
+if "$BIN" --help 2>/dev/null | grep -q 'yarek gui'; then
   say "App launcher"
-  if ask "Add ytm-player to your applications?" y; then
+  if ask "Add Yarek Music to your applications?" y; then
     install_launcher
   fi
 fi
@@ -342,7 +350,7 @@ fi
 # --- 3. PATH ---------------------------------------------------------------------------
 
 # Homebrew/distro Rust (unlike rustup) and ~/.local/bin aren't always on PATH.
-if [[ $(command -v ytm || true) != "$BIN" ]]; then
+if [[ $(command -v yarek || true) != "$BIN" ]]; then
   bin_dir=$(dirname "$BIN")
   case ${SHELL##*/} in
     zsh) profile="$HOME/.zshrc" ;;
@@ -352,9 +360,9 @@ if [[ $(command -v ytm || true) != "$BIN" ]]; then
   line="export PATH=\"$bin_dir:\$PATH\""
   portable="\$HOME${bin_dir#"$HOME"}"
   if grep -qsF "$line" "$profile" || grep -qsF "$portable" "$profile"; then
-    info "PATH is set in $profile; open a new terminal to use 'ytm'"
+    info "PATH is set in $profile; open a new terminal to use 'yarek'"
   elif ask "Add $bin_dir to PATH in $profile?" y; then
-    printf '\n# ytm-player: bin dir\n%s\n' "$line" >>"$profile"
+    printf '\n# Yarek Music: bin dir\n%s\n' "$line" >>"$profile"
     info "added; open a new terminal (or run: source $profile)"
   else
     warn "$bin_dir is not on PATH; add to your shell profile: $line"
@@ -395,10 +403,10 @@ if grep -q 'OAuth client: missing' <<<"$("$BIN" status)"; then
     tmp=$(mktemp)
     printf '{"installed":{"client_id":"%s","client_secret":"%s"}}' \
       "${client_id//\"/}" "${client_secret//\"/}" >"$tmp"
-    "$BIN" import-client "$tmp" || warn "not saved; fix and retry with: ytm import-client <file.json>"
+    "$BIN" import-client "$tmp" || warn "not saved; fix and retry with: yarek import-client <file.json>"
     rm -f "$tmp"
   else
-    info "Later: ytm import-client ~/Downloads/client_secret_….json, then: ytm login"
+    info "Later: yarek import-client ~/Downloads/client_secret_….json, then: yarek login"
   fi
 else
   info "OAuth client: configured"
@@ -413,10 +421,10 @@ elif grep -q 'OAuth client: set' <<<"$status" && interactive; then
   say "Sign in"
   if [[ -n ${SSH_CONNECTION:-} ]]; then
     warn "over SSH the browser redirect can't reach this machine;"
-    info "use 'ytm login --device' (needs a TV-type client, see README) or log in at the desktop."
+    info "use 'yarek login --device' (needs a TV-type client, see README) or log in at the desktop."
   fi
   if ask "Sign in with Google now (opens the browser)?" y; then
-    "$BIN" login || warn "sign-in failed; retry later with: ytm login"
+    "$BIN" login || warn "sign-in failed; retry later with: yarek login"
   fi
 fi
 
@@ -425,10 +433,10 @@ fi
 say "Done"
 "$BIN" status | sed 's/^/    /'
 echo
-info "Start:        ytm"
-info "Test audio:   ytm play dQw4w9WgXcQ"
+info "Start:        yarek"
+info "Test audio:   yarek play dQw4w9WgXcQ"
 info "Update:       git pull && ./install.sh"
 
-if ((LAUNCH)) && interactive && [[ -t 1 ]] && ask "Start ytm now?" y; then
+if ((LAUNCH)) && interactive && [[ -t 1 ]] && ask "Start yarek now?" y; then
   exec "$BIN"
 fi

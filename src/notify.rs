@@ -2,9 +2,9 @@
 
 use crate::api::models::Track;
 
-/// Bundle id of the app `install.sh` creates (`~/Applications/ytm-player.app`).
+/// Bundle id of the app `install.sh` creates (`~/Applications/Yarek Music.app`).
 #[cfg(target_os = "macos")]
-const BUNDLE_ID: &str = "dev.ytm-player.app";
+const BUNDLE_ID: &str = "dev.yarek.music";
 
 /// macOS posts notifications on behalf of an app bundle; outside one the
 /// system asks the user to pick an application ("Where is use_default?").
@@ -36,9 +36,9 @@ pub fn track_changed(track: &Track) {
         .stack_size(256 * 1024)
         .spawn(move || {
             let mut n = notify_rust::Notification::new();
-            n.summary(&title).body(&artist).appname("ytm-player");
+            n.summary(&title).body(&artist).appname("Yarek Music");
             #[cfg(all(unix, not(target_os = "macos")))]
-            n.icon("ytm-player")
+            n.icon("yarek-music")
                 .timeout(notify_rust::Timeout::Milliseconds(4000));
             if let Err(err) = n.show() {
                 tracing::debug!(%err, "notification");

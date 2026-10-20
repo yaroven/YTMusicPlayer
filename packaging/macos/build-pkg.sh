@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Builds the macOS installer package from one or more `ytm` binaries
+# Builds the macOS installer package from one or more `yarek` binaries
 # (arm64 and/or x86_64; several are merged into a universal binary):
 #
 #   packaging/macos/build-pkg.sh VERSION OUT.pkg BINARY...
 #
-# The package installs /Applications/ytm-player.app and a `ytm` command
-# (/usr/local/bin/ytm -> the app's binary). Unsigned: on first open, macOS
+# The package installs /Applications/Yarek Music.app and a `yarek` command
+# (/usr/local/bin/yarek -> the app's binary). Unsigned: on first open, macOS
 # asks to confirm in System Settings > Privacy & Security ("Open Anyway").
 set -euo pipefail
 
@@ -20,15 +20,15 @@ repo=$(cd "$here/../.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-app="$work/root/Applications/ytm-player.app"
+app="$work/root/Applications/Yarek Music.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 if [[ $# -gt 1 ]]; then
-  lipo -create "$@" -output "$app/Contents/MacOS/ytm-player"
+  lipo -create "$@" -output "$app/Contents/MacOS/yarek-music"
 else
-  cp "$1" "$app/Contents/MacOS/ytm-player"
+  cp "$1" "$app/Contents/MacOS/yarek-music"
 fi
-chmod 755 "$app/Contents/MacOS/ytm-player"
-cp "$repo/assets/ytm-player.icns" "$app/Contents/Resources/"
+chmod 755 "$app/Contents/MacOS/yarek-music"
+cp "$repo/assets/yarek-music.icns" "$app/Contents/Resources/"
 sed "s/@VERSION@/$version/g" "$here/Info.plist" >"$app/Contents/Info.plist"
 # No extended attributes (they'd end up as ._ files in the payload).
 xattr -cr "$work/root"
@@ -45,9 +45,9 @@ plutil -replace 0.BundleIsRelocatable -bool NO "$work/components.plist"
 pkgbuild --root "$work/root" \
   --component-plist "$work/components.plist" \
   --scripts "$here/scripts" \
-  --identifier dev.ytm-player.pkg \
+  --identifier dev.yarek.music.pkg \
   --version "$version" \
   --install-location / \
-  "$work/ytm-player.pkg" >/dev/null
-productbuild --package "$work/ytm-player.pkg" "$out" >/dev/null
+  "$work/yarek-music.pkg" >/dev/null
+productbuild --package "$work/yarek-music.pkg" "$out" >/dev/null
 echo "$out"

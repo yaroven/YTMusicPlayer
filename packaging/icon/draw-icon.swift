@@ -111,14 +111,14 @@ func save(_ image: CGImage, _ path: String) {
 
 let out = CommandLine.arguments[1]
 let fm = FileManager.default
-try! fm.createDirectory(atPath: "\(out)/ytm-player.iconset", withIntermediateDirectories: true)
+try! fm.createDirectory(atPath: "\(out)/yarek-music.iconset", withIntermediateDirectories: true)
 // iPhone
 save(render(.square, size: 1024), "\(out)/ios-1024.png")
 // macOS .iconset (iconutil makes the .icns)
 for (pt, scales) in [(16, [1, 2]), (32, [1, 2]), (128, [1, 2]), (256, [1, 2]), (512, [1, 2])] {
     for s in scales {
         let name = s == 1 ? "icon_\(pt)x\(pt).png" : "icon_\(pt)x\(pt)@2x.png"
-        save(render(.mac, size: pt * s), "\(out)/ytm-player.iconset/\(name)")
+        save(render(.mac, size: pt * s), "\(out)/yarek-music.iconset/\(name)")
     }
 }
 // Windows .ico frames, Linux, the window / tray icon

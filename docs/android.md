@@ -1,4 +1,4 @@
-# ytm-player on Android
+# Yarek Music on Android
 
 A native app (Kotlin, Jetpack Compose, Media3 — `android/` in this
 repository) with the same features as the iPhone app. It isn't on Google
@@ -31,16 +31,16 @@ Play: you install the APK from the releases page.
 - **Updates itself:** a bar says when a new version is out; **Update**
   downloads it, checks it against the release's SHA256SUMS and opens
   Android's installer (the first time Android asks to allow installs from
-  YTM Player). Settings → **Check for updates** checks now.
+  Yarek Music). Settings → **Check for updates** checks now.
 - English or Ukrainian: **Library → Language** (on Android 13+ also
-  **Settings → Apps → YTM Player → Language**).
+  **Settings → Apps → Yarek Music → Language**).
 - No yt-dlp and no server: the app asks YouTube for the audio link itself.
 
 ## Install
 
 1. On the phone, open the latest release:
    <https://github.com/yaroven/YTMusicPlayer/releases/latest> and download
-   `ytm-player-<version>.apk`.
+   `yarek-music-<version>.apk`.
 2. Open the downloaded file. Android asks to allow installs from this source
    (the browser or Files) once — allow it, go back, **Install**.
 3. Google Play Protect may say it doesn't know the developer: **More

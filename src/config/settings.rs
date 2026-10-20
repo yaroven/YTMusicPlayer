@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-const TEMPLATE: &str = r#"# ytm-player configuration
+const TEMPLATE: &str = r#"# Yarek Music configuration
 
 # Google OAuth client ("Desktop app" type) from https://console.cloud.google.com/
 # with "YouTube Data API v3" enabled. Can also be set via YTM_CLIENT_ID /
@@ -15,11 +15,11 @@ client_id = ""
 client_secret = ""
 
 # Optional: a second client of type "TVs and Limited Input devices", used by
-# `ytm login --device` (sign in by code, e.g. over SSH).
+# `yarek login --device` (sign in by code, e.g. over SSH).
 device_client_id = ""
 device_client_secret = ""
 
-# Interface `ytm` opens: "tui" (terminal) or "gui" (window).
+# Interface `yarek` opens: "tui" (terminal) or "gui" (window).
 ui = "tui"
 
 # Language of the window and the terminal UI: "auto" (the system's),
@@ -37,11 +37,11 @@ js_fallback = true
 # the cookies of this browser, only for such songs ("" = off). One of
 # chrome, firefox, safari, edge, brave, chromium, opera, vivaldi (signed
 # in to YouTube there), or the path of a cookies.txt file exported from a
-# browser. macOS: reading a browser needs Full Disk Access for ytm-player
+# browser. macOS: reading a browser needs Full Disk Access for Yarek Music
 # (System Settings → Privacy & Security); a cookies.txt file doesn't.
 cookies_from_browser = ""
 
-# Look for a newer ytm-player on GitHub at startup (one small request).
+# Look for a newer Yarek Music on GitHub at startup (one small request).
 check_updates = true
 
 # Extra yt-dlp flags.
@@ -51,7 +51,7 @@ ytdlp_extra_args = []
 liked_music_only = true
 
 # Audio output device; empty = automatic (on Linux: PipeWire, then
-# PulseAudio, then ALSA default). `ytm devices` lists the names.
+# PulseAudio, then ALSA default). `yarek devices` lists the names.
 audio_device = ""
 
 # Startup volume, 0.0 - 1.0.
@@ -76,7 +76,7 @@ tray = true
 download_limit_mb = 0
 
 # Last.fm scrobbling: your own API account from https://www.last.fm/api/account/create,
-# then `ytm lastfm-login`.
+# then `yarek lastfm-login`.
 lastfm_api_key = ""
 lastfm_api_secret = ""
 
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn store_client_rewrites_keys_in_place() {
-        let dir = std::env::temp_dir().join(format!("ytm-cfg-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("yarek-cfg-test-{}", std::process::id()));
         let path = dir.join("config.toml");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn stored_values_keep_comments_and_reload() {
-        let dir = std::env::temp_dir().join(format!("ytm-cfg-value-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("yarek-cfg-value-{}", std::process::id()));
         let path = dir.join("config.toml");
         let _ = std::fs::remove_dir_all(&dir);
         Settings::load(&path).unwrap();

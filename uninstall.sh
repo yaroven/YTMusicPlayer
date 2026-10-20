@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# ytm-player uninstaller for Linux and macOS. Removes every kind of install:
-# .deb / .rpm / Arch packages, the macOS .pkg (/Applications/ytm-player.app
-# and /usr/local/bin/ytm), and what install.sh or `cargo install` created
-# (binaries, ~/Applications/ytm-player.app, the app menu entry, the PATH
-# line). Asks before deleting your library, settings, logs and sign-in.
+# Yarek Music uninstaller for Linux and macOS. Removes every kind of install:
+# .deb / .rpm / Arch packages, the macOS .pkg (/Applications/Yarek Music.app
+# and /usr/local/bin/yarek), and what install.sh or `cargo install` created
+# (binaries, ~/Applications/Yarek Music.app, the app menu entry, the PATH
+# line), also those of versions up to 1.0.0 (ytm-player, `ytm`). Asks
+# before deleting your library, settings, logs and sign-in.
 #
 #   ./uninstall.sh [--purge | --keep-data] [-y]
-#   ytm uninstall [--purge | --keep-data] [-y]   (same script, built in)
+#   yarek uninstall [--purge | --keep-data] [-y]   (same script, built in)
 #
 # Must stay compatible with macOS bash 3.2.
 set -euo pipefail
 
-# `ytm uninstall` runs a temporary copy of this script.
-if [[ -n ${YTM_UNINSTALL_TMP:-} && ${YTM_UNINSTALL_TMP} == "$0" ]]; then
+# `yarek uninstall` runs a temporary copy of this script.
+if [[ -n ${YAREK_UNINSTALL_TMP:-} && ${YAREK_UNINSTALL_TMP} == "$0" ]]; then
   trap 'rm -f "$0"' EXIT
 fi
 
@@ -72,48 +73,58 @@ remove() {
 }
 
 OS=$(uname -s)
-is_ytm() { [[ -x $1 ]] && "$1" --help 2>/dev/null | grep -q 'lightweight YouTube Music player'; }
+is_ours() { [[ -x $1 ]] && "$1" --help 2>/dev/null | grep -q 'lightweight YouTube Music player'; }
 
 # --- 1. What is installed -------------------------------------------------------
 
 BINS=()
 add_bin() {
   local b=$1 seen
-  is_ytm "$b" || return 0
+  is_ours "$b" || return 0
   for seen in ${BINS[@]+"${BINS[@]}"}; do [[ $seen == "$b" ]] && return 0; done
   BINS+=("$b")
 }
-while IFS= read -r b; do add_bin "$b"; done < <(type -ap ytm 2>/dev/null || true)
-for b in "${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin/ytm" "$HOME/.local/bin/ytm" \
-  /usr/local/bin/ytm /usr/bin/ytm \
+while IFS= read -r b; do add_bin "$b"; done < <(type -ap yarek ytm 2>/dev/null || true)
+for name in yarek ytm; do
+  for b in "${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin/$name" "$HOME/.local/bin/$name" \
+    "/usr/local/bin/$name" "/usr/bin/$name"; do
+    add_bin "$b"
+  done
+done
+for b in "$HOME/Applications/Yarek Music.app/Contents/MacOS/yarek-music" \
+  "/Applications/Yarek Music.app/Contents/MacOS/yarek-music" \
   "$HOME/Applications/ytm-player.app/Contents/MacOS/ytm-player" \
   /Applications/ytm-player.app/Contents/MacOS/ytm-player; do
   add_bin "$b"
 done
 
-say "Uninstalling ytm-player"
+say "Uninstalling Yarek Music"
 if ((${#BINS[@]} == 0)); then
-  info "no ytm binary found (already removed?)"
+  info "no yarek binary found (already removed?)"
 else
   for b in "${BINS[@]}"; do info "found: $b"; done
 fi
 
 # --- 2. Stop a running player -----------------------------------------------------
 
-pkill -x ytm 2>/dev/null || true
-pkill -x ytm-player 2>/dev/null || true
+for p in yarek yarek-music ytm ytm-player; do pkill -x "$p" 2>/dev/null || true; done
 
-# --- 3. User data (before the binaries: `ytm logout` clears the keyring) --------
+# --- 3. User data (before the binaries: `yarek logout` clears the keyring) --------
 
 case $OS in
   Darwin)
-    DATA_DIRS=("$HOME/Library/Application Support/dev.ytm-player.ytm-player"
+    DATA_DIRS=("$HOME/Library/Application Support/dev.yarek.yarek-music"
+      "$HOME/Library/Caches/dev.yarek.yarek-music"
+      "$HOME/Library/Application Support/dev.ytm-player.ytm-player"
       "$HOME/Library/Caches/dev.ytm-player.ytm-player")
     ;;
   *)
-    DATA_DIRS=("${XDG_CONFIG_HOME:-$HOME/.config}/ytm-player"
-      "${XDG_DATA_HOME:-$HOME/.local/share}/ytm-player"
-      "${XDG_CACHE_HOME:-$HOME/.cache}/ytm-player")
+    DATA_DIRS=()
+    for name in yarek-music ytm-player; do
+      DATA_DIRS+=("${XDG_CONFIG_HOME:-$HOME/.config}/$name"
+        "${XDG_DATA_HOME:-$HOME/.local/share}/$name"
+        "${XDG_CACHE_HOME:-$HOME/.cache}/$name")
+    done
     ;;
 esac
 
@@ -135,37 +146,46 @@ fi
 
 # --- 4. System packages -----------------------------------------------------------
 
-if [[ $OS == Linux && -e /usr/bin/ytm ]]; then
-  if command -v dpkg >/dev/null && dpkg -S /usr/bin/ytm >/dev/null 2>&1; then
-    as_root apt-get remove -y ytm-player || as_root dpkg -r ytm-player
-  elif command -v pacman >/dev/null && pacman -Qo /usr/bin/ytm >/dev/null 2>&1; then
-    as_root pacman -R --noconfirm ytm-player
-  elif command -v rpm >/dev/null && rpm -qf /usr/bin/ytm >/dev/null 2>&1; then
-    if command -v dnf >/dev/null; then as_root dnf remove -y ytm-player; else as_root rpm -e ytm-player; fi
+# The package and its binary, then the same under the old name.
+for pair in yarek-music:yarek ytm-player:ytm; do
+  pkg=${pair%%:*} bin=/usr/bin/${pair##*:}
+  [[ $OS == Linux && -e $bin ]] || continue
+  if command -v dpkg >/dev/null && dpkg -S "$bin" >/dev/null 2>&1; then
+    as_root apt-get remove -y "$pkg" || as_root dpkg -r "$pkg"
+  elif command -v pacman >/dev/null && pacman -Qo "$bin" >/dev/null 2>&1; then
+    as_root pacman -R --noconfirm "$pkg"
+  elif command -v rpm >/dev/null && rpm -qf "$bin" >/dev/null 2>&1; then
+    if command -v dnf >/dev/null; then as_root dnf remove -y "$pkg"; else as_root rpm -e "$pkg"; fi
   fi
-fi
+done
 
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 if [[ $OS == Darwin ]]; then
-  if pkgutil --pkg-info dev.ytm-player.pkg >/dev/null 2>&1 || [[ -d /Applications/ytm-player.app ]]; then
-    "$LSREGISTER" -u /Applications/ytm-player.app >/dev/null 2>&1 || true
-    remove /Applications/ytm-player.app
-    if [[ -L /usr/local/bin/ytm ]]; then remove /usr/local/bin/ytm; fi
-    if pkgutil --pkg-info dev.ytm-player.pkg >/dev/null 2>&1; then
-      as_root pkgutil --forget dev.ytm-player.pkg >/dev/null
+  for triple in "dev.yarek.music.pkg:/Applications/Yarek Music.app:/usr/local/bin/yarek" \
+    "dev.ytm-player.pkg:/Applications/ytm-player.app:/usr/local/bin/ytm"; do
+    pkg=${triple%%:*} rest=${triple#*:}
+    app=${rest%%:*} link=${rest#*:}
+    if pkgutil --pkg-info "$pkg" >/dev/null 2>&1 || [[ -d $app ]]; then
+      "$LSREGISTER" -u "$app" >/dev/null 2>&1 || true
+      remove "$app"
+      if [[ -L $link ]]; then remove "$link"; fi
+      if pkgutil --pkg-info "$pkg" >/dev/null 2>&1; then
+        as_root pkgutil --forget "$pkg" >/dev/null
+      fi
     fi
-  fi
+  done
 fi
 
 # --- 5. install.sh / cargo installs --------------------------------------------------
 
-cargo_bin="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin/ytm"
+cargo_bins="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}/bin"
 for b in ${BINS[@]+"${BINS[@]}"}; do
   case $b in
-    *.app/Contents/MacOS/* | /usr/bin/ytm) ;; # apps and packages: above / below
-    "$cargo_bin")
+    *.app/Contents/MacOS/* | /usr/bin/yarek | /usr/bin/ytm) ;; # apps and packages: above
+    "$cargo_bins/yarek" | "$cargo_bins/ytm")
       # Also forgets it in cargo's install list.
-      if command -v cargo >/dev/null && cargo uninstall ytm-player >/dev/null 2>&1; then
+      if command -v cargo >/dev/null &&
+        { cargo uninstall yarek-music >/dev/null 2>&1 || cargo uninstall ytm-player >/dev/null 2>&1; }; then
         info "removed $b (cargo uninstall)"
       else
         remove "$b"
@@ -175,26 +195,31 @@ for b in ${BINS[@]+"${BINS[@]}"}; do
   esac
 done
 if [[ $OS == Darwin ]]; then
-  "$LSREGISTER" -u "$HOME/Applications/ytm-player.app" >/dev/null 2>&1 || true
-  remove "$HOME/Applications/ytm-player.app"
+  for app in "$HOME/Applications/Yarek Music.app" "$HOME/Applications/ytm-player.app"; do
+    "$LSREGISTER" -u "$app" >/dev/null 2>&1 || true
+    remove "$app"
+  done
 else
   share="${XDG_DATA_HOME:-$HOME/.local/share}"
-  remove "$share/applications/ytm-player.desktop"
-  remove "$share/icons/hicolor/256x256/apps/ytm-player.png"
+  for name in yarek-music ytm-player; do
+    remove "$share/applications/$name.desktop"
+    remove "$share/icons/hicolor/256x256/apps/$name.png"
+  done
   update-desktop-database "$share/applications" >/dev/null 2>&1 || true
 fi
 
-# install.sh's PATH line ("# ytm-player: bin dir" and the export after it).
+# install.sh's PATH line ("# Yarek Music: bin dir", up to 1.0.0 "# ytm-player:
+# bin dir", and the export after it).
 for profile in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
-  if [[ ! -f $profile ]] || ! grep -q '^# ytm-player: bin dir$' "$profile"; then continue; fi
+  if [[ ! -f $profile ]] || ! grep -qE '^# (Yarek Music|ytm-player): bin dir$' "$profile"; then continue; fi
   tmp=$(mktemp)
-  awk 'skip { skip = 0; next } /^# ytm-player: bin dir$/ { skip = 1; next } { print }' "$profile" >"$tmp"
+  awk 'skip { skip = 0; next } /^# (Yarek Music|ytm-player): bin dir$/ { skip = 1; next } { print }' "$profile" >"$tmp"
   cat "$tmp" >"$profile" && rm -f "$tmp"
   info "removed the PATH line from $profile"
 done
 
 say "Done"
-if command -v ytm >/dev/null 2>&1 && is_ytm "$(command -v ytm)"; then
-  warn "still found: $(command -v ytm) — remove it by hand"
+if command -v yarek >/dev/null 2>&1 && is_ours "$(command -v yarek)"; then
+  warn "still found: $(command -v yarek) — remove it by hand"
 fi
-info "ytm-player is uninstalled."
+info "Yarek Music is uninstalled."

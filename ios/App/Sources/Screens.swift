@@ -1134,7 +1134,7 @@ struct SettingsSheet: View {
                         Label("Language", systemImage: "globe")
                     }
                 } footer: {
-                    Text("English or Ukrainian: Settings → YTM Player → Language.")
+                    Text("English or Ukrainian: Settings → Yarek Music → Language.")
                 }
                 #endif
                 Section {

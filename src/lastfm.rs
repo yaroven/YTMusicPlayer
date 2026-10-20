@@ -3,7 +3,7 @@
 //! starts, a scrobble once it has played half its length or four minutes
 //! (Last.fm's rules; tracks under 30 s are never scrobbled).
 //!
-//! `ytm lastfm-login` stores a session key in `<data_dir>/lastfm.session`.
+//! `yarek lastfm-login` stores a session key in `<data_dir>/lastfm.session`.
 
 use std::{
     collections::BTreeMap,
@@ -146,7 +146,7 @@ pub struct Scrobbler {
 }
 
 impl Scrobbler {
-    /// `None` without a stored session (`ytm lastfm-login` not run).
+    /// `None` without a stored session (`yarek lastfm-login` not run).
     pub fn new(http: reqwest::Client, credentials: Credentials, data_dir: &Path) -> Option<Self> {
         let session = std::fs::read_to_string(session_file(data_dir)).ok()?;
         let session = session.trim().to_owned();

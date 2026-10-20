@@ -25,10 +25,10 @@ With it:
 Notes:
 
 - **Linux** has no built-in web view, so sign in at youtube.com in a browser
-  and use **Import** in the same dialog (or `ytm sign-in --from firefox`).
+  and use **Import** in the same dialog (or `yarek sign-in --from firefox`).
 - If Google refuses the in-app window with "this browser may not be secure",
-  do the same: sign in in your normal browser, then `ytm sign-in --from <browser>`.
-- `ytm sign-out` forgets it; `ytm sync` refreshes the library by hand (the
+  do the same: sign in in your normal browser, then `yarek sign-in --from <browser>`.
+- `yarek sign-out` forgets it; `yarek sync` refreshes the library by hand (the
   player also syncs right after signing in).
 
 Searching, pages, radio, lyrics and ordinary playback all work without
@@ -53,9 +53,9 @@ more. If you want it:
    - **In the window:** **Sign in → Library sync → Set up → Import downloaded
      JSON** finds the newest `client_secret_*.json` in your Downloads; or
      paste the client ID and secret and click **Save client**.
-   - **In a terminal:** `ytm import-client ~/Downloads/client_secret_….json`
+   - **In a terminal:** `yarek import-client ~/Downloads/client_secret_….json`
 6. Sign in: **Sign in with Google** inside that section, `L` in the terminal
-   UI, or `ytm login`. Your browser opens; Google warns that the app is
+   UI, or `yarek login`. Your browser opens; Google warns that the app is
    unverified — choose **Continue**, it is your own app. The app asks to
    manage your YouTube account so it can like tracks and add them to
    playlists; it never deletes anything.
@@ -67,8 +67,8 @@ youtube.com sign-in above instead, which doesn't expire. Publishing the app
 and privacy policy.
 
 **Without a browser (SSH):** create a second client of type **TVs and Limited
-Input devices**, import it with `ytm import-client <json> --device`, then
-`ytm login --device` shows a code to approve from any phone or computer.
+Input devices**, import it with `yarek import-client <json> --device`, then
+`yarek login --device` shows a code to approve from any phone or computer.
 
 ### API quota
 

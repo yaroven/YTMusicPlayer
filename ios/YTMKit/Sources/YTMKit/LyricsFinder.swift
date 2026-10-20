@@ -28,7 +28,7 @@ public struct LyricsFinder: Sendable {
         var url = URLComponents(string: base)!
         url.queryItems = query
         var request = URLRequest(url: url.url!, timeoutInterval: 10)
-        request.setValue("ytm-player (https://github.com/yaroven/YTMusicPlayer)", forHTTPHeaderField: "User-Agent")
+        request.setValue("yarek-music (https://github.com/yaroven/YTMusicPlayer)", forHTTPHeaderField: "User-Agent")
         var wait: UInt64 = 400_000_000
         for attempt in 1...3 {
             do {

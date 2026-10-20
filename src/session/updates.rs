@@ -13,8 +13,8 @@ impl Session {
                     Ok(Some(found)) => {
                         self.set_info(trf!(
                             self.lang,
-                            "ytm-player {} is available — Settings → Update (or `ytm update`)",
-                            "Доступна ytm-player {} — Налаштування → Оновити (або `ytm update`)",
+                            "Yarek Music {} is available — Settings → Update (or `yarek update`)",
+                            "Доступна Yarek Music {} — Налаштування → Оновити (або `yarek update`)",
                             found.version
                         ));
                         self.update = Some(found);
@@ -24,8 +24,8 @@ impl Session {
                         if manual {
                             self.set_info(trf!(
                                 self.lang,
-                                "ytm-player {} is the latest version",
-                                "ytm-player {} — найсвіжіша версія",
+                                "Yarek Music {} is the latest version",
+                                "Yarek Music {} — найсвіжіша версія",
                                 env!("CARGO_PKG_VERSION")
                             ));
                         }
@@ -90,8 +90,8 @@ impl Session {
         self.updating = true;
         self.set_info(trf!(
             self.lang,
-            "Downloading ytm-player {}…",
-            "Завантажую ytm-player {}…",
+            "Downloading Yarek Music {}…",
+            "Завантажую Yarek Music {}…",
             found.version
         ));
         let (http, tx) = (self.deps.http.clone(), self.tx.clone());

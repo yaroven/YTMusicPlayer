@@ -1,5 +1,5 @@
-# ytm-player installer for Windows 10/11 (PowerShell 5.1+).
-# Installs a prebuilt ytm.exe from GitHub Releases when available, otherwise
+# Yarek Music installer for Windows 10/11 (PowerShell 5.1+).
+# Installs a prebuilt yarek.exe from GitHub Releases when available, otherwise
 # builds it with Rust (installing rustup if missing). Then helps with the
 # Google OAuth client and sign-in, and starts the player. Safe to re-run.
 #
@@ -25,21 +25,21 @@ function Ask($question, $default = 'y') {
     return $reply -match '^[Yy]'
 }
 
-if (-not (Select-String -Path Cargo.toml -Pattern '^name = "ytm-player"' -Quiet)) {
-    throw 'run this script from the ytm-player repository'
+if (-not (Select-String -Path Cargo.toml -Pattern '^name = "yarek-music"' -Quiet)) {
+    throw 'run this script from the yarek-music repository'
 }
 
 $repo = (git config --get remote.origin.url 2>$null) -replace '^(https://github.com/|git@github.com:)', '' -replace '\.git$', ''
 if ($repo -notmatch '/') { $repo = 'yaroven/YTMusicPlayer' }
 
-$installDir = Join-Path $env:LOCALAPPDATA 'Programs\ytm-player'
+$installDir = Join-Path $env:LOCALAPPDATA 'Programs\yarek-music'
 $bin = $null
 
 # --- 1. Prebuilt release --------------------------------------------------------
 
 function Install-Prebuilt {
-    $asset = 'ytm-x86_64-pc-windows-msvc.zip'   # also runs on ARM64 via emulation
-    $tmp = Join-Path ([IO.Path]::GetTempPath()) ("ytm-" + [Guid]::NewGuid())
+    $asset = 'yarek-x86_64-pc-windows-msvc.zip'   # also runs on ARM64 via emulation
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ("yarek-" + [Guid]::NewGuid())
     New-Item -ItemType Directory $tmp | Out-Null
     try {
         $base = "https://github.com/$repo/releases/latest/download"
@@ -57,15 +57,15 @@ function Install-Prebuilt {
         if ($expected -ne $actual) { throw "checksum mismatch for $asset" }
         Expand-Archive "$tmp\$asset" -DestinationPath $tmp -Force
         New-Item -ItemType Directory $installDir -Force | Out-Null
-        Copy-Item "$tmp\ytm.exe" "$installDir\ytm.exe" -Force
-        return "$installDir\ytm.exe"
+        Copy-Item "$tmp\yarek.exe" "$installDir\yarek.exe" -Force
+        return "$installDir\yarek.exe"
     } finally {
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
 if (-not $FromSource) {
-    Say 'Downloading ytm'
+    Say 'Downloading yarek'
     $bin = Install-Prebuilt
     if ($bin) { Info "installed release to $bin" } else { Info 'no prebuilt release available; building from source' }
 }
@@ -101,10 +101,10 @@ if (-not $bin) {
     }
     Info (rustc --version)
 
-    Say 'Building ytm (release, takes a few minutes the first time)'
+    Say 'Building yarek (release, takes a few minutes the first time)'
     cargo install --path . --locked
     if ($LASTEXITCODE -ne 0) { throw 'build failed' }
-    $bin = "$cargoBin\ytm.exe"
+    $bin = "$cargoBin\yarek.exe"
 }
 
 # --- 3. PATH ----------------------------------------------------------------------------
@@ -114,7 +114,7 @@ $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (($userPath -split ';') -notcontains $binDir) {
     if (Ask "Add $binDir to your PATH?") {
         [Environment]::SetEnvironmentVariable('Path', "$binDir;$userPath", 'User')
-        Info 'added; new terminals will find ytm'
+        Info 'added; new terminals will find yarek'
     }
 }
 $env:Path = "$binDir;$env:Path"
@@ -130,7 +130,7 @@ if ((& $bin status) -match 'OAuth client: missing') {
     if ($json -and (Ask "Import $($json.Name) from Downloads?")) {
         & $bin import-client $json.FullName
     } else {
-        Info 'Later: ytm import-client <downloaded client_secret_….json>, then: ytm login'
+        Info 'Later: yarek import-client <downloaded client_secret_….json>, then: yarek login'
     }
 } else {
     Info 'OAuth client: configured'
@@ -145,7 +145,7 @@ if ($status -match 'signed in:  yes') {
     Say 'Sign in'
     if (Ask 'Sign in with Google now (opens the browser)?') {
         & $bin login
-        if ($LASTEXITCODE -ne 0) { Warn 'sign-in failed; retry later with: ytm login' }
+        if ($LASTEXITCODE -ne 0) { Warn 'sign-in failed; retry later with: yarek login' }
     }
 }
 
@@ -153,9 +153,9 @@ if ($status -match 'signed in:  yes') {
 
 Say 'Done'
 & $bin status | ForEach-Object { Info $_ }
-Info 'Start:        ytm'
-Info 'Test audio:   ytm play dQw4w9WgXcQ'
+Info 'Start:        yarek'
+Info 'Test audio:   yarek play dQw4w9WgXcQ'
 
-if (-not $NoLaunch -and -not $Yes -and (Ask 'Start ytm now?')) {
+if (-not $NoLaunch -and -not $Yes -and (Ask 'Start yarek now?')) {
     & $bin
 }

@@ -1,7 +1,7 @@
-# ytm-player uninstaller for Windows (PowerShell 5.1+). For installs made
+# Yarek Music uninstaller for Windows (PowerShell 5.1+). For installs made
 # with the setup program it simply runs that program's uninstaller (also in
 # Settings > Apps). For install.ps1 / `cargo install` installs it removes
-# ytm.exe and its PATH entry. Asks before deleting your library, settings,
+# yarek.exe and its PATH entry. Asks before deleting your library, settings,
 # logs and sign-in.
 #
 #   powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 [-Purge] [-KeepData] [-Yes]
@@ -24,8 +24,8 @@ function Ask($question, $default = 'y') {
     return $reply -match '^[Yy]'
 }
 
-Say 'Uninstalling ytm-player'
-$installDir = Join-Path $env:LOCALAPPDATA 'Programs\ytm-player'
+Say 'Uninstalling Yarek Music'
+$installDir = Join-Path $env:LOCALAPPDATA 'Programs\yarek-music'
 $uninstaller = Join-Path $installDir 'unins000.exe'
 if (Test-Path $uninstaller) {
     Info 'installed with the setup program: running its uninstaller'
@@ -33,24 +33,26 @@ if (Test-Path $uninstaller) {
     exit 0
 }
 
-Get-Process ytm -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process yarek, ytm -ErrorAction SilentlyContinue | Stop-Process -Force
 
 $bins = @(
-    (Join-Path $installDir 'ytm.exe'),
-    (Join-Path $env:USERPROFILE '.cargo\bin\ytm.exe')
+    (Join-Path $installDir 'yarek.exe'),
+    (Join-Path $env:USERPROFILE '.cargo\bin\yarek.exe')
 ) | Where-Object { Test-Path $_ }
 
 $purgeData = $Purge -or (-not $KeepData -and (Ask 'Also delete your library, settings, logs and Google sign-in?' 'n'))
 if ($purgeData) {
     if ($bins) { & $bins[0] logout 2>$null | Out-Null }
-    foreach ($dir in @((Join-Path $env:APPDATA 'ytm-player'), (Join-Path $env:LOCALAPPDATA 'ytm-player'))) {
+    # Also the folders of versions up to 1.0.0 ("ytm-player").
+    foreach ($dir in @((Join-Path $env:APPDATA 'yarek'), (Join-Path $env:LOCALAPPDATA 'yarek'),
+            (Join-Path $env:APPDATA 'ytm-player'), (Join-Path $env:LOCALAPPDATA 'ytm-player'))) {
         if (Test-Path $dir) { Remove-Item $dir -Recurse -Force; Info "removed $dir" }
     }
 }
 
 foreach ($bin in $bins) {
     if ($bin -like '*\.cargo\bin\*' -and (Get-Command cargo -ErrorAction SilentlyContinue)) {
-        cargo uninstall ytm-player 2>$null | Out-Null
+        cargo uninstall yarek-music 2>$null | Out-Null
     }
     if (Test-Path $bin) { Remove-Item $bin -Force }
     Info "removed $bin"
@@ -65,4 +67,4 @@ if ($kept.Count -ne ($userPath -split ';' | Where-Object { $_ }).Count) {
 }
 
 Say 'Done'
-Info 'ytm-player is uninstalled.'
+Info 'Yarek Music is uninstalled.'

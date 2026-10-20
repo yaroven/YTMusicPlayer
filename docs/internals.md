@@ -51,7 +51,7 @@ it, one per user action. File names are the Rust modules under `src/`;
 | YouTube sign-in (cookies) | OS keyring + `<data_dir>/youtube-cookies.txt` (0600) for yt-dlp |
 | OAuth tokens (optional Data API) | OS keyring |
 | Downloaded songs | `<data_dir>/downloads/<id>.m4a` |
-| Logs | `<cache_dir>/logs/ytm.log` |
+| Logs | `<cache_dir>/logs/yarek.log` |
 
 ## Starting up
 
@@ -142,10 +142,10 @@ Linux — which has no system web view — in the browser.
 ## Signing in
 
 "Sign in with Google" runs Google's own page in the system web view inside a
-**child process** (`ytm sign-in-window`), so the player itself never loads a
+**child process** (`yarek sign-in-window`), so the player itself never loads a
 browser engine for it. When youtube.com has a session the child prints the
 cookies; they go to the OS keyring and to a 0600 cookies.txt for yt-dlp.
-Linux imports a browser's sign-in instead (`ytm sign-in --from firefox`).
+Linux imports a browser's sign-in instead (`yarek sign-in --from firefox`).
 
 ## Casting
 
@@ -174,7 +174,7 @@ saved as JSON. CI builds the unsigned `.ipa`; SideStore installs it.
 `android/core` is the same catalog, lyrics and resolver logic in plain
 Kotlin (it runs and is tested on the desktop JVM: `./gradlew :core:test`);
 `android/app` is the Compose UI and the player. The whole queue sits in
-ExoPlayer's playlist as `ytm://<video id>` items; a `ResolvingDataSource`
+ExoPlayer's playlist as `yarek://<video id>` items; a `ResolvingDataSource`
 turns each into its googlevideo URL (the resolver runs on ExoPlayer's
 loader thread) when ExoPlayer starts loading it. So preloading the next
 song, gapless changes and the notification's next / previous are

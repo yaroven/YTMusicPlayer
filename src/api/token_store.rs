@@ -7,8 +7,25 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-const SERVICE: &str = "ytm-player";
+pub(crate) const SERVICE: &str = "yarek-music";
+/// The keyring's name for the app up to 1.0.0 ("ytm-player").
+const OLD_SERVICE: &str = "ytm-player";
 const ACCOUNT: &str = "google-oauth";
+
+/// A secret still under the app's old name moves to the new one (read once,
+/// saved under the new name, the old entry deleted). `None` when there is
+/// none.
+pub(crate) fn take_old_secret(account: &str) -> Option<String> {
+    let old = keyring::Entry::new(OLD_SERVICE, account).ok()?;
+    let value = old.get_password().ok()?;
+    let saved = keyring::Entry::new(SERVICE, account)
+        .and_then(|e| e.set_password(&value))
+        .is_ok();
+    if saved {
+        let _ = old.delete_credential();
+    }
+    Some(value)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredToken {
@@ -48,7 +65,10 @@ impl TokenStore for Keyring {
     fn load(&self) -> Result<Option<StoredToken>> {
         match Self::entry()?.get_password() {
             Ok(json) => Ok(Some(serde_json::from_str(&json)?)),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring::Error::NoEntry) => match take_old_secret(ACCOUNT) {
+                Some(json) => Ok(Some(serde_json::from_str(&json)?)),
+                None => Ok(None),
+            },
             Err(err) => Err(err).context("reading token from credential store"),
         }
     }

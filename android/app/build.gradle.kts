@@ -11,11 +11,11 @@ val appVersion: String = (findProperty("appVersion") as String?) ?: rootDir.reso
 val buildNumber: Int = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
 
 android {
-    namespace = "dev.ytmplayer.android"
+    namespace = "dev.yarek.music"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "dev.ytmplayer.android"
+        applicationId = "dev.yarek.music"
         minSdk = 26
         targetSdk = 35
         versionCode = buildNumber

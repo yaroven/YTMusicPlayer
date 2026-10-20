@@ -1,4 +1,4 @@
-# ytm-player on iPhone
+# Yarek Music on iPhone
 
 A native app (SwiftUI, `ios/` in this repository) with the same core as the
 desktop player. It isn't on the App Store, so you install it yourself with
@@ -21,7 +21,7 @@ setup.
 - **Offline:** long-press a song → **Download**, or a whole album /
   playlist / list with its ⬇ button (one after another, tap to stop);
   **Library → Downloads** lists them (**Stop**, **Delete all**). They are
-  also in the **Files** app: On My iPhone → YTM Player → Downloads
+  also in the **Files** app: On My iPhone → Yarek Music → Downloads
   ("Artist - Title [id].m4a"). Downloaded songs play without network.
 - Lists sort by your own order, title, artist or **most played**; playlists
   can be renamed; **Up next → Save as playlist** keeps the queue.
@@ -33,7 +33,7 @@ setup.
   back.
 - Sleep timer (🌙 in Now Playing: 15 / 30 / 60 min or end of song),
   crossfade (Library → Playback), **Related** next to the lyrics.
-- English or Ukrainian: **Settings → YTM Player → Language** (or Library →
+- English or Ukrainian: **Settings → Yarek Music → Language** (or Library →
   Language).
 - No yt-dlp and no server: the app asks YouTube for the audio link itself.
 - **No or bad internet:** a bar says "No internet connection"; screens say
@@ -60,7 +60,7 @@ inside SideStore.
 The VPN must be on whenever you install, update or refresh an app. It routes
 nothing to the internet — it only lets SideStore talk to the phone itself.
 
-## 2. Add ytm-player as a source
+## 2. Add Yarek Music as a source
 
 In SideStore: **Sources → + (top right)** and paste
 
@@ -68,10 +68,10 @@ In SideStore: **Sources → + (top right)** and paste
 https://github.com/yaroven/YTMusicPlayer/releases/latest/download/sidestore.json
 ```
 
-Open the new **ytm-player** source and install **YTM Player**. Every new
+Open the new **Yarek Music** source and install **Yarek Music**. Every new
 release shows up there, and SideStore offers it as an update.
 
-**Without a source:** download `ytm-player-<version>.ipa` from the
+**Without a source:** download `yarek-music-<version>.ipa` from the
 [latest release](https://github.com/yaroven/YTMusicPlayer/releases/latest)
 and open it with SideStore (or AltStore) through the Files app or the share
 sheet. You then have to repeat this for each update.
@@ -135,7 +135,7 @@ and builds an unsigned `.ipa` (SideStore signs it on the phone). Locally,
 with Xcode installed:
 
 ```bash
-cd ios && xcodegen generate && open YTMPlayer.xcodeproj
+cd ios && xcodegen generate && open YarekMusic.xcodeproj
 ```
 
 The core (`ios/YTMKit`) builds and tests without Xcode:

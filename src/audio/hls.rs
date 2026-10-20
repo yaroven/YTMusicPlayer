@@ -261,7 +261,7 @@ mod tests {
         let Ok(url) = std::env::var("YTM_HLS_URL") else {
             return;
         };
-        let dest = std::env::temp_dir().join("ytm-hls-test.aac");
+        let dest = std::env::temp_dir().join("yarek-hls-test.aac");
         let bytes = download_audio(&reqwest::Client::new(), &url, &[], &dest)
             .await
             .unwrap();

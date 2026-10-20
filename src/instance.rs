@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn second_launch_finds_the_first() {
-        let path = std::env::temp_dir().join(format!("ytm-inst-{}.sock", std::process::id()));
+        let path = std::env::temp_dir().join(format!("yarek-inst-{}.sock", std::process::id()));
         let shown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = shown.clone();
         let first = acquire(&path, "gui", move || {

@@ -9,14 +9,14 @@ Download the file for your system from the
 
 | System | File | Install |
 |---|---|---|
-| Debian, Ubuntu, Mint | `ytm-player_<version>_amd64.deb` | `sudo apt install ./ytm-player_*_amd64.deb` |
-| Fedora | `ytm-player-<version>-1.x86_64.rpm` | `sudo dnf install ./ytm-player-*.x86_64.rpm` |
-| Arch, Manjaro | `ytm-player-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./ytm-player-*.pkg.tar.zst` |
-| Windows 10/11 | `ytm-player-<version>-setup-x64.exe` | run it (no admin rights needed) |
-| macOS 11+ (Apple Silicon and Intel) | `ytm-player-<version>-macos.pkg` | open it |
+| Debian, Ubuntu, Mint | `yarek-music_<version>_amd64.deb` | `sudo apt install ./yarek-music_*_amd64.deb` |
+| Fedora | `yarek-music-<version>-1.x86_64.rpm` | `sudo dnf install ./yarek-music-*.x86_64.rpm` |
+| Arch, Manjaro | `yarek-music-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./yarek-music-*.pkg.tar.zst` |
+| Windows 10/11 | `yarek-music-<version>-setup-x64.exe` | run it (no admin rights needed) |
+| macOS 11+ (Apple Silicon and Intel) | `yarek-music-<version>-macos.pkg` | open it |
 
-Each one adds **ytm-player** to your applications (opens the window) and the
-`ytm` command (terminal UI and the [commands](usage.md#commands)). Linux
+Each one adds **Yarek Music** to your applications (opens the window) and the
+`yarek` command (terminal UI and the [commands](usage.md#commands)). Linux
 packages need glibc 2.35+ (Debian 12, Ubuntu 22.04, current Fedora and Arch)
 and are x86_64 only — other architectures can use `install.sh`, which builds
 from source.
@@ -50,7 +50,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 The scripts download a prebuilt binary from the latest release, or build from
 source when there is none for your platform, installing build dependencies and
 Rust as needed. They add the app to your applications (Linux menu entry,
-`~/Applications/ytm-player.app` on macOS), remove older copies so only one
+`~/Applications/Yarek Music.app` on macOS), remove older copies so only one
 remains, and start the player. Re-run to update.
 
 `install.sh` options: `--yes`, `--from-source`, `--no-deps`, `--no-launch`,
@@ -80,7 +80,7 @@ cargo install --path . --locked --no-default-features  # terminal UI only (small
 The player checks GitHub for a newer release when it starts (one small
 request; `check_updates = false` turns it off). A new version shows as
 **Update to X** in the sidebar and a red dot on the settings button;
-**Settings → Update** installs it (also `ytm update` in a terminal), and
+**Settings → Update** installs it (also `yarek update` in a terminal), and
 **Check now** looks again. Downloads are checked against the release's
 SHA256SUMS.
 
@@ -99,34 +99,34 @@ Packages remove like any other package (your library and sign-in stay):
 
 | Installed with | Remove |
 |---|---|
-| `.deb` | `sudo apt remove ytm-player` |
-| `.rpm` | `sudo dnf remove ytm-player` |
-| Arch package | `sudo pacman -R ytm-player` |
-| Windows setup | **Settings → Apps → ytm-player → Uninstall** (asks whether to delete your library and sign-in) |
+| `.deb` | `sudo apt remove Yarek Music` |
+| `.rpm` | `sudo dnf remove Yarek Music` |
+| Arch package | `sudo pacman -R Yarek Music` |
+| Windows setup | **Settings → Apps → Yarek Music → Uninstall** (asks whether to delete your library and sign-in) |
 
 To remove everything else — the macOS .pkg, `install.sh` / `cargo install`
 copies, menu entries, the PATH line, and optionally your library, settings,
 logs and the stored Google sign-in — use the uninstaller:
 
 ```bash
-ytm uninstall              # built into the app; asks before deleting your data
-ytm uninstall --purge -y   # delete everything, no questions
+yarek uninstall              # built into the app; asks before deleting your data
+yarek uninstall --purge -y   # delete everything, no questions
 ./uninstall.sh             # the same script (repository or release download)
 ```
 
-On Windows, `ytm uninstall` opens the setup program's uninstaller; for
+On Windows, `yarek uninstall` opens the setup program's uninstaller; for
 `install.ps1` installs run
 `powershell -ExecutionPolicy Bypass -File .\uninstall.ps1 [-Purge]`.
 
-By hand: the binary (`/usr/bin/ytm`, `/usr/local/bin/ytm`, `~/.cargo/bin/ytm`
-or `%LOCALAPPDATA%\Programs\ytm-player`), the app (`/Applications` or
-`~/Applications/ytm-player.app`), the sign-in (`ytm logout`), and the data:
+By hand: the binary (`/usr/bin/yarek`, `/usr/local/bin/yarek`, `~/.cargo/bin/yarek`
+or `%LOCALAPPDATA%\Programs\yarek-music`), the app (`/Applications` or
+`~/Applications/Yarek Music.app`), the sign-in (`yarek logout`), and the data:
 
 | OS | Data |
 |---|---|
-| Linux | `~/.config/ytm-player`, `~/.local/share/ytm-player`, `~/.cache/ytm-player` |
-| macOS | `~/Library/Application Support/dev.ytm-player.ytm-player`, `~/Library/Caches/dev.ytm-player.ytm-player` |
-| Windows | `%APPDATA%\ytm-player`, `%LOCALAPPDATA%\ytm-player` |
+| Linux | `~/.config/yarek-music`, `~/.local/share/yarek-music`, `~/.cache/yarek-music` |
+| macOS | `~/Library/Application Support/dev.yarek.yarek-music`, `~/Library/Caches/dev.yarek.yarek-music` |
+| Windows | `%APPDATA%\yarek`, `%LOCALAPPDATA%\yarek` |
 
 ## Releases (for maintainers)
 

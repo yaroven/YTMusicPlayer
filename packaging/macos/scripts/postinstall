@@ -1,17 +1,24 @@
 #!/bin/bash
 # Runs as root after the payload is in place.
-app=/Applications/ytm-player.app
+app="/Applications/Yarek Music.app"
 mkdir -p /usr/local/bin
-ln -sf "$app/Contents/MacOS/ytm-player" /usr/local/bin/ytm
+ln -sf "$app/Contents/MacOS/yarek-music" /usr/local/bin/yarek
 
-# A per-user copy from install.sh would show up twice in Launchpad.
+# A per-user copy from install.sh would show up twice in Launchpad, and so
+# would the app of versions up to 1.0.0 ("ytm-player").
 user=$(stat -f%Su /dev/console 2>/dev/null || true)
 home=$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
-old="$home/Applications/ytm-player.app"
-if [[ -n $user && $user != root && -d $old ]] &&
-  [[ $(defaults read "$old/Contents/Info" CFBundleIdentifier 2>/dev/null) == dev.ytm-player.app ]]; then
-  rm -rf "$old"
+for old in "$home/Applications/Yarek Music.app" "$home/Applications/ytm-player.app" /Applications/ytm-player.app; do
+  [[ -d $old ]] || continue
+  [[ $old == /Applications/* || ( -n $user && $user != root ) ]] || continue
+  case $(defaults read "$old/Contents/Info" CFBundleIdentifier 2>/dev/null) in
+    dev.yarek.music | dev.ytm-player.app) rm -rf "$old" ;;
+  esac
+done
+if [[ -L /usr/local/bin/ytm && $(readlink /usr/local/bin/ytm) == /Applications/ytm-player.app/* ]]; then
+  rm -f /usr/local/bin/ytm
 fi
+pkgutil --forget dev.ytm-player.pkg >/dev/null 2>&1 || true
 
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" >/dev/null 2>&1 || true
 exit 0

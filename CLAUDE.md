@@ -1,4 +1,4 @@
-# ytm-player
+# Yarek Music
 
 Lightweight cross-platform (macOS, Linux, Windows) music player in Rust (TUI
 and a Slint desktop window), plus native iPhone (Swift) and Android (Kotlin)
@@ -28,16 +28,16 @@ states a new rule, append it here (numbered, with a one-line reason).
 ## Commands
 
 ```bash
-cargo build --release               # binary: target/release/ytm (~8 MB)
+cargo build --release               # binary: target/release/yarek (~8 MB)
 cargo test                          # unit tests
 cargo test -- --ignored             # network tests (downloads yt-dlp)
-ytm                                 # TUI;  ytm --help for all commands
-ytm play <id|url>                   # headless playback, good for testing audio
-ytm resolve <id> [--js]             # debug URL resolution
-ytm config                          # prints config.toml path
+yarek                               # TUI;  yarek --help for all commands
+yarek play <id|url>                 # headless playback, good for testing audio
+yarek resolve <id> [--js]           # debug URL resolution
+yarek config                        # prints config.toml path
 ```
 
-Logs go to `<cache_dir>/logs/ytm.log` (filter: `YTM_LOG=debug`), never to
+Logs go to `<cache_dir>/logs/yarek.log` (filter: `YTM_LOG=debug`), never to
 stdout/stderr — the terminal belongs to the TUI.
 
 ## Testing the TUI / audio without bothering the user
@@ -72,12 +72,12 @@ stdout/stderr — the terminal belongs to the TUI.
   shows), not RSS — RSS includes shared framework pages and is noisy.
   Build the previous commit in a `git worktree` to compare like for like.
 - Run TUI/CLI tests with `HOME=<scratch dir>` (create config with
-  `ytm config`, copy the managed yt-dlp into its `bin/`). The user is logged
+  `yarek config`, copy the managed yt-dlp into its `bin/`). The user is logged
   in on this Mac: with the real HOME every rebuilt binary triggers a macOS
   Keychain permission dialog and the app waits on it (looks like a hang).
 - OAuth login / sync / likes need the user's Google account: the user tests.
   The auto-mode classifier blocks Claude from moving client secrets; the user
-  imports them (`ytm import-client`).
+  imports them (`yarek import-client`).
 - Android (`android/`): JDK 17 at `/opt/homebrew/opt/openjdk@17` (export
   `JAVA_HOME=…/libexec/openjdk.jdk/Contents/Home`), SDK in
   `~/Library/Android/sdk` (`local.properties`, not committed). `./gradlew
@@ -132,7 +132,7 @@ main services the CFRunLoop for media keys).
 | `config::{paths, settings}` | per-OS dirs; `config.toml` (template on first run, `store_client` / `store_value` rewrite keys in place, keeping comments) |
 | `ios/YTMKit` (Swift package) | iPhone core, no UI: InnerTube catalog + LRCLIB lyrics ported from `catalog.rs` / `lyrics.rs` (same lenient `findAll` parsing), `Resolver` = on-device stream URLs (no yt-dlp), client list overridable by `ios/clients.json` on main; `swift run YTMKitChecks [--live]` (no XCTest in CLT) |
 | `android/core` (Kotlin/JVM) | port of YTMKit: InnerTube catalog + library writes, `Resolver` (same clients, `ios/clients.json`), LRCLIB lyrics, yt-dlp-ejs solver behind `JsEngine`; plain `HttpURLConnection` + `org.json` (Android's own; `compileOnly`) |
-| `android/app` (Compose, Media3) | `Player` (whole queue in ExoPlayer as `ytm://id` items, `ResolvingDataSource` → stream URL), `PlaybackService` (MediaSessionService, square art), `Library` (JSON), `Network` (connectivity flow, `describe`), `SecureStore` (Keystore AES-GCM cookies), `WebViewJs`, `ui/*` |
+| `android/app` (Compose, Media3) | `Player` (whole queue in ExoPlayer as `yarek://id` items, `ResolvingDataSource` → stream URL), `PlaybackService` (MediaSessionService, square art), `Library` (JSON), `Network` (connectivity flow, `describe`), `SecureStore` (Keystore AES-GCM cookies), `WebViewJs`, `ui/*` |
 | `ios/App` (SwiftUI, iOS 17) | `Player` (AVQueuePlayer, next song resolved ahead, radio autoplay, Now Playing / remote commands, queue saved to `queue.json`), `Library` (the account's liked music / playlists / saved pages synced from YouTube Music and written back, plus history, in one JSON), `Router` (per-tab paths); `project.yml` → XcodeGen in CI; `ios/player-check.sh` runs `Player` on macOS, muted, live |
 
 Domain terms are defined in `CONTEXT.md`.
@@ -192,7 +192,7 @@ Domain terms are defined in `CONTEXT.md`.
   allocates a fresh frame per redraw and macOS malloc cached freed ones:
   `MallocLargeCache=0` (macOS): playing at 1040x660 68–80 → 52 MB, same
   CPU (2026-10-02). Set via `LSEnvironment` in the .app's Info.plist; a
-  terminal `ytm gui` re-execs itself with it. Never re-exec a
+  terminal `yarek gui` re-execs itself with it. Never re-exec a
   LaunchServices-launched process: it loses its menu bar (tray) icon. A
   Rust allocator that mmaps big blocks only got 68 MB (Core Animation's
   own buffers are the rest). Media glyphs
@@ -224,19 +224,19 @@ Domain terms are defined in `CONTEXT.md`.
   granted here); run with `HOME=<sandbox>`.
 - **One yt-dlp at a time** (`MAX_CONCURRENT = 1`): each is ~90 MB while it
   runs; prefetch starts only after the current track plays anyway.
-- **Launchers**: `install.sh` makes `~/Applications/ytm-player.app` (real
+- **Launchers**: `install.sh` makes `~/Applications/Yarek Music.app` (real
   binary copied in, ad-hoc signed, opens the GUI when started from the
   bundle) and a Linux `.desktop` entry + icon (`assets/`).
 - **App icon** (user's pick 2026-10-20, concept "D": a tilted red tile with
   a white note on a dark, red-glowing background): drawn by
   `packaging/icon/draw-icon.swift`; `packaging/icon/make-icons.sh` writes
   every copy — `.icns` (Apple's 824/1024 grid), `.ico` (PNG frames
-  16–256), `assets/ytm-player{,-64}.png` (Linux, window, tray), the
+  16–256), `assets/yarek-music{,-64}.png` (Linux, window, tray), the
   iPhone's opaque 1024 (also SideStore's icon), Android's legacy mipmaps
   and the adaptive foreground (`#121212` background, tile in the safe zone).
 - **install.sh must run on macOS bash 3.2**: no `mapfile`, assoc arrays or
   `${x,,}`; check with `/bin/bash -n install.sh`. It removes other
-  ytm-player binaries/apps (identified by `--help` banner / bundle id) so
+  Yarek Music binaries/apps (identified by `--help` banner / bundle id) so
   only one of each remains.
 - Tests that launch the GUI/TUI must use their own `TMPDIR` (single-instance
   socket is per user, not per HOME) or they find the user's running player.
@@ -250,20 +250,20 @@ Domain terms are defined in `CONTEXT.md`.
   x86_64 build; Windows Inno Setup `.exe` (per-user, no admin, PATH +
   Start menu, uninstaller asks about data); macOS universal `.pkg`
   (`packaging/macos/build-pkg.sh`: lipo, ad-hoc signed app in
-  /Applications, `/usr/local/bin/ytm` symlink, `BundleIsRelocatable=NO` so
+  /Applications, `/usr/local/bin/yarek` symlink, `BundleIsRelocatable=NO` so
   Installer doesn't update an older ~/Applications copy). The workflow
   installs and runs each one (Debian 12, Ubuntu 24.04, Fedora, Arch,
   Windows silent install/uninstall, macOS `installer`). No paid signing:
   Gatekeeper / SmartScreen ask once (documented in README). Plain
   tarballs/zip stay for install.sh / install.ps1.
 - **Uninstall**: one script, `uninstall.sh`, also embedded in the binary
-  (`ytm uninstall` writes it to temp and execs bash). Never test `--purge`
-  with the real HOME on this Mac: `ytm logout` hits the real Keychain entry
+  (`yarek uninstall` writes it to temp and execs bash). Never test `--purge`
+  with the real HOME on this Mac: `yarek logout` hits the real Keychain entry
   (Keychain isn't per-HOME). Windows: Inno uninstaller / `uninstall.ps1`.
-- **Windows console**: `ytm` is a console program (TUI/CLI); `ytm gui` frees
+- **Windows console**: `yarek` is a console program (TUI/CLI); `yarek gui` frees
   the console when it owns it alone (started from the Start menu).
 - **Bundle detection**: the app binary opens the GUI only when stdin isn't a
-  TTY, so `/usr/local/bin/ytm` (link into the bundle) still opens the TUI.
+  TTY, so `/usr/local/bin/yarek` (link into the bundle) still opens the TUI.
 - **Search**: Data API `search.list` (100 units, music category, 25 hits,
   +1 unit for durations) only on Enter / `o`, never as-you-type; falls back
   to yt-dlp `ytsearch25:` with `--flat-playlist` (~2 s, no quota) when not
@@ -306,7 +306,7 @@ Domain terms are defined in `CONTEXT.md`.
 - **Self-update** (`update`): GitHub "latest release" API at startup
   (repo is public, no token), SHA256SUMS check, then by install kind:
   replace in place (writable dir; macOS bundle re-signed ad hoc, the
-  `~/.local/bin/ytm` copy too), `.pkg` → `open` Installer, Windows setup
+  `~/.local/bin/yarek` copy too), `.pkg` → `open` Installer, Windows setup
   `/VERYSILENT` via a `cmd` that waits for us to exit, Linux packages →
   instructions only. GUI restart: `sh -c 'sleep 1; open -n <app>'` (never
   exec a LaunchServices app). No release signing yet (user's call).
@@ -354,11 +354,11 @@ Domain terms are defined in `CONTEXT.md`.
 - **Desktop "Sign in with Google" = the iPhone's scheme** (user's choice
   2026-10-12, over keeping the own-OAuth-client flow): Google's page in
   the system web view (wry 0.57 + winit: WebKit on macOS, WebView2 on
-  Windows) in a **child process** `ytm sign-in-window` that prints the
+  Windows) in a **child process** `yarek sign-in-window` that prints the
   youtube.com cookies as JSON, so the player never runs a browser engine.
   Linux has no web view without webkit2gtk (would be a hard link-time
   dependency of the whole binary): it imports a browser's sign-in via
-  yt-dlp `--cookies-from-browser … --cookies <tmp>` (`ytm sign-in --from`).
+  yt-dlp `--cookies-from-browser … --cookies <tmp>` (`yarek sign-in --from`).
   `YouTubeSession` keeps the cookies in the keyring (`youtube-session`),
   writes `<data_dir>/youtube-cookies.txt` (0600) for yt-dlp, which beats
   `cookies_from_browser`, and reads back cookies yt-dlp rotated; it signs
@@ -421,7 +421,7 @@ Domain terms are defined in `CONTEXT.md`.
   `player_client=default,web_safari`; iPhone: WEB with yt-dlp's Safari UA)
   gives itag 93+: MPEG-TS segments whose audio IS itag 140. Desktop:
   format `…/93/18`, `audio::hls` fetches the segments and keeps the ADTS
-  AAC (tiny TS demuxer, no ffmpeg) in `$TMPDIR/ytm-player-hls/<id>.aac`
+  AAC (tiny TS demuxer, no ffmpeg) in `$TMPDIR/yarek-music-hls/<id>.aac`
   (3 kept), played/seeked as a file: ~2.6 s, 2.9 MB for 3 min. iPhone:
   solve "n" in the master URL only (variants carry it; solving twice =
   403), smallest `mp4a.40.2` variant, AVPlayer plays it. A fresh
@@ -512,7 +512,7 @@ Domain terms are defined in `CONTEXT.md`.
   YouTube page plays — they are separate processes and all of it goes when
   the video is switched off, which destroys the web view.
   The TUI and Linux keep `video::watch` / `video::watch_url`: a child
-  process `ytm video-window <id> <seconds>` (same trick as `signin`) or the
+  process `yarek video-window <id> <seconds>` (same trick as `signin`) or the
   browser. `YTM_VIDEO_EXIT_AFTER=<secs>` closes that window by itself, for
   testing without a hand on the mouse.
 
@@ -563,7 +563,7 @@ Domain terms are defined in `CONTEXT.md`.
   ported anyway; JNI/NDK/oboe and the media notification would be harder).
   Compose + Media3 + Coil; `core` is a plain JVM module so the parsing and
   the live checks run on the Mac. **Whole queue in ExoPlayer**: items are
-  `ytm://<id>`, resolved lazily on ExoPlayer's loader thread by a
+  `yarek://<id>`, resolved lazily on ExoPlayer's loader thread by a
   `ResolvingDataSource` (blocking `runBlocking { resolver.stream }` is fine
   there), so preload / gapless / notification next-previous are
   ExoPlayer's; `NeedsHls` swaps an item to `ytmhls://` + M3U8 (age-
@@ -645,7 +645,7 @@ Domain terms are defined in `CONTEXT.md`.
   (AltStore's link scheme; not tried on a phone), else the release page.
   Downloads on both phones are a queue (one stream at a time, like the
   desktop), whole lists at once, stop, delete all; Android copies each to
-  `Music/YTM Player` via MediaStore (10+, no permission, toggle in
+  `Music/Yarek Music` via MediaStore (10+, no permission, toggle in
   Settings, the copy goes with the download); iPhone keeps them in
   `Documents/Downloads` with `UIFileSharingEnabled` +
   `LSSupportsOpeningDocumentsInPlace` (the Files app shows them; old
@@ -674,6 +674,23 @@ Domain terms are defined in `CONTEXT.md`.
   copy of the URL, 1 MB ranges). Verified: Echoes (23 min) starts in
   2–3 s and seeks to 15:00 / 17:00 in ~1 s on both (`ios/player-check.sh`
   checks it). Downloads already used 1 MB ranges; the desktop reads 256 KB.
+
+- **Renamed to Yarek Music** (user's choice 2026-10-20, after 1.0.0,
+  identifiers included): command `yarek`, packages / files / data dirs
+  `yarek-music` (`ProjectDirs("dev", "yarek", "yarek-music")`), bundle id
+  and Android applicationId `dev.yarek.music`, Kotlin packages
+  `dev.yarek.music` / `dev.yarek.core`, Xcode target `YarekMusic`, keyring
+  service `yarek-music`, app bundle `Yarek Music.app`. Internal names stay
+  (YTMKit, Rust modules, `ytm://` schemes, the GitHub repo, the SideStore
+  source identifier `dev.ytm-player.source` — SideStore knows the source by
+  it — and `~/.ytm-player-signing`). Desktop moves the old folders (and
+  the downloads' stored paths) and the keyring entries on first start
+  (`AppPaths::migrate_old`, `take_old_secret`); install.sh / uninstall.sh /
+  the .pkg / the Inno setup (same AppId) / deb / rpm / Arch remove or
+  replace the old `ytm` installs. Phones get a new app (new id): the old
+  one stays until deleted; Android 1.0.0's updater installs the new APK
+  next to it. Desktop 1.0.0 can't self-update (asset and binary names
+  changed): reinstall once.
 
 ## Open TODOs
 

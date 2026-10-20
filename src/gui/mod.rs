@@ -1309,7 +1309,7 @@ impl View {
         self.now = snap.view.now.clone();
         if changed {
             let tip = self.now.as_ref().map_or_else(
-                || "ytm-player".to_owned(),
+                || "Yarek Music".to_owned(),
                 |t| format!("{} — {}", t.title, t.artist),
             );
             TRAY.with(|cell| {

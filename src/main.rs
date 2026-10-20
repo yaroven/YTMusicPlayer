@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use tracing_subscriber::EnvFilter;
-use ytm_player::{
+use yarek_music::{
     account::{Account, Flow, Prompt},
     api::models::{Track, video_id_from_input},
     app,
@@ -24,29 +24,29 @@ use ytm_player::{
 };
 
 const USAGE: &str = "\
-ytm — lightweight YouTube Music player
+yarek — Yarek Music, a lightweight YouTube Music player
 
 USAGE:
-    ytm                         open the player (TUI, or the window if config has ui = gui)
-    ytm tui | ytm gui           open the terminal / window interface
-    ytm sign-in [--from <browser>]
-                                sign in to YouTube: Google's page in a window, or the
-                                sign-in of a browser (firefox, chrome, safari, ...)
-    ytm sign-out                forget the YouTube sign-in
-    ytm login [--device]        connect the YouTube Data API with your own OAuth client
-    ytm logout                  forget the Data API sign-in
-    ytm import-client <json> [--device]
-                                read client ID/secret from Google's downloaded JSON
-    ytm sync                    refresh the local library from YouTube
-    ytm play <id|url>           play one track without the TUI
-    ytm resolve <id> [--js]     print the direct audio URL (debug)
-    ytm devices                 list audio output devices (for `audio_device`)
-    ytm lastfm-login            connect Last.fm scrobbling (API key in config)
-    ytm update                  install the latest release
-    ytm cast-devices            list Chromecasts on this network
-    ytm config                  print config file location
-    ytm status                  show setup state (config, sign-in, library)
-    ytm uninstall [--purge]     remove ytm-player (asks about your library and sign-in)";
+    yarek                         open the player (TUI, or the window if config has ui = gui)
+    yarek tui | yarek gui         open the terminal / window interface
+    yarek sign-in [--from <browser>]
+                                  sign in to YouTube: Google's page in a window, or the
+                                  sign-in of a browser (firefox, chrome, safari, ...)
+    yarek sign-out                forget the YouTube sign-in
+    yarek login [--device]        connect the YouTube Data API with your own OAuth client
+    yarek logout                  forget the Data API sign-in
+    yarek import-client <json> [--device]
+                                  read client ID/secret from Google's downloaded JSON
+    yarek sync                    refresh the local library from YouTube
+    yarek play <id|url>           play one track without the TUI
+    yarek resolve <id> [--js]     print the direct audio URL (debug)
+    yarek devices                 list audio output devices (for `audio_device`)
+    yarek lastfm-login            connect Last.fm scrobbling (API key in config)
+    yarek update                  install the latest release
+    yarek cast-devices            list Chromecasts on this network
+    yarek config                  print config file location
+    yarek status                  show setup state (config, sign-in, library)
+    yarek uninstall [--purge]     remove Yarek Music (asks about your library and sign-in)";
 
 fn main() -> Result<()> {
     // Slint destroys (not just hides) a window closed to the tray, so its
@@ -59,13 +59,14 @@ fn main() -> Result<()> {
         std::env::set_var("SLINT_DESTROY_WINDOW_ON_HIDE", "1");
     }
     // Like other Unix tools, exit quietly when output is piped into
-    // something that stops reading (`ytm --help | head`) instead of
+    // something that stops reading (`yarek --help | head`) instead of
     // panicking on a broken pipe (which aborts with panic = "abort").
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
     let paths = AppPaths::new().context("cannot determine home directory")?;
+    paths.migrate_old();
     let _log_guard = init_logging(&paths);
     let settings = Settings::load(&paths.config_file())?;
 
@@ -80,7 +81,7 @@ fn main() -> Result<()> {
     // instance lock, prints the cookies.
     #[cfg(all(feature = "gui", any(target_os = "macos", windows)))]
     if args.as_slice() == ["sign-in-window"] {
-        return ytm_player::signin::run_window();
+        return yarek_music::signin::run_window();
     }
 
     // The video window's child process (see `video`): plays the clip and
@@ -88,7 +89,7 @@ fn main() -> Result<()> {
     #[cfg(all(feature = "gui", any(target_os = "macos", windows)))]
     if let ["video-window", video_id, at] = args.as_slice() {
         let at = std::time::Duration::from_secs(at.parse().unwrap_or(0));
-        return ytm_player::video::run_window(video_id, at);
+        return yarek_music::video::run_window(video_id, at);
     }
 
     let gui = matches!(args.as_slice(), ["gui"])
@@ -131,7 +132,7 @@ fn main() -> Result<()> {
 
 /// Started from the Start menu, Windows gave this console program a console
 /// window of its own: close it, the GUI doesn't use it. A console shared
-/// with a shell (`ytm gui` typed in a terminal) stays.
+/// with a shell (`yarek gui` typed in a terminal) stays.
 #[cfg(windows)]
 fn detach_console() {
     use windows_sys::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
@@ -142,8 +143,8 @@ fn detach_console() {
     }
 }
 
-/// Started from `ytm-player.app` (Finder, Dock, Spotlight): open the window.
-/// From a terminal (e.g. the `/usr/local/bin/ytm` link the .pkg installs)
+/// Started from `Yarek Music.app` (Finder, Dock, Spotlight): open the window.
+/// From a terminal (e.g. the `/usr/local/bin/yarek` link the .pkg installs)
 /// stdin is a TTY and the TUI opens as usual.
 fn in_app_bundle() -> bool {
     use std::io::IsTerminal;
@@ -157,15 +158,15 @@ fn in_app_bundle() -> bool {
 fn single_instance(paths: &AppPaths, kind: &'static str) -> Result<Option<Instance>> {
     let on_show = || {
         #[cfg(feature = "gui")]
-        ytm_player::gui::raise();
+        yarek_music::gui::raise();
     };
     match instance::acquire(&paths.instance_socket(), kind, on_show) {
         Ok(Acquired::Primary(instance)) => Ok(Some(instance)),
         Ok(Acquired::Running(other)) if other == "gui" => {
-            eprintln!("ytm-player is already open; brought its window to the front.");
+            eprintln!("Yarek Music is already open; brought its window to the front.");
             Ok(None)
         }
-        Ok(Acquired::Running(_)) => bail!("ytm-player is already running in another terminal"),
+        Ok(Acquired::Running(_)) => bail!("Yarek Music is already running in another terminal"),
         // Can't create the socket (read-only dir…): run anyway.
         Err(err) => {
             tracing::warn!(%err, "single-instance check unavailable");
@@ -209,7 +210,7 @@ async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Resul
         ["lastfm-login"] => lastfm_login(paths, settings).await,
         ["update"] => self_update().await,
         ["cast-devices"] => {
-            let devices = ytm_player::cast::discover(std::time::Duration::from_secs(3)).await?;
+            let devices = yarek_music::cast::discover(std::time::Duration::from_secs(3)).await?;
             if devices.is_empty() {
                 println!("No Cast devices found on this network.");
             }
@@ -223,7 +224,7 @@ async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Resul
         ["resolve", id, "--js"] => resolve(paths, settings, id, true).await,
         ["status"] => status(paths, settings).await,
         ["devices"] => {
-            for name in ytm_player::audio::player::output_device_names() {
+            for name in yarek_music::audio::player::output_device_names() {
                 println!("{name}");
             }
             Ok(())
@@ -247,13 +248,13 @@ async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Resul
 fn uninstall(options: &[&str]) -> Result<()> {
     use std::os::unix::process::CommandExt;
     const SCRIPT: &str = include_str!("../uninstall.sh");
-    let path = std::env::temp_dir().join(format!("ytm-uninstall-{}.sh", std::process::id()));
+    let path = std::env::temp_dir().join(format!("yarek-uninstall-{}.sh", std::process::id()));
     std::fs::write(&path, SCRIPT).context("writing the uninstall script")?;
     let err = std::process::Command::new("bash")
         .arg(&path)
         .args(options)
         // Lets the script delete itself when done.
-        .env("YTM_UNINSTALL_TMP", &path)
+        .env("YAREK_UNINSTALL_TMP", &path)
         .exec();
     Err(err).context("starting bash")
 }
@@ -270,9 +271,9 @@ fn uninstall(_options: &[&str]) -> Result<()> {
         println!("Opened the uninstaller.");
     } else {
         println!(
-            "Not installed with the setup program. To remove ytm-player run\n    \
+            "Not installed with the setup program. To remove Yarek Music run\n    \
              powershell -ExecutionPolicy Bypass -File uninstall.ps1\n\
-             from the repository, or delete {} and %APPDATA%\\ytm-player.",
+             from the repository, or delete {} and %APPDATA%\\yarek.",
             exe.display()
         );
     }
@@ -280,19 +281,19 @@ fn uninstall(_options: &[&str]) -> Result<()> {
 }
 
 async fn self_update() -> Result<()> {
-    use ytm_player::update::{self, Installed};
+    use yarek_music::update::{self, Installed};
     let http = bootstrap::http_client()?;
     let Some(found) = update::check(&http).await? else {
         println!(
-            "ytm-player {} is the latest version.",
+            "Yarek Music {} is the latest version.",
             env!("CARGO_PKG_VERSION")
         );
         return Ok(());
     };
-    println!("Installing ytm-player {}…", found.version);
+    println!("Installing Yarek Music {}…", found.version);
     match update::install(&http, &found).await? {
         Installed::Replaced => println!(
-            "Updated to {}. Restart ytm-player to use it.",
+            "Updated to {}. Restart Yarek Music to use it.",
             found.version
         ),
         Installed::InstallerStarted { .. } => {
@@ -312,8 +313,8 @@ async fn lastfm_login(paths: &AppPaths, settings: &Settings) -> Result<()> {
         );
     };
     let http = bootstrap::http_client()?;
-    let name = ytm_player::lastfm::login(&http, &credentials, paths.data_dir(), |url| {
-        println!("Allow ytm-player in your browser:\n    {url}\nWaiting…");
+    let name = yarek_music::lastfm::login(&http, &credentials, paths.data_dir(), |url| {
+        println!("Allow Yarek Music in your browser:\n    {url}\nWaiting…");
         let _ = open::that_detached(url);
     })
     .await?;
@@ -334,7 +335,7 @@ fn run_gui(paths: &AppPaths, settings: &Settings) -> Result<()> {
     // The window owns the main thread; the runtime moves to the core thread.
     let rt = runtime()?;
     let deps = rt.block_on(bootstrap::deps(paths, settings))?;
-    ytm_player::gui::run(rt, deps, settings)
+    yarek_music::gui::run(rt, deps, settings)
 }
 
 #[cfg(not(feature = "gui"))]
@@ -355,7 +356,7 @@ async fn login(paths: &AppPaths, settings: &Settings, flow: Flow) -> Result<()> 
         })?
         .await?;
     account.connect();
-    println!("Signed in. Run `ytm sync` or just `ytm`.");
+    println!("Signed in. Run `yarek sync` or just `yarek`.");
     Ok(())
 }
 
@@ -370,8 +371,8 @@ async fn import_client(
         .await?
         .import_client(flow, Path::new(file))?;
     let (kind, login) = match flow {
-        Flow::Browser => ("client", "ytm login"),
-        Flow::Device => ("device client", "ytm login --device"),
+        Flow::Browser => ("client", "yarek login"),
+        Flow::Device => ("device client", "yarek login --device"),
     };
     println!(
         "Imported {kind} {id} into {}",
@@ -448,10 +449,10 @@ async fn sync(paths: &AppPaths, settings: &Settings) -> Result<()> {
         let youtube = bootstrap::account(paths, settings, &http)
             .await?
             .youtube()
-            .context("not signed in — run `ytm sign-in`")?;
+            .context("not signed in — run `yarek sign-in`")?;
         sync_library(&youtube, library, settings.liked_music_only).await?
     };
-    println!("{}", report.summary(ytm_player::i18n::Lang::En));
+    println!("{}", report.summary(yarek_music::i18n::Lang::En));
     Ok(())
 }
 
@@ -463,13 +464,16 @@ async fn youtube_sign_in(
     let cookies = match browser {
         None => {
             println!("Sign in in the window that opens…");
-            ytm_player::signin::with_window().await?
+            yarek_music::signin::with_window().await?
         }
         Some(browser) => {
             let http = bootstrap::http_client()?;
             let ytdlp = bootstrap::ytdlp(paths, settings, &http, "").await?;
             println!("Reading {browser}'s YouTube sign-in…");
-            ytm_player::signin::from_browser_export(&ytdlp.export_cookies(browser).await?, browser)?
+            yarek_music::signin::from_browser_export(
+                &ytdlp.export_cookies(browser).await?,
+                browser,
+            )?
         }
     };
     bootstrap::youtube_session(paths).await.sign_in(cookies)?;
@@ -577,7 +581,7 @@ async fn resolve(paths: &AppPaths, settings: &Settings, id: &str, js: bool) -> R
 
 /// Logs go to a daily-rotated file: stdout/stderr belong to the TUI.
 fn init_logging(paths: &AppPaths) -> tracing_appender::non_blocking::WorkerGuard {
-    let appender = tracing_appender::rolling::daily(paths.log_dir(), "ytm.log");
+    let appender = tracing_appender::rolling::daily(paths.log_dir(), "yarek.log");
     let (writer, guard) = tracing_appender::non_blocking(appender);
     tracing_subscriber::fmt()
         .with_env_filter(

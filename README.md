@@ -1,4 +1,4 @@
-# ytm-player
+# Yarek Music
 
 A lightweight player for YouTube Music — a desktop window styled after
 YouTube Music, a terminal UI, and native iPhone and Android apps. macOS,
@@ -47,16 +47,16 @@ Linux, Windows, iOS, Android.
 1. **Install** the file for your system from the
    [latest release](https://github.com/yaroven/YTMusicPlayer/releases/latest)
    (table below).
-2. **Open ytm-player.** Search and playback work right away. The **Google
+2. **Open Yarek Music.** Search and playback work right away. The **Google
    account** dialog offers **Sign in with Google**, which brings in your
    library and lets age-restricted songs play —
    [docs/google-account.md](docs/google-account.md).
 
 | System | File | Install |
 |---|---|---|
-| Debian, Ubuntu, Mint | `…_amd64.deb` | `sudo apt install ./ytm-player_*_amd64.deb` |
-| Fedora | `…x86_64.rpm` | `sudo dnf install ./ytm-player-*.x86_64.rpm` |
-| Arch, Manjaro | `…pkg.tar.zst` | `sudo pacman -U ./ytm-player-*.pkg.tar.zst` |
+| Debian, Ubuntu, Mint | `…_amd64.deb` | `sudo apt install ./yarek-music_*_amd64.deb` |
+| Fedora | `…x86_64.rpm` | `sudo dnf install ./yarek-music-*.x86_64.rpm` |
+| Arch, Manjaro | `…pkg.tar.zst` | `sudo pacman -U ./yarek-music-*.pkg.tar.zst` |
 | Windows 10/11 | `…-setup-x64.exe` | run it (no admin rights) |
 | macOS 11+ | `…-macos.pkg` | open it |
 | iPhone (iOS 17+) | SideStore source | [docs/iphone.md](docs/iphone.md) |
@@ -71,7 +71,7 @@ each ask once — that, the install scripts and building from source are in
 | | |
 |---|---|
 | [install.md](docs/install.md) | installers, install scripts, building, updates, uninstall |
-| [usage.md](docs/usage.md) | the window, the terminal UI and its keys, `ytm` commands |
+| [usage.md](docs/usage.md) | the window, the terminal UI and its keys, `yarek` commands |
 | [google-account.md](docs/google-account.md) | signing in, library sync, the optional Data API |
 | [configuration.md](docs/configuration.md) | `config.toml`, Chromecast, Last.fm, Discord, offline |
 | [iphone.md](docs/iphone.md) | the iPhone app: install, sign in, limits |
@@ -97,7 +97,7 @@ each ask once — that, the install scripts and building from source are in
 ## Development
 
 ```bash
-cargo build --release     # binary: target/release/ytm
+cargo build --release     # binary: target/release/yarek
 cargo test                # unit, window and terminal-UI tests
 cargo test -- --ignored   # tests that hit the network
 ```
