@@ -181,4 +181,8 @@
     <string name="sort_most_played">Найчастіше</string>
     <string name="save_queue">Зберегти як плейлист</string>
     <string name="queue_playlist_name">Черга %1$s</string>
+    <string name="mix">Мікс</string>
+    <string name="recent_activity">Останні дії</string>
+    <string name="a_to_z">А–Я</string>
+    <string name="shuffle_all">Перемішати все</string>
 </resources>

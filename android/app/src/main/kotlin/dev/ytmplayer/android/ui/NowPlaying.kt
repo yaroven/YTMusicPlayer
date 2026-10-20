@@ -5,8 +5,20 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.FormatQuote
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.Sensors
+import androidx.compose.material.icons.outlined.SmartDisplay
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Download
@@ -100,12 +112,20 @@ import dev.ytmplayer.core.LyricsProgress
 import dev.ytmplayer.core.Track
 import kotlinx.coroutines.delay
 
-private enum class Pane { Lyrics, Queue, Related }
+private enum class Pane(val label: Int) { Queue(R.string.up_next), Lyrics(R.string.lyrics), Related(R.string.related) }
 
+/**
+ * YouTube Music's player: ⌄, the song / video switch, ⋮; the big cover (or
+ * the clip); the title with its ›, the artist; a row of pills (👍|👎,
+ * Lyrics, Save, Share, Download, Mix); a thin scrubber; the controls; and
+ * "Up next" at the bottom, a sheet with the queue, the lyrics and related
+ * music.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NowPlaying() {
     val player = App.instance.player
-    var pane by remember { mutableStateOf<Pane?>(null) }
+    var sheet by remember { mutableStateOf<Pane?>(null) }
     // The clip instead of the cover; where it started and where it got.
     var video by remember { mutableStateOf(false) }
     var videoStart by remember { mutableDoubleStateOf(0.0) }
@@ -129,16 +149,16 @@ fun NowPlaying() {
     Box(Modifier.fillMaxSize()) {
         if (track != null) Backdrop(track)
         Column(
-            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = {
                     setVideo(false)
                     player.showNowPlaying = false
-                }) { Icon(Icons.Default.ExpandMore, stringResource(R.string.close), Modifier.size(30.dp)) }
+                }) { Icon(Icons.Default.ExpandMore, stringResource(R.string.close), Modifier.size(32.dp)) }
                 Spacer(Modifier.weight(1f))
-                if (track != null && pane == null) MediaSwitch(video, ::setVideo)
+                if (track != null) MediaSwitch(video, ::setVideo)
                 Spacer(Modifier.weight(1f))
                 if (track != null) {
                     Box {
@@ -155,42 +175,64 @@ fun NowPlaying() {
                 return@Column
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                when (pane) {
-                    null -> if (video) {
-                        VideoPane(track.videoId, videoStart) { videoAt = it }
-                    } else {
-                        Cover(track)
-                    }
-                    Pane.Lyrics -> LyricsPane(track)
-                    Pane.Queue -> QueuePane()
-                    Pane.Related -> RelatedPane(track)
-                }
+                if (video) VideoPane(track.videoId, videoStart) { videoAt = it } else Cover(track)
             }
             Header(track)
-            Actions(track)
+            Actions(track) { sheet = Pane.Lyrics }
             Scrubber()
             Controls()
-            // YouTube Music's UP NEXT / LYRICS / RELATED, plus the sleep timer.
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                listOf(Pane.Queue to R.string.up_next, Pane.Lyrics to R.string.lyrics, Pane.Related to R.string.related).forEach { (target, label) ->
-                    Box(
-                        Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(8.dp))
-                            .clickable { pane = if (pane == target) null else target },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            stringResource(label).uppercase(), fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp,
-                            color = if (pane == target) Color.White else YT.secondary,
-                        )
-                    }
-                }
-                SleepMenu()
+            // "Up next": the sheet with the queue, the lyrics and related music.
+            Column(
+                Modifier.fillMaxWidth().clickable { sheet = Pane.Queue }.padding(top = 2.dp, bottom = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(Modifier.width(36.dp).height(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.3f)))
+                Spacer(Modifier.height(8.dp))
+                Text(stringResource(R.string.up_next), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = YT.secondary)
             }
-            Spacer(Modifier.height(4.dp))
         }
     }
     }
+
+    sheet?.let { start ->
+        val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { sheet = null }, sheetState = state,
+            containerColor = Color(0xFF1F1F1F), contentColor = Color.White,
+        ) {
+            var tab by remember { mutableStateOf(start) }
+            Column(Modifier.fillMaxWidth().fillMaxHeight(0.92f).padding(horizontal = 16.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Pane.entries.forEach { p ->
+                        Column(
+                            Modifier.weight(1f).clickable { tab = p }.padding(vertical = 10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                stringResource(p.label), fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                                color = if (tab == p) Color.White else YT.secondary,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Box(Modifier.width(48.dp).height(2.dp).background(if (tab == p) Color.White else Color.Transparent))
+                        }
+                    }
+                    SleepMenu()
+                }
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.1f)))
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when (tab) {
+                        Pane.Queue -> QueuePane()
+                        Pane.Lyrics -> LyricsPane(track ?: return@Box)
+                        Pane.Related -> RelatedPane(track ?: return@Box)
+                    }
+                }
+            }
+        }
+    }
 }
+
+/** The pills' grey (YouTube Music's #272727). */
+private val PILL = Color(0xFF272727)
 
 /** The cover, blurred, behind everything (Android 12+ can blur). */
 @Composable
@@ -207,24 +249,21 @@ private fun Backdrop(track: Track) {
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.2f), Color.Black.copy(alpha = 0.75f)))))
 }
 
-/** YouTube Music's ♪ / ▶ switch over the cover. */
+/** YouTube Music's song / video switch (🎧 / ▶) over the cover. */
 @Composable
 private fun MediaSwitch(video: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        Modifier.background(Color.White.copy(alpha = 0.1f), CircleShape).padding(4.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        listOf(false to Icons.Default.MusicNote, true to Icons.Default.SmartDisplay).forEach { (value, icon) ->
+    Row(Modifier.background(Color.White.copy(alpha = 0.1f), CircleShape).padding(3.dp)) {
+        listOf(false to Icons.Default.Headphones, true to Icons.Outlined.SmartDisplay).forEach { (value, icon) ->
             Box(
                 Modifier
                     .clip(CircleShape)
-                    .background(if (video == value) Color.White.copy(alpha = 0.15f) else Color.Transparent)
+                    .background(if (video == value) Color.White.copy(alpha = 0.18f) else Color.Transparent)
                     .clickable { onChange(value) }
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
             ) {
                 Icon(
-                    icon, stringResource(if (value) R.string.video else R.string.song),
-                    tint = if (video == value) Color.White else Color.White.copy(alpha = 0.5f),
+                    icon, stringResource(if (value) R.string.video else R.string.song), Modifier.size(22.dp),
+                    tint = if (video == value) Color.White else Color.White.copy(alpha = 0.55f),
                 )
             }
         }
@@ -247,27 +286,22 @@ private fun Cover(track: Track) {
 @Composable
 private fun Header(track: Track) {
     Column(Modifier.fillMaxWidth()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // The title and its ›: the artist's page (YouTube Music opens the album).
+        Row(Modifier.clickable { Router.openArtist(track) }, verticalAlignment = Alignment.CenterVertically) {
             Text(
-                track.title, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+                track.title, fontSize = 24.sp, fontWeight = FontWeight.Bold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
             )
-            if (track.explicit) {
-                Spacer(Modifier.width(8.dp))
-                ExplicitBadge()
-            }
+            Icon(Icons.Default.ChevronRight, null, Modifier.size(28.dp), tint = Color.White)
         }
-        Text(
-            track.artist, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = YT.secondary,
-            modifier = Modifier.clickable { Router.openArtist(track) },
-        )
+        Text(track.artist, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = YT.secondary)
         Status()
     }
 }
 
 /** 👍 | 👎, Save, Download, Share — YouTube Music's pill row. */
 @Composable
-private fun Actions(track: Track) {
+private fun Actions(track: Track, onLyrics: () -> Unit) {
     val app = App.instance
     val library = app.library
     val context = LocalContext.current
@@ -278,7 +312,7 @@ private fun Actions(track: Track) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val liked = library.isLiked(track)
-        Row(Modifier.height(36.dp).clip(CircleShape).background(YT.raised), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.height(40.dp).clip(CircleShape).background(PILL), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.fillMaxHeight().clickable { library.toggleLike(track) }.padding(horizontal = 14.dp), contentAlignment = Alignment.Center) {
                 Icon(if (liked) Icons.Filled.ThumbUp else Icons.Outlined.ThumbUp, stringResource(R.string.like), Modifier.size(20.dp))
             }
@@ -287,6 +321,7 @@ private fun Actions(track: Track) {
                 Icon(Icons.Outlined.ThumbDown, stringResource(R.string.dislike), Modifier.size(20.dp))
             }
         }
+        Pill(Icons.Default.FormatQuote, stringResource(R.string.lyrics), onClick = onLyrics)
         Pill(Icons.AutoMirrored.Filled.PlaylistAdd, stringResource(R.string.save)) { saving = true }
         when {
             library.isDownloaded(track.videoId) ->
@@ -300,6 +335,7 @@ private fun Actions(track: Track) {
                 .putExtra(android.content.Intent.EXTRA_TEXT, "https://music.youtube.com/watch?v=${track.videoId}")
             context.startActivity(android.content.Intent.createChooser(send, null))
         }
+        Pill(Icons.Default.Sensors, stringResource(R.string.mix)) { app.player.startRadio(track) }
     }
     if (saving) PlaylistChooser(track) { saving = false }
 }
@@ -307,7 +343,7 @@ private fun Actions(track: Track) {
 @Composable
 private fun Pill(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
     Row(
-        Modifier.height(36.dp).clip(CircleShape).background(YT.raised).clickable(onClick = onClick).padding(horizontal = 14.dp),
+        Modifier.height(40.dp).clip(CircleShape).background(PILL).clickable(onClick = onClick).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, null, Modifier.size(18.dp))
@@ -337,29 +373,47 @@ fun Status(compact: Boolean = false) {
 }
 
 /** Position slider; its own composable so ticks don't redraw the whole screen. */
+/** A thin line like YouTube Music's; the times show while it's dragged. */
 @Composable
 private fun Scrubber() {
     val player = App.instance.player
-    var dragging by remember { mutableStateOf<Float?>(null) }
-    val shown = dragging?.toDouble() ?: player.position
+    var dragging by remember { mutableStateOf<Double?>(null) }
+    val duration = maxOf(player.duration, 1.0)
+    val shown = dragging ?: player.position
     Column {
-        Slider(
-            value = shown.toFloat().coerceIn(0f, maxOf(player.duration.toFloat(), 1f)),
-            onValueChange = { dragging = it },
-            onValueChangeFinished = {
-                dragging?.let { player.seek(it.toDouble()) }
-                dragging = null
-            },
-            valueRange = 0f..maxOf(player.duration.toFloat(), 1f),
-            colors = ytSlider(),
-        )
-        Row {
-            Text(formatTime(shown), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.weight(1f))
-            Text(
-                "-" + formatTime(maxOf(0.0, player.duration - shown)), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        BoxWithConstraints(
+            Modifier
+                .fillMaxWidth()
+                .height(24.dp)
+                .pointerInput(duration) {
+                    detectTapGestures { player.seek(duration * (it.x / size.width).coerceIn(0f, 1f)) }
+                }
+                .pointerInput(duration) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragging = duration * (it.x / size.width).coerceIn(0f, 1f) },
+                        onDragEnd = {
+                            dragging?.let(player::seek)
+                            dragging = null
+                        },
+                        onDragCancel = { dragging = null },
+                    ) { change, _ -> dragging = duration * (change.position.x / size.width).coerceIn(0f, 1f) }
+                },
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            val fraction = (shown / duration).toFloat().coerceIn(0f, 1f)
+            val thick = if (dragging != null) 5.dp else 3.dp
+            Box(Modifier.fillMaxWidth().height(thick).clip(CircleShape).background(Color.White.copy(alpha = 0.25f)))
+            Box(Modifier.fillMaxWidth(fraction).height(thick).clip(CircleShape).background(Color.White))
+            if (dragging != null) {
+                Box(Modifier.offset(x = maxWidth * fraction - 7.dp).size(14.dp).clip(CircleShape).background(Color.White))
+            }
+        }
+        if (dragging != null) {
+            Row {
+                Text(formatTime(shown), fontSize = 12.sp, color = YT.secondary)
+                Spacer(Modifier.weight(1f))
+                Text(formatTime(player.duration), fontSize = 12.sp, color = YT.secondary)
+            }
         }
     }
 }
@@ -369,11 +423,11 @@ private fun Controls() {
     val player = App.instance.player
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = { player.shuffleUpcoming() }) { Icon(Icons.Default.Shuffle, stringResource(R.string.shuffle)) }
-        IconButton(onClick = { player.previous() }, Modifier.size(56.dp)) {
-            Icon(Icons.Default.SkipPrevious, stringResource(R.string.previous), Modifier.size(36.dp))
+        IconButton(onClick = { player.previous() }, Modifier.size(60.dp)) {
+            Icon(Icons.Default.SkipPrevious, stringResource(R.string.previous), Modifier.size(44.dp))
         }
         Box(
-            Modifier.size(72.dp).clip(CircleShape).background(Color.White).clickable { player.togglePlay() },
+            Modifier.size(80.dp).clip(CircleShape).background(Color.White).clickable { player.togglePlay() },
             contentAlignment = Alignment.Center,
         ) {
             if (player.isBuffering && player.isPlaying) {
@@ -386,8 +440,8 @@ private fun Controls() {
                 )
             }
         }
-        IconButton(onClick = { player.next() }, Modifier.size(56.dp)) {
-            Icon(Icons.Default.SkipNext, stringResource(R.string.next), Modifier.size(36.dp))
+        IconButton(onClick = { player.next() }, Modifier.size(60.dp)) {
+            Icon(Icons.Default.SkipNext, stringResource(R.string.next), Modifier.size(44.dp))
         }
         IconButton(onClick = { player.cycleRepeat() }) {
             Icon(

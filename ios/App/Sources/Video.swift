@@ -34,7 +34,7 @@ struct MediaSwitch: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            button(false, "music.note")
+            button(false, "headphones")
             button(true, "play.rectangle")
         }
         .padding(4)

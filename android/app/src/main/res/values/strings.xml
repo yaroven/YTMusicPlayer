@@ -189,4 +189,9 @@
     <string name="sort_most_played">Most played</string>
     <string name="save_queue">Save as playlist</string>
     <string name="queue_playlist_name">Queue %1$s</string>
+    <string name="mix">Mix</string>
+    <string name="recent_activity">Recent activity</string>
+    <string name="a_to_z">A–Z</string>
+    <string name="shuffle_all">Shuffle all</string>
+    <string name="kind_count" translatable="false">%1$s • %2$s</string>
 </resources>

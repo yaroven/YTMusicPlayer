@@ -2,29 +2,32 @@ import AVKit
 import SwiftUI
 import YTMKit
 
-/// YouTube Music's player: ⌄ and the song / video switch at the top, the
-/// big cover (or the clip), title and artist, a row of pill actions, the
-/// scrubber, the controls, and UP NEXT / LYRICS / RELATED at the bottom —
-/// over the cover's own colours.
+/// YouTube Music's player: ⌄, the song / video switch and ⋮ at the top, the
+/// big cover (or the clip), the title with its ›, the artist, a row of pills
+/// (👍|👎, Lyrics, Save, Share, Download, Mix), a thin scrubber, the
+/// controls, and "Up next" at the bottom: a sheet with the queue, the lyrics
+/// and related music — over the cover's own colours.
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
     @Environment(Router.self) private var router
-    @State private var pane: Pane?
+    @State private var sheet: Pane?
     /// The clip instead of the cover; where it started and where it got.
     @State private var video = false
     @State private var videoStart: TimeInterval = 0
     @State private var videoAt: TimeInterval?
     @State private var addingToPlaylist = false
 
-    enum Pane: CaseIterable {
+    enum Pane: CaseIterable, Identifiable {
         case queue, lyrics, related
+
+        var id: Self { self }
 
         var title: LocalizedStringKey {
             switch self {
-            case .queue: "UP NEXT"
-            case .lyrics: "LYRICS"
-            case .related: "RELATED"
+            case .queue: "Up next"
+            case .lyrics: "Lyrics"
+            case .related: "Related"
             }
         }
     }
@@ -34,26 +37,22 @@ struct NowPlayingView: View {
             if let track = player.current {
                 topBar(track)
                 Group {
-                    switch pane {
-                    case nil where video && !Connectivity.shared.online:
+                    if video && !Connectivity.shared.online {
                         ContentUnavailableView("You're offline", systemImage: "wifi.slash",
                                                description: Text("The video needs the internet. The song itself plays if it's downloaded."))
-                    case nil where video:
+                    } else if video {
                         VideoPane(videoId: track.videoId, start: videoStart) { videoAt = $0 }
                             .id(track.videoId)
-                    case nil: cover(track)
-                    case .lyrics: LyricsPane(track: track)
-                    case .queue: QueuePane()
-                    case .related: RelatedPane(track: track)
+                    } else {
+                        cover(track)
                     }
                 }
                 .frame(maxHeight: .infinity)
-                .animation(.easeInOut(duration: 0.25), value: pane)
                 header(track)
                 actions(track)
                 Scrubber()
                 controls
-                tabs
+                upNext
             } else {
                 ContentUnavailableView("Nothing playing", systemImage: "music.note")
             }
@@ -95,6 +94,25 @@ struct NowPlayingView: View {
         .sheet(isPresented: $addingToPlaylist) {
             if let track = player.current { PlaylistPicker(track: track) }
         }
+        .sheet(item: $sheet) { start in
+            if let track = player.current { PanesSheet(track: track, tab: start) }
+        }
+    }
+
+    /// The grab handle and "Up next", which open the sheet.
+    private var upNext: some View {
+        Button { sheet = .queue } label: {
+            VStack(spacing: 8) {
+                Capsule().fill(.white.opacity(0.3)).frame(width: 36, height: 4)
+                Text("Up next")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(YT.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .gesture(DragGesture(minimumDistance: 20).onEnded { if $0.translation.height < 0 { sheet = .queue } })
     }
 
     private func topBar(_ track: Track) -> some View {
@@ -104,8 +122,11 @@ struct NowPlayingView: View {
             }
             .buttonStyle(.plain)
             Spacer()
-            if pane == nil { MediaSwitch(video: $video) }
+            MediaSwitch(video: $video)
             Spacer()
+            #if os(iOS)
+            AirPlayButton().frame(width: 40, height: 40)
+            #endif
             Menu {
                 sleepMenu
                 TrackMenuItems(track: track)
@@ -135,22 +156,24 @@ struct NowPlayingView: View {
 
     private func header(_ track: Track) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text(track.title)
-                    .font(.system(size: 22, weight: .bold))
-                    .lineLimit(1)
-                if track.explicit { ExplicitBadge() }
-            }
+            // The title and its ›: the artist's page.
             Button {
                 player.showNowPlaying = false
                 router.openArtist(of: track)
             } label: {
-                Text(track.artist)
-                    .font(.system(size: 16))
-                    .foregroundStyle(YT.secondary)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(track.title)
+                        .font(.system(size: 24, weight: .bold))
+                        .lineLimit(1)
+                    if track.explicit { ExplicitBadge() }
+                    Image(systemName: "chevron.right").font(.system(size: 18, weight: .bold))
+                }
             }
             .buttonStyle(.plain)
+            Text(track.artist)
+                .font(.system(size: 17))
+                .foregroundStyle(YT.secondary)
+                .lineLimit(1)
             if let status = player.statusText {
                 Text(status)
                     .font(.caption)
@@ -180,8 +203,9 @@ struct NowPlayingView: View {
                             .padding(.trailing, 14)
                     }
                 }
-                .frame(height: 34)
-                .background(YT.raised, in: Capsule())
+                .frame(height: 38)
+                .background(YT.pill, in: Capsule())
+                pill("Lyrics", icon: "quote.opening") { sheet = .lyrics }
                 pill("Save", icon: "text.badge.plus") { addingToPlaylist = true }
                 if library.isDownloaded(track.videoId) {
                     pill("Downloaded", icon: "arrow.down.circle.fill") { library.removeDownload(track) }
@@ -194,9 +218,10 @@ struct NowPlayingView: View {
                     Label("Share", systemImage: "square.and.arrow.up")
                         .font(.system(size: 14, weight: .medium))
                         .padding(.horizontal, 14)
-                        .frame(height: 34)
-                        .background(YT.raised, in: Capsule())
+                        .frame(height: 38)
+                        .background(YT.pill, in: Capsule())
                 }
+                pill("Mix", icon: "dot.radiowaves.left.and.right") { player.startRadio(track) }
             }
             .buttonStyle(.plain)
             .font(.system(size: 14, weight: .medium))
@@ -207,8 +232,8 @@ struct NowPlayingView: View {
         Button(action: action) {
             Label(title, systemImage: icon)
                 .padding(.horizontal, 14)
-                .frame(height: 34)
-                .background(YT.raised, in: Capsule())
+                .frame(height: 38)
+                .background(YT.pill, in: Capsule())
         }
     }
 
@@ -219,12 +244,12 @@ struct NowPlayingView: View {
             }
             Spacer()
             Button { player.previous() } label: {
-                Image(systemName: "backward.end.fill").font(.system(size: 30))
+                Image(systemName: "backward.end.fill").font(.system(size: 34))
             }
             Spacer()
             Button { player.togglePlay() } label: {
                 ZStack {
-                    Circle().fill(.white).frame(width: 72, height: 72)
+                    Circle().fill(.white).frame(width: 80, height: 80)
                     if player.isBuffering, player.isPlaying {
                         ProgressView().tint(.black)
                     } else {
@@ -237,7 +262,7 @@ struct NowPlayingView: View {
             }
             Spacer()
             Button { player.next() } label: {
-                Image(systemName: "forward.end.fill").font(.system(size: 30))
+                Image(systemName: "forward.end.fill").font(.system(size: 34))
             }
             Spacer()
             Button { player.repeatMode = player.repeatMode.next } label: {
@@ -247,27 +272,6 @@ struct NowPlayingView: View {
             }
         }
         .buttonStyle(.plain)
-    }
-
-    /// UP NEXT / LYRICS / RELATED, and AirPlay.
-    private var tabs: some View {
-        HStack {
-            ForEach(Pane.allCases, id: \.self) { target in
-                Button {
-                    withAnimation { pane = pane == target ? nil : target }
-                } label: {
-                    Text(target.title)
-                        .font(.system(size: 13, weight: .bold))
-                        .tracking(0.6)
-                        .foregroundStyle(pane == target ? .white : YT.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 40)
-                }
-                .buttonStyle(.plain)
-            }
-            #if os(iOS)
-            AirPlayButton().frame(width: 40, height: 40)
-            #endif
-        }
     }
 
     /// Sleep timer: pause after a while, or when the song ends.
@@ -321,30 +325,95 @@ private struct PlaylistPicker: View {
     }
 }
 
-/// Position slider; its own view so ticks don't redraw the whole screen.
+/// A thin line like YouTube Music's (its own view so ticks don't redraw
+/// the whole screen); the times show while it's dragged.
 private struct Scrubber: View {
     @Environment(Player.self) private var player
     @State private var dragging: Double?
 
     var body: some View {
+        let duration = max(player.duration, 1)
         let shown = dragging ?? player.position
-        VStack(spacing: 2) {
-            Slider(value: Binding(get: { shown }, set: { dragging = $0 }),
-                   in: 0...max(player.duration, 1),
-                   onEditingChanged: { editing in
-                       if !editing, let target = dragging {
-                           player.seek(to: target)
-                           dragging = nil
-                       }
-                   })
-            HStack {
-                Text(formatTime(shown))
-                Spacer()
-                Text("-" + formatTime(max(0, player.duration - shown)))
+        VStack(spacing: 4) {
+            GeometryReader { geo in
+                let fraction = min(max(shown / duration, 0), 1)
+                let thick: CGFloat = dragging == nil ? 3 : 5
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.white.opacity(0.25)).frame(height: thick)
+                    Capsule().fill(.white).frame(width: geo.size.width * fraction, height: thick)
+                    if dragging != nil {
+                        Circle().fill(.white).frame(width: 14, height: 14)
+                            .offset(x: geo.size.width * fraction - 7)
+                    }
+                }
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { dragging = duration * min(max($0.location.x / geo.size.width, 0), 1) }
+                    .onEnded { _ in
+                        if let target = dragging { player.seek(to: target) }
+                        dragging = nil
+                    })
             }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
+            .frame(height: 24)
+            .animation(.easeOut(duration: 0.15), value: dragging == nil)
+            if dragging != nil {
+                HStack {
+                    Text(formatTime(shown))
+                    Spacer()
+                    Text(formatTime(player.duration))
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(YT.secondary)
+            }
         }
+        .accessibilityElement()
+        .accessibilityLabel("Position")
+        .accessibilityValue(formatTime(shown))
+        .accessibilityAdjustableAction { direction in
+            player.seek(to: player.position + (direction == .increment ? 10 : -10))
+        }
+    }
+}
+
+/// "Up next" / "Lyrics" / "Related": the sheet under the player.
+private struct PanesSheet: View {
+    let track: Track
+    @State var tab: NowPlayingView.Pane
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(NowPlayingView.Pane.allCases) { target in
+                    Button { withAnimation { tab = target } } label: {
+                        VStack(spacing: 8) {
+                            Text(target.title)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(tab == target ? .white : YT.secondary)
+                            Rectangle().fill(tab == target ? Color.white : .clear).frame(width: 48, height: 2)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 18)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Divider().overlay(.white.opacity(0.1))
+            Group {
+                switch tab {
+                case .queue: QueuePane()
+                case .lyrics: LyricsPane(track: player.current ?? track)
+                case .related: RelatedPane(track: player.current ?? track)
+                }
+            }
+            .frame(maxHeight: .infinity)
+            .padding(.horizontal, 16)
+        }
+        .background(YT.surface)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(YT.surface)
     }
 }
 

@@ -1,5 +1,10 @@
 package dev.ytmplayer.android.ui
 
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.ArrowDropDown
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
@@ -108,16 +113,19 @@ fun LibraryScreen() {
     val scope = rememberCoroutineScope()
     var naming by remember { mutableStateOf(false) }
     var filter by rememberSaveable { mutableStateOf<LibraryFilter?>(null) }
+    var byName by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(account.signedIn) {
         if (library.needsFirstSync) library.sync()
     }
 
     PullToRefreshBox(library.syncing, onRefresh = { scope.launch { library.sync() } }) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 96.dp)) {
             item {
                 Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(R.string.library), fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { Router.open(Route.List(LocalList.History)) }) { Icon(Icons.Default.History, stringResource(R.string.history)) }
+                    IconButton(onClick = { Router.select(Tab.Search) }) { Icon(Icons.Default.Search, stringResource(R.string.search)) }
                     IconButton(onClick = { naming = true }) { Icon(Icons.Default.Add, stringResource(R.string.new_playlist)) }
                     AvatarButton()
                 }
@@ -126,7 +134,25 @@ fun LibraryScreen() {
                         ChipButton(stringResource(f.label), filter == f) { filter = if (filter == f) null else f }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
+                // "Recent activity ▾": YouTube Music's order, or by name.
+                Box(Modifier.padding(start = 8.dp, top = 8.dp)) {
+                    var open by remember { mutableStateOf(false) }
+                    Row(
+                        Modifier.clip(CircleShape).clickable { open = true }.padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(stringResource(if (byName) R.string.a_to_z else R.string.recent_activity), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        Icon(Icons.Default.ArrowDropDown, null)
+                    }
+                    DropdownMenu(open, { open = false }) {
+                        listOf(false to R.string.recent_activity, true to R.string.a_to_z).forEach { (value, label) ->
+                            DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = {
+                                byName = value
+                                open = false
+                            })
+                        }
+                    }
+                }
             }
             if (filter == null || filter == LibraryFilter.Songs) {
                 item {
@@ -143,21 +169,15 @@ fun LibraryScreen() {
                     }
                 }
             }
-            if (filter == null) {
-                item {
-                    Entry(stringResource(R.string.history), songsCount(library.history.size), { IconArt(Icons.Default.History) }) {
-                        Router.open(Route.List(LocalList.History))
-                    }
-                }
-            }
             if (filter == null || filter == LibraryFilter.Playlists) {
-                items(library.playlists, key = { it.id }) { p ->
-                    Entry(p.name, songsCount(p.tracks.size), {
-                        Artwork(p.tracks.firstOrNull()?.let { Art.Video(it.videoId) } ?: Art.None, 56.dp)
+                val playlists = if (byName) library.playlists.sortedBy { it.name.lowercase() } else library.playlists
+                items(playlists, key = { it.id }) { p ->
+                    Entry(p.name, stringResource(R.string.kind_count, stringResource(R.string.playlist), songsCount(p.tracks.size)), {
+                        Artwork(p.tracks.firstOrNull()?.let { Art.Video(it.videoId) } ?: Art.None, 64.dp)
                     }) { Router.open(Route.List(LocalList.Playlist(p.id))) }
                 }
             }
-            val saved = library.saved.filter {
+            val saved = (if (byName) library.saved.sortedBy { it.title.lowercase() } else library.saved).filter {
                 when (filter) {
                     null -> true
                     LibraryFilter.Albums -> it.kind == ItemKind.Album
@@ -186,6 +206,26 @@ fun LibraryScreen() {
                 }
             }
         }
+        // "Shuffle all": every liked and playlist song, shuffled.
+        val everything = remember(library.liked, library.playlists) {
+            (library.liked + library.playlists.flatMap { it.tracks }).distinctBy { it.videoId }
+        }
+        if (everything.isNotEmpty()) {
+            Row(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
+                    .clickable { playFrom(everything.shuffled(), 0) }
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.Shuffle, null, Modifier.size(20.dp), tint = Color.Black)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.shuffle_all), color = Color.Black, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            }
+        }
     }
 
     if (naming) {
@@ -198,18 +238,18 @@ fun LibraryScreen() {
 
 /** "Liked music": YouTube Music's purple tile with a thumbs-up. */
 @Composable
-private fun LikedArt() {
+private fun LikedArt(size: androidx.compose.ui.unit.Dp = 64.dp) {
     Box(
-        Modifier.size(56.dp).clip(RoundedCornerShape(5.dp))
+        Modifier.size(size).clip(RoundedCornerShape(5.dp))
             .background(Brush.verticalGradient(listOf(Color(0xFF8C73F2), Color(0xFFE566BF)))),
         contentAlignment = Alignment.Center,
-    ) { Icon(Icons.Default.ThumbUp, null, tint = Color.White) }
+    ) { Icon(Icons.Default.ThumbUp, null, Modifier.size(size * 0.4f), tint = Color.White) }
 }
 
 @Composable
-private fun IconArt(icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    Box(Modifier.size(56.dp).clip(RoundedCornerShape(5.dp)).background(YT.surface), contentAlignment = Alignment.Center) {
-        Icon(icon, null, tint = Color.White)
+private fun IconArt(icon: androidx.compose.ui.graphics.vector.ImageVector, size: androidx.compose.ui.unit.Dp = 64.dp) {
+    Box(Modifier.size(size).clip(RoundedCornerShape(5.dp)).background(YT.surface), contentAlignment = Alignment.Center) {
+        Icon(icon, null, Modifier.size(size * 0.4f), tint = Color.White)
     }
 }
 
@@ -217,13 +257,13 @@ private fun IconArt(icon: androidx.compose.ui.graphics.vector.ImageVector) {
 @Composable
 private fun Entry(title: String, subtitle: String, art: @Composable () -> Unit, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 6.dp),
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         art()
-        Spacer(Modifier.width(14.dp))
+        Spacer(Modifier.width(16.dp))
         Column {
-            Text(title, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitle, fontSize = 14.sp, color = YT.secondary)
         }
     }
@@ -414,7 +454,7 @@ fun TrackListScreen(list: LocalList) {
     var confirmDelete by remember { mutableStateOf(false) }
     val playlist = (list as? LocalList.Playlist)?.let { p -> library.playlists.firstOrNull { it.id == p.id } }
     Column(Modifier.fillMaxSize()) {
-        TopBar(library.title(list), back = true) {
+        TopBar("", back = true) {
             if (list == LocalList.History && tracks.isNotEmpty()) {
                 TextButton(onClick = { library.clearHistory() }) { Text(stringResource(R.string.clear)) }
             }
@@ -459,15 +499,25 @@ fun TrackListScreen(list: LocalList) {
         }
         LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
             item {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Text(songsCount(tracks.size), fontSize = 14.sp, color = YT.secondary)
-                    Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        PlayButtons(tracks)
-                        Spacer(Modifier.width(20.dp))
-                        if (list != LocalList.Downloads) DownloadAllButton(tracks)
+                // YouTube Music's list header: the picture, the name, "N songs", ⬇ ▶ shuffle.
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    when (list) {
+                        LocalList.Liked -> LikedArt(200.dp)
+                        LocalList.Downloads -> IconArt(Icons.Default.DownloadForOffline, 200.dp)
+                        LocalList.History -> IconArt(Icons.Default.History, 200.dp)
+                        else -> Artwork(tracks.firstOrNull()?.let { Art.Video(it.videoId) } ?: Art.None, 200.dp)
                     }
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(16.dp))
+                    Text(library.title(list), fontSize = 26.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(4.dp))
+                    Text(songsCount(tracks.size), fontSize = 14.sp, color = YT.secondary)
+                    Spacer(Modifier.height(18.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (list != LocalList.Downloads) DownloadAllButton(tracks)
+                        CircleIcon(Icons.Default.PlayArrow, stringResource(R.string.play), 64.dp, filled = true) { playFrom(tracks, 0) }
+                        CircleIcon(Icons.Default.Shuffle, stringResource(R.string.shuffle)) { playFrom(tracks.shuffled(), 0) }
+                    }
+                    Spacer(Modifier.height(16.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(Sort.entries) { s ->
                             ChipButton(stringResource(s.label), sort == s) { sort = s }
@@ -573,8 +623,8 @@ fun DownloadAllButton(tracks: List<dev.ytmplayer.core.Track>) {
     when {
         all -> CircleIcon(Icons.Default.DownloadDone, stringResource(R.string.downloaded)) {}
         running -> Box(contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(Modifier.size(44.dp), color = Color.White, strokeWidth = 2.dp)
-            CircleIcon(Icons.Default.Stop, stringResource(R.string.stop_downloads), 36.dp) { library.cancelDownloads() }
+            CircularProgressIndicator(Modifier.size(48.dp), color = Color.White, strokeWidth = 2.dp)
+            CircleIcon(Icons.Default.Stop, stringResource(R.string.stop_downloads), 40.dp) { library.cancelDownloads() }
         }
         else -> CircleIcon(Icons.Default.Download, stringResource(R.string.download_all), enabled = tracks.isNotEmpty()) {
             library.download(tracks)

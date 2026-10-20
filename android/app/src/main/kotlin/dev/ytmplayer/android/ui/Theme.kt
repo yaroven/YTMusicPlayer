@@ -135,7 +135,7 @@ fun OutlinePill(title: String, onClick: () -> Unit) {
 
 /** A round icon button with a translucent fill (page and player actions). */
 @Composable
-fun CircleIcon(icon: ImageVector, label: String, size: Dp = 44.dp, filled: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
+fun CircleIcon(icon: ImageVector, label: String, size: Dp = 48.dp, filled: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
     Box(
         Modifier
             .size(size)

@@ -150,7 +150,7 @@ struct TrackRow: View {
                             .foregroundStyle(isCurrent ? .white : YT.secondary)
                             .frame(width: 24)
                     } else {
-                        Artwork(source: .video(track.videoId), size: 48)
+                        Artwork(source: .video(track.videoId), size: 56)
                             .overlay {
                                 if isCurrent {
                                     Image(systemName: player.isPlaying ? "waveform" : "play.fill")
@@ -162,7 +162,7 @@ struct TrackRow: View {
                     }
                     VStack(alignment: .leading, spacing: 3) {
                         Text(track.title)
-                            .font(.system(size: 16))
+                            .font(.system(size: 17))
                             .lineLimit(1)
                         HStack(spacing: 5) {
                             if track.explicit { ExplicitBadge() }
@@ -353,8 +353,20 @@ struct ShelfView: View {
                             .lineLimit(1)
                     }
                     Spacer(minLength: 8)
+                    // Videos keep "Play all"; song shelves show YouTube Music's ›, which plays them.
                     if songs.count > 1 {
-                        OutlinePill(title: "Play all") { player.playFrom(songs, at: 0) }
+                        if shelf.style == .wide {
+                            OutlinePill(title: "Play all") { player.playFrom(songs, at: 0) }
+                        } else {
+                            Button { player.playFrom(songs, at: 0) } label: {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .frame(width: 36, height: 36)
+                                    .overlay(Circle().stroke(.white.opacity(0.3)))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Play all")
+                        }
                     }
                 }
                 .padding(.horizontal)

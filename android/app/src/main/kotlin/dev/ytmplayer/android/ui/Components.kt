@@ -1,5 +1,6 @@
 package dev.ytmplayer.android.ui
 
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -215,10 +216,10 @@ fun TrackRow(
             )
         } else {
             Box {
-                Artwork(Art.Video(track.videoId), 48.dp)
+                Artwork(Art.Video(track.videoId), 56.dp)
                 if (current) {
                     Box(
-                        Modifier.size(48.dp).clip(RoundedCornerShape(5.dp)).background(Color.Black.copy(alpha = 0.5f)),
+                        Modifier.size(56.dp).clip(RoundedCornerShape(5.dp)).background(Color.Black.copy(alpha = 0.5f)),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -229,9 +230,9 @@ fun TrackRow(
                 }
             }
         }
-        Spacer(Modifier.width(14.dp))
+        Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
-            Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp)
+            Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 17.sp)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (track.explicit) {
                     ExplicitBadge()
@@ -474,7 +475,18 @@ fun ShelfView(shelf: Shelf, showTitle: Boolean = true) {
                     }
                     Text(shelf.title, fontSize = 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                if (songs.size > 1) OutlinePill(stringResource(R.string.play_all)) { playFrom(songs, 0) }
+                // Videos keep "Play all"; song shelves show YouTube Music's ›, which plays them.
+                if (songs.size > 1) {
+                    if (shelf.style == ShelfStyle.Wide) {
+                        OutlinePill(stringResource(R.string.play_all)) { playFrom(songs, 0) }
+                    } else {
+                        Box(
+                            Modifier.size(36.dp).clip(CircleShape).border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
+                                .clickable { playFrom(songs, 0) },
+                            contentAlignment = Alignment.Center,
+                        ) { Icon(Icons.Default.ChevronRight, stringResource(R.string.play_all), Modifier.size(22.dp)) }
+                    }
+                }
             }
         }
         when {

@@ -409,8 +409,8 @@ struct PageView: View {
         }
     }
 
-    /// Art, title, subtitle, then save / play / shuffle (also before the
-    /// songs are in).
+    /// Art, title, subtitle, then YouTube Music's three circles: download
+    /// all, play, and ⋮ with save / shuffle (also before the songs are in).
     private func header(title: String, subtitle: String, art: ArtworkSource, round: Bool,
                         tracks: [Track], page: Page?) -> some View {
         VStack(spacing: 14) {
@@ -425,19 +425,29 @@ struct PageView: View {
                     .foregroundStyle(YT.secondary)
                     .multilineTextAlignment(.center)
             }
-            HStack(spacing: 22) {
-                if let page {
-                    CircleIcon(icon: library.isSaved(page.id) ? "bookmark.fill" : "bookmark") {
-                        library.toggleSaved(page)
-                    }
-                } else {
-                    CircleIcon(icon: "bookmark") {}.disabled(true)
-                }
+            HStack(spacing: 28) {
+                DownloadAllButton(tracks: tracks)
                 CircleIcon(icon: "play.fill", size: 64, filled: true) { player.playFrom(tracks, at: 0) }
                     .disabled(tracks.isEmpty)
-                CircleIcon(icon: "shuffle") { player.playFrom(tracks.shuffled(), at: 0) }
-                    .disabled(tracks.isEmpty)
-                DownloadAllButton(tracks: tracks)
+                Menu {
+                    if let page {
+                        let saved = library.isSaved(page.id)
+                        Button(saved ? "Remove from library" : "Save", systemImage: saved ? "bookmark.fill" : "bookmark") {
+                            library.toggleSaved(page)
+                        }
+                    }
+                    if !tracks.isEmpty {
+                        Button("Shuffle", systemImage: "shuffle") { player.playFrom(tracks.shuffled(), at: 0) }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .rotationEffect(.degrees(90))
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 48, height: 48)
+                        .background(YT.raised, in: Circle())
+                }
+                .accessibilityLabel("More")
             }
             .padding(.top, 4)
         }
@@ -508,15 +518,29 @@ private enum LibraryFilter: String, CaseIterable, Identifiable {
 struct LibraryView: View {
     @Environment(Library.self) private var library
     @Environment(Account.self) private var account
+    @Environment(Router.self) private var router
+    @Environment(Player.self) private var player
     @State private var filter: LibraryFilter?
+    @AppStorage("library.byName") private var byName = false
+    @State private var showHistory = false
     @State private var naming = false
     @State private var newName = ""
 
     var body: some View {
         List {
-            HStack {
+            HStack(spacing: 18) {
                 Text("Library").font(.system(size: 28, weight: .bold))
                 Spacer()
+                Button { showHistory = true } label: {
+                    Image(systemName: "clock.arrow.circlepath").font(.system(size: 20, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("History")
+                Button { router.tab = .search } label: {
+                    Image(systemName: "magnifyingglass").font(.system(size: 20, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Search")
                 Button {
                     newName = ""
                     naming = true
@@ -524,7 +548,6 @@ struct LibraryView: View {
                     Image(systemName: "plus").font(.system(size: 20, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .padding(.trailing, 8)
                 .accessibilityLabel("New playlist")
                 AvatarButton()
             }
@@ -545,6 +568,22 @@ struct LibraryView: View {
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
 
+            // "Recent activity ▾": YouTube Music's order, or by name.
+            Menu {
+                Picker("", selection: $byName) {
+                    Text("Recent activity").tag(false)
+                    Text("A–Z").tag(true)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(byName ? "A–Z" : "Recent activity").font(.system(size: 15, weight: .medium))
+                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+            }
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+
             if filter == nil || filter == .songs {
                 entry(.liked, title: account.signedIn ? "Liked music" : "Liked songs",
                       count: library.liked.count) { LikedArt() }
@@ -554,15 +593,11 @@ struct LibraryView: View {
                     IconArt(icon: "arrow.down.circle.fill")
                 }
             }
-            if filter == nil {
-                entry(.history, title: "History", count: library.history.count) {
-                    IconArt(icon: "clock.arrow.circlepath")
-                }
-            }
             if filter == nil || filter == .playlists {
-                ForEach(library.playlists) { playlist in
-                    entry(.playlist(playlist.id), title: LocalizedStringKey(playlist.name), count: playlist.tracks.count) {
-                        Artwork(source: playlist.tracks.first.map { .video($0.videoId) } ?? .none, size: 56)
+                ForEach(byName ? library.playlists.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                               : library.playlists) { playlist in
+                    entry(.playlist(playlist.id), title: LocalizedStringKey(playlist.name), count: playlist.tracks.count, playlist: true) {
+                        Artwork(source: playlist.tracks.first.map { .video($0.videoId) } ?? .none, size: 64)
                     }
                     .swipeActions {
                         Button("Delete", role: .destructive) {
@@ -573,7 +608,8 @@ struct LibraryView: View {
                     }
                 }
             }
-            ForEach(library.saved.filter(shows)) { saved in
+            ForEach((byName ? library.saved.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+                             : library.saved).filter(shows)) { saved in
                 ItemRow(item: Item(kind: saved.kind, browseId: saved.id, title: saved.title,
                                    subtitle: saved.subtitle, thumbnail: saved.thumbnail))
                     .swipeActions {
@@ -595,8 +631,11 @@ struct LibraryView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 64) }
+        .overlay(alignment: .bottomTrailing) { shuffleAll }
         .background(YT.background)
         .hiddenNavigationBar()
+        .navigationDestination(isPresented: $showHistory) { TrackListView(list: .history) }
         .refreshable { await library.sync() }
         .task {
             if library.needsFirstSync { await library.sync() }
@@ -621,6 +660,26 @@ struct LibraryView: View {
         }
     }
 
+    /// "Shuffle all": every liked and playlist song, shuffled.
+    @ViewBuilder private var shuffleAll: some View {
+        let everything = (library.liked + library.playlists.flatMap(\.tracks)).reduce(into: [Track]()) { all, track in
+            if !all.contains(where: { $0.videoId == track.videoId }) { all.append(track) }
+        }
+        if !everything.isEmpty {
+            Button { player.playFrom(everything.shuffled(), at: 0) } label: {
+                Label("Shuffle all", systemImage: "shuffle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 18)
+                    .frame(height: 46)
+                    .background(.white, in: Capsule())
+                    .shadow(color: .black.opacity(0.4), radius: 8, y: 4)
+            }
+            .buttonStyle(.plain)
+            .padding(16)
+        }
+    }
+
     private func shows(_ saved: SavedPage) -> Bool {
         switch filter {
         case nil: true
@@ -631,14 +690,16 @@ struct LibraryView: View {
         }
     }
 
-    private func entry<Art: View>(_ list: LocalList, title: LocalizedStringKey, count: Int,
+    private func entry<Art: View>(_ list: LocalList, title: LocalizedStringKey, count: Int, playlist: Bool = false,
                                   @ViewBuilder art: () -> Art) -> some View {
         NavigationLink { TrackListView(list: list) } label: {
-            HStack(spacing: 14) {
+            HStack(spacing: 16) {
                 art()
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.system(size: 16)).lineLimit(1)
-                    Text("\(count) songs").font(.system(size: 14)).foregroundStyle(YT.secondary)
+                    Text(title).font(.system(size: 17)).lineLimit(1)
+                    let songs = String(localized: "\(count) songs")
+                    Text(playlist ? String(localized: "Playlist • \(songs)") : songs)
+                        .font(.system(size: 14)).foregroundStyle(YT.secondary)
                 }
             }
         }
@@ -649,23 +710,26 @@ struct LibraryView: View {
 
 /// "Liked music": YouTube Music's purple tile with a thumbs-up.
 private struct LikedArt: View {
+    var size: CGFloat = 64
+
     var body: some View {
         RoundedRectangle(cornerRadius: 5)
             .fill(LinearGradient(colors: [Color(red: 0.55, green: 0.45, blue: 0.95), Color(red: 0.9, green: 0.4, blue: 0.75)],
                                  startPoint: .top, endPoint: .bottom))
-            .overlay { Image(systemName: "hand.thumbsup.fill").font(.system(size: 24)).foregroundStyle(.white) }
-            .frame(width: 56, height: 56)
+            .overlay { Image(systemName: "hand.thumbsup.fill").font(.system(size: size * 0.4)).foregroundStyle(.white) }
+            .frame(width: size, height: size)
     }
 }
 
 private struct IconArt: View {
     let icon: String
+    var size: CGFloat = 64
 
     var body: some View {
         RoundedRectangle(cornerRadius: 5)
             .fill(YT.surface)
-            .overlay { Image(systemName: icon).font(.system(size: 24)).foregroundStyle(.white) }
-            .frame(width: 56, height: 56)
+            .overlay { Image(systemName: icon).font(.system(size: size * 0.4)).foregroundStyle(.white) }
+            .frame(width: size, height: size)
     }
 }
 
@@ -699,10 +763,10 @@ struct DownloadAllButton: View {
             CircleIcon(icon: "arrow.down.circle.fill") {}
         } else if running {
             ZStack {
-                ProgressView().scaleEffect(1.6)
-                CircleIcon(icon: "stop.fill", size: 36) { library.cancelDownloads() }
+                ProgressView().scaleEffect(1.7)
+                CircleIcon(icon: "stop.fill", size: 40) { library.cancelDownloads() }
             }
-            .frame(width: 44, height: 44)
+            .frame(width: 48, height: 48)
         } else {
             CircleIcon(icon: "arrow.down") { library.download(tracks) }
                 .disabled(tracks.isEmpty)
@@ -742,17 +806,29 @@ struct TrackListView: View {
         let original = library.tracks(list)
         let tracks = sort.apply(original, plays: library.plays)
         List {
-            VStack(alignment: .leading, spacing: 10) {
+            // YouTube Music's list header: the picture, the name, "N songs", ⬇ ▶ shuffle.
+            VStack(spacing: 10) {
+                Group {
+                    switch list {
+                    case .liked: LikedArt(size: 200)
+                    case .downloads: IconArt(icon: "arrow.down.circle.fill", size: 200)
+                    case .history: IconArt(icon: "clock.arrow.circlepath", size: 200)
+                    default: Artwork(source: tracks.first.map { .video($0.videoId) } ?? .none, size: 200)
+                    }
+                }
+                .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
+                .padding(.bottom, 6)
                 Text(library.title(list))
                     .font(.system(size: 26, weight: .bold))
+                    .multilineTextAlignment(.center)
                 Text("\(tracks.count) songs")
                     .font(.system(size: 14))
                     .foregroundStyle(YT.secondary)
                 if !tracks.isEmpty {
-                    HStack(spacing: 20) {
-                        CircleIcon(icon: "play.fill", size: 56, filled: true) { player.playFrom(tracks, at: 0) }
-                        CircleIcon(icon: "shuffle") { player.playFrom(tracks.shuffled(), at: 0) }
+                    HStack(spacing: 28) {
                         if list != .downloads { DownloadAllButton(tracks: tracks) }
+                        CircleIcon(icon: "play.fill", size: 64, filled: true) { player.playFrom(tracks, at: 0) }
+                        CircleIcon(icon: "shuffle") { player.playFrom(tracks.shuffled(), at: 0) }
                     }
                     .padding(.top, 4)
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -768,6 +844,7 @@ struct TrackListView: View {
                 }
                 if list == .downloads { DownloadProgress() }
             }
+            .frame(maxWidth: .infinity)
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
             ForEach(Array(tracks.enumerated()), id: \.offset) { i, track in

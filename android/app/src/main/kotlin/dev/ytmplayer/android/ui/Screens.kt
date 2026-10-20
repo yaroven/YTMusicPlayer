@@ -1,5 +1,8 @@
 package dev.ytmplayer.android.ui
 
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.animation.core.RepeatMode as AnimRepeat
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -424,7 +427,10 @@ private fun PageContent(page: Page, cardTitle: String, showAll: Boolean, onShowA
     }
 }
 
-/** Art, title, subtitle, then save / play / shuffle (also before the songs are in). */
+/**
+ * Art, title, subtitle, then YouTube Music's three circles: download all,
+ * play, and ⋮ with save / shuffle / radio (also before the songs are in).
+ */
 @Composable
 private fun PageHeader(title: String, subtitle: String, thumbnail: String?, round: Boolean, tracks: List<Track>, page: Page?) {
     val library = App.instance.library
@@ -436,20 +442,39 @@ private fun PageHeader(title: String, subtitle: String, thumbnail: String?, roun
             Spacer(Modifier.height(4.dp))
             Text(subtitle, fontSize = 14.sp, color = YT.secondary, textAlign = TextAlign.Center)
         }
-        Spacer(Modifier.height(16.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            val saved = page != null && library.isSaved(page.id)
-            CircleIcon(
-                if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, stringResource(R.string.save),
-                enabled = page != null,
-            ) { page?.let(library::toggleSaved) }
+        Spacer(Modifier.height(18.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+            DownloadAllButton(tracks)
             CircleIcon(Icons.Default.PlayArrow, stringResource(R.string.play), 64.dp, filled = true, enabled = tracks.isNotEmpty()) {
                 playFrom(tracks, 0)
             }
-            CircleIcon(Icons.Default.Shuffle, stringResource(R.string.shuffle), enabled = tracks.isNotEmpty()) {
-                playFrom(tracks.shuffled(), 0)
+            Box {
+                var menu by remember { mutableStateOf(false) }
+                CircleIcon(Icons.Default.MoreVert, stringResource(R.string.more)) { menu = true }
+                DropdownMenu(menu, { menu = false }) {
+                    if (page != null) {
+                        val saved = library.isSaved(page.id)
+                        DropdownMenuItem(
+                            text = { Text(stringResource(if (saved) R.string.remove_from_library else R.string.save)) },
+                            leadingIcon = { Icon(if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, null) },
+                            onClick = {
+                                menu = false
+                                library.toggleSaved(page)
+                            },
+                        )
+                    }
+                    if (tracks.isNotEmpty()) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.shuffle)) },
+                            leadingIcon = { Icon(Icons.Default.Shuffle, null) },
+                            onClick = {
+                                menu = false
+                                playFrom(tracks.shuffled(), 0)
+                            },
+                        )
+                    }
+                }
             }
-            DownloadAllButton(tracks)
         }
     }
 }
@@ -457,8 +482,8 @@ private fun PageHeader(title: String, subtitle: String, thumbnail: String?, roun
 /** Play and shuffle for a list (liked songs, a playlist…). */
 @Composable
 fun PlayButtons(tracks: List<Track>) {
-    Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-        CircleIcon(Icons.Default.PlayArrow, stringResource(R.string.play), 56.dp, filled = true, enabled = tracks.isNotEmpty()) {
+    Row(horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.CenterVertically) {
+        CircleIcon(Icons.Default.PlayArrow, stringResource(R.string.play), 64.dp, filled = true, enabled = tracks.isNotEmpty()) {
             playFrom(tracks, 0)
         }
         CircleIcon(Icons.Default.Shuffle, stringResource(R.string.shuffle), enabled = tracks.isNotEmpty()) {

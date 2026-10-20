@@ -7,6 +7,8 @@ enum YT {
     static let background = Color(red: 0.012, green: 0.012, blue: 0.012)
     static let surface = Color(red: 0.13, green: 0.13, blue: 0.13)
     static let raised = Color.white.opacity(0.1)
+    /// The player's pills (YouTube Music's #272727).
+    static let pill = Color(red: 0.153, green: 0.153, blue: 0.153)
     static let secondary = Color(white: 0.67)
     static let red = Color(red: 1, green: 0, blue: 0)
     static let sectionTitle = Font.system(size: 22, weight: .bold)
@@ -97,7 +99,7 @@ struct OutlinePill: View {
 /// A round icon button with a translucent fill (page and player actions).
 struct CircleIcon: View {
     let icon: String
-    var size: CGFloat = 44
+    var size: CGFloat = 48
     var filled = false
     let action: () -> Void
 
