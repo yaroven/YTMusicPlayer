@@ -864,6 +864,8 @@ fn sorting_saving_the_queue_and_clearing_history() {
 
 /// "Video" is dimmed without a clip, and another song while a clip is on
 /// closes the clip and plays the song (the clip used to keep playing).
+/// (Linux plays clips in a window of their own.)
+#[cfg(any(target_os = "macos", windows))]
 #[test]
 fn another_song_closes_the_clip() {
     let mut h = harness();
