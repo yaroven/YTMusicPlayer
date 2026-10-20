@@ -37,6 +37,7 @@ class App : Application() {
         super.onCreate()
         instance = this
         Covers.init(this)
+        KeptLyrics.init(this)
         settings = Settings(this)
         network = Network(this)
         val store = SecureStore(this)

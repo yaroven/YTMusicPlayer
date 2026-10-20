@@ -178,29 +178,15 @@ data class Lyrics(val lines: List<LyricLine>, val source: String) {
     val hasIntro: Boolean get() = synced && (lines.firstOrNull()?.at ?: 0.0) >= INTRO_GAP
 
     /**
-     * When each word of line `i` starts: the lyrics' own times, else spread
-     * by length over the time the line is sung (as the desktop player's
-     * `Lyrics::word_times`).
+     * When each word of line `i` starts, when the lyrics time words
+     * (Enhanced LRC); empty otherwise — guessed word times lit words out of
+     * step with the singing, so the line lights up whole (as the desktop
+     * player's `Lyrics::word_times`).
      */
     fun wordTimes(i: Int): List<Double> {
         val line = lines.getOrNull(i) ?: return emptyList()
         val words = line.words
-        if (line.wordTimes.size == words.size && words.isNotEmpty()) return line.wordTimes
-        val start = line.at ?: return emptyList()
-        val chars = words.map { maxOf(1, it.trim().length) }
-        val total = chars.sum()
-        var span = PER_CHAR * total + LINE_EXTRA
-        val next = lines.getOrNull(i + 1)?.at
-        if (next != null) {
-            val gap = next - start
-            span = maxOf(minOf(span, gap - 0.2), minOf(gap, 0.5))
-        }
-        var before = 0
-        return chars.map { c ->
-            val t = start + span * before / maxOf(total, 1)
-            before += c
-            t
-        }
+        return if (line.wordTimes.size == words.size && words.isNotEmpty()) line.wordTimes else emptyList()
     }
 
     fun progress(position: Double): LyricsProgress? {
@@ -217,7 +203,10 @@ data class Lyrics(val lines: List<LyricLine>, val source: String) {
             return LyricsProgress(line, minOf(3, ((position - start) / maxOf(end - start, 0.1) * 4).toInt()))
         }
         val words = current.words
-        val sung = wordTimes(line).count { it <= position }
+        val times = wordTimes(line)
+        // Only lines are timed: the line lights up whole.
+        if (times.isEmpty()) return LyricsProgress(line, words.size, current.text.length)
+        val sung = times.count { it <= position }
         // Every word that has started lights up whole (not letter by letter).
         val chars = words.take(minOf(sung, words.size)).sumOf { it.length }
         return LyricsProgress(line, sung, chars)
@@ -226,8 +215,42 @@ data class Lyrics(val lines: List<LyricLine>, val source: String) {
     companion object {
         /** Before the first line, a gap this long shows as an instrumental intro. */
         const val INTRO_GAP = 4.0
-        private const val PER_CHAR = 0.085
-        private const val LINE_EXTRA = 0.4
+
+        /** Kept lyrics (see [toJson]); null when it isn't such JSON. */
+        fun fromJson(o: JSONObject): Lyrics? = runCatching {
+            val lines = o.getJSONArray("lines")
+            Lyrics(
+                (0 until lines.length()).map { i ->
+                    val l = lines.getJSONObject(i)
+                    val times = l.optJSONArray("words")
+                    LyricLine(
+                        if (l.has("at")) l.getDouble("at") else null,
+                        l.getString("text"),
+                        times?.let { t -> (0 until t.length()).map(t::getDouble) }.orEmpty(),
+                    )
+                },
+                o.getString("source"),
+            )
+        }.getOrNull()
+    }
+
+    /** For keeping on disk (a downloaded song's lyrics, offline). */
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("source", source)
+        put(
+            "lines",
+            org.json.JSONArray().apply {
+                lines.forEach { l ->
+                    put(
+                        JSONObject().apply {
+                            l.at?.let { put("at", it) }
+                            put("text", l.text)
+                            if (l.wordTimes.isNotEmpty()) put("words", org.json.JSONArray(l.wordTimes))
+                        },
+                    )
+                }
+            },
+        )
     }
 }
 

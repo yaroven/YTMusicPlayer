@@ -553,7 +553,8 @@ private fun LyricsPane(track: Track) {
     val player = app.player
     val lyrics = rememberLoad(track.videoId) {
         val duration = track.durationSecs?.toDouble() ?: player.duration.takeIf { it > 0 }
-        app.lyrics.find(track, duration) ?: NoLyrics
+        // Kept on the phone (a download's, or played lately): offline too.
+        dev.ytmplayer.android.KeptLyrics.find(track, duration, app.library.downloadedIds) ?: NoLyrics
     }
     Loaded(lyrics) { found ->
         if (found === NoLyrics) {

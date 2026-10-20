@@ -550,13 +550,25 @@ impl Session {
             .duration_secs
             .map(|s| std::time::Duration::from_secs(s.into()))
             .or(self.player_status.duration);
-        let (http, catalog, tx) = (
+        let (http, catalog, tx, cache) = (
             self.deps.http.clone(),
             self.deps.catalog.clone(),
             self.tx.clone(),
+            self.deps.lyrics_cache.clone(),
         );
+        let downloaded = self.downloaded_ids();
         tokio::spawn(async move {
-            let result = lyrics::find(&http, &catalog, &track, duration).await;
+            // Kept on disk (a download's, or played lately): offline too.
+            let result = match cache.get(&track.video_id) {
+                Some(kept) => Ok(Some(kept)),
+                None => {
+                    let found = lyrics::find(&http, &catalog, &track, duration).await;
+                    if let Ok(Some(found)) = &found {
+                        cache.put(&track.video_id, found, |id| downloaded.contains(id));
+                    }
+                    found
+                }
+            };
             let _ = tx.send(Background::Lyrics {
                 video_id: track.video_id,
                 result,

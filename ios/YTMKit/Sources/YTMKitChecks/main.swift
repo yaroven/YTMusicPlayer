@@ -144,10 +144,11 @@ let albumRow = #"""
     check(cleanTitle(artist: "Queen", title: "Bohemian Rhapsody") == ("Queen", "Bohemian Rhapsody"), "clean 4")
 
     let karaoke = Lyrics(lines: parseLrc("[00:10.00] One two three\n[00:20.00]\n[00:30.00] Last"), source: "LRCLIB")
-    let times = karaoke.wordTimes(0)
-    check(times.count == 3 && times[0] == 10 && times[2] > times[1] && times[2] < 12, "word times \(times)")
-    check(karaoke.progress(at: 10.1)?.words == 1 && karaoke.progress(at: 10.1)?.chars == 4, "first word lights up whole")
-    check(karaoke.progress(at: 15)?.words == 3 && karaoke.progress(at: 15)?.chars == 13, "whole line")
+    // Only lines timed: no guessed word times, the line lights up whole.
+    check(karaoke.wordTimes(0).isEmpty, "no guessed word times")
+    check(karaoke.progress(at: 10.1)?.words == 3 && karaoke.progress(at: 10.1)?.chars == 13, "whole line at once")
+    let kept = (try? JSONEncoder().encode(karaoke)).flatMap { try? JSONDecoder().decode(Lyrics.self, from: $0) }
+    check(kept?.lines == karaoke.lines && kept?.source == "LRCLIB", "lyrics survive being kept on disk")
     check(karaoke.lines[1].instrumental && karaoke.progress(at: 28) == LyricsProgress(line: 1, words: 3), "instrumental dots")
     check(karaoke.hasIntro && karaoke.progress(at: 5) == LyricsProgress(line: -1, words: 2), "intro")
     let exact = Lyrics(lines: parseLrc("[00:05.00] <00:05.00>Hello <00:07.00>world"), source: "LRCLIB")

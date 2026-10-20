@@ -4,10 +4,13 @@
 //! YouTube titles are noisy ("ABBA - Dancing Queen (Official Video)"), so
 //! the query is cleaned up first and the match is checked by duration.
 
-use std::time::Duration;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{api::models::Track, catalog::Catalog};
 
@@ -18,16 +21,16 @@ const LRCLIB_ATTEMPTS: u32 = 3;
 const DURATION_SLACK: f64 = 4.0;
 
 /// One line; `at` is when it starts (synced lyrics only).
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Line {
     pub at: Option<Duration>,
     pub text: String,
-    /// Word timings when the lyrics have them (Enhanced LRC); else they're
-    /// estimated, see [`Lyrics::progress`].
+    /// Word timings when the lyrics have them (Enhanced LRC); without them
+    /// the whole line lights up at once, see [`Lyrics::progress`].
     pub words: Vec<Word>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Word {
     pub at: Duration,
     pub text: String,
@@ -75,17 +78,14 @@ pub struct Progress {
     pub words: usize,
     /// Characters of the line lit so far: every word that has started,
     /// whole (a word lights up at once, not letter by letter — the user's
-    /// choice, 2026-10-18).
+    /// choice, 2026-10-18); the whole line when only lines are timed.
     pub chars: usize,
 }
 
-/// Estimated singing pace when the lyrics only time lines.
-const PER_CHAR: Duration = Duration::from_millis(85);
-const LINE_EXTRA: Duration = Duration::from_millis(400);
 /// A gap this long before the first line gets an instrumental line.
 pub const INTRO_GAP: Duration = Duration::from_secs(4);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Lyrics {
     pub lines: Vec<Line>,
     /// "LRCLIB" or YouTube Music's credit ("Source: Musixmatch").
@@ -97,9 +97,10 @@ impl Lyrics {
         self.lines.first().is_some_and(|l| l.at.is_some())
     }
 
-    /// When each word of line `i` starts: the lyrics' own word timings,
-    /// else spread by length over the time the line is sung (it ends
-    /// before the next line, and isn't sung slower than [`PER_CHAR`]).
+    /// When each word of line `i` starts, when the lyrics time words
+    /// (Enhanced LRC); empty otherwise — guessing them from the words'
+    /// lengths lit words out of step with the singing (the user's call,
+    /// 2026-10-20: lines then, not words).
     pub fn word_times(&self, i: usize) -> Vec<Duration> {
         let Some(line) = self.lines.get(i) else {
             return Vec::new();
@@ -108,30 +109,7 @@ impl Lyrics {
         if line.words.len() == words.len() && !words.is_empty() {
             return line.words.iter().map(|w| w.at).collect();
         }
-        let Some(start) = line.at else {
-            return Vec::new();
-        };
-        let chars: Vec<usize> = words
-            .iter()
-            .map(|w| w.trim().chars().count().max(1))
-            .collect();
-        let total: usize = chars.iter().sum();
-        let mut span = PER_CHAR * total as u32 + LINE_EXTRA;
-        if let Some(next) = self.lines.get(i + 1).and_then(|l| l.at) {
-            let gap = next.saturating_sub(start);
-            span = span
-                .min(gap.saturating_sub(Duration::from_millis(200)))
-                .max(gap.min(Duration::from_millis(500)));
-        }
-        let mut before = 0;
-        chars
-            .iter()
-            .map(|&c| {
-                let at = start + span.mul_f64(before as f64 / total.max(1) as f64);
-                before += c;
-                at
-            })
-            .collect()
+        Vec::new()
     }
 
     /// The line sung at `position` and how many of its words are.
@@ -155,6 +133,14 @@ impl Lyrics {
         }
         let times = self.word_times(line);
         let words = current.split_words();
+        // Only lines are timed: the line lights up whole.
+        if times.is_empty() {
+            return Some(Progress {
+                line,
+                words: words.len(),
+                chars: current.text.chars().count(),
+            });
+        }
         let sung = times.iter().filter(|at| **at <= position).count();
         let chars: usize = words[..sung.min(words.len())]
             .iter()
@@ -175,6 +161,86 @@ impl Lyrics {
         self.lines
             .iter()
             .rposition(|l| l.at.is_some_and(|at| at <= position))
+    }
+}
+
+/// Lyrics kept on disk (`<data_dir>/lyrics/<video id>.json`): every
+/// downloaded song's, so they show offline, and the last [`Cache::RECENT`]
+/// others, so a song played again doesn't ask LRCLIB again.
+#[derive(Clone, Default)]
+pub struct Cache {
+    dir: Option<PathBuf>,
+}
+
+impl Cache {
+    pub const RECENT: usize = 50;
+
+    pub fn new(dir: PathBuf) -> Self {
+        Self { dir: Some(dir) }
+    }
+
+    fn file(&self, video_id: &str) -> Option<PathBuf> {
+        let dir = self.dir.as_ref()?;
+        // Video ids are 11 URL-safe characters; nothing else names a file.
+        let valid = video_id.len() == 11
+            && video_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        valid.then(|| dir.join(format!("{video_id}.json")))
+    }
+
+    pub fn get(&self, video_id: &str) -> Option<Lyrics> {
+        let data = std::fs::read(self.file(video_id)?).ok()?;
+        serde_json::from_slice(&data).ok()
+    }
+
+    pub fn contains(&self, video_id: &str) -> bool {
+        self.file(video_id).is_some_and(|f| f.exists())
+    }
+
+    /// Saves `lyrics`, then drops the oldest that `keep` (the downloaded
+    /// songs) doesn't name, beyond [`Cache::RECENT`].
+    pub fn put(&self, video_id: &str, lyrics: &Lyrics, keep: impl Fn(&str) -> bool) {
+        let (Some(dir), Some(file)) = (self.dir.as_ref(), self.file(video_id)) else {
+            return;
+        };
+        let Ok(data) = serde_json::to_vec(lyrics) else {
+            return;
+        };
+        if std::fs::create_dir_all(dir).is_err() || std::fs::write(&file, data).is_err() {
+            return;
+        }
+        prune(dir, &keep);
+    }
+
+    pub fn remove(&self, video_id: &str) {
+        if let Some(file) = self.file(video_id) {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+}
+
+fn prune(dir: &Path, keep: &impl Fn(&str) -> bool) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut others: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            let id = path.file_stem()?.to_str()?.to_owned();
+            if keep(&id) {
+                return None;
+            }
+            Some((e.metadata().ok()?.modified().ok()?, path))
+        })
+        .collect();
+    if others.len() <= Cache::RECENT {
+        return;
+    }
+    others.sort_by_key(|o| std::cmp::Reverse(o.0));
+    for (_, path) in others.into_iter().skip(Cache::RECENT) {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -432,23 +498,16 @@ mod tests {
     }
 
     #[test]
-    fn karaoke_progress_by_word() {
+    fn karaoke_progress_by_line_or_word() {
         let lyrics = Lyrics {
             lines: parse_lrc("[00:10.00] One two three\n[00:20.00]\n[00:30.00] Last"),
             source: "LRCLIB".into(),
         };
         let at = |s: f64| Duration::from_secs_f64(s);
-        // Spread by length: "One" at 10 s, then "two", "three" within ~1.5 s.
-        let times = lyrics.word_times(0);
-        assert_eq!(times.len(), 3);
-        assert_eq!(times[0], at(10.0));
-        assert!(times[2] > times[1] && times[2] < at(12.0), "{times:?}");
+        // Only lines are timed: no guessed word times, the line lights up whole.
+        assert!(lyrics.word_times(0).is_empty());
         let p = lyrics.progress(at(10.1)).unwrap();
-        assert_eq!((p.line, p.words), (0, 1));
-        // "One " lights up whole as soon as it starts.
-        assert_eq!(p.chars, 4, "{p:?}");
-        let p = lyrics.progress(at(15.0)).unwrap();
-        assert_eq!((p.words, p.chars), (3, 13), "the whole line");
+        assert_eq!((p.line, p.words, p.chars), (0, 3, 13), "{p:?}");
         // The empty line is an instrumental break: dots light up over it.
         assert!(lyrics.lines[1].instrumental());
         let p = lyrics.progress(at(20.5)).unwrap();
@@ -463,8 +522,9 @@ mod tests {
         };
         assert_eq!(enhanced.lines[0].text, "Hello world");
         assert_eq!(enhanced.lines[0].split_words(), ["Hello ", "world"]);
-        // Two stamps inside "Hello": fall back to the estimate for that line.
-        assert_eq!(enhanced.word_times(0).len(), 2);
+        // Two stamps inside "Hello": not one per word, so the line lights up whole.
+        assert!(enhanced.word_times(0).is_empty());
+        assert_eq!(enhanced.progress(at(5.1)).unwrap().chars, 11);
         let exact = Lyrics {
             lines: parse_lrc("[00:05.00] <00:05.00>Hello <00:07.00>world"),
             source: "LRCLIB".into(),
@@ -541,5 +601,45 @@ mod live {
                 .expect(title);
             assert!(lyrics.synced(), "{title}");
         }
+    }
+
+    #[test]
+    fn cache_keeps_downloads_and_the_last_ones() {
+        let dir = std::env::temp_dir().join(format!("ytm-lyrics-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = Cache::new(dir.clone());
+        let lyrics = Lyrics {
+            lines: parse_lrc("[00:01.00] <00:01.00>Hello <00:02.00>world"),
+            source: "LRCLIB".into(),
+        };
+        let downloaded = "DLDLDLDLDLD";
+        cache.put(downloaded, &lyrics, |_| true);
+        assert_eq!(
+            cache.get(downloaded),
+            Some(lyrics.clone()),
+            "round trip, word times too"
+        );
+        assert!(cache.get("../../etc/xx").is_none() && !cache.contains("bad"));
+        for i in 0..Cache::RECENT + 5 {
+            let id = format!("v{i:010}");
+            cache.put(&id, &lyrics, |id| id == downloaded);
+            // Distinct modification times for the pruning order.
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let files = std::fs::read_dir(&dir).unwrap().count();
+        assert_eq!(
+            files,
+            Cache::RECENT + 1,
+            "the last {} and the download",
+            Cache::RECENT
+        );
+        assert!(cache.contains(downloaded));
+        assert!(
+            !cache.contains("v0000000000")
+                && cache.contains(&format!("v{:010}", Cache::RECENT + 4))
+        );
+        cache.remove(downloaded);
+        assert!(!cache.contains(downloaded));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

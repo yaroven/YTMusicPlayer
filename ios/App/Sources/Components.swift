@@ -53,9 +53,9 @@ struct RootView: View {
             }
         }
         .task { Updater.shared.checkDaily() }
-        // Covers for songs downloaded before they were kept with them.
-        .task { await library.fetchMissingCovers() }
-        .onChange(of: Connectivity.shared.cameBack) { Task { await library.fetchMissingCovers() } }
+        // Covers and lyrics for songs downloaded before they were kept with them.
+        .task { await library.fetchMissingExtras() }
+        .onChange(of: Connectivity.shared.cameBack) { Task { await library.fetchMissingExtras() } }
         .overlay(alignment: .bottom) { NoticeToast() }
         .animation(.easeInOut(duration: 0.25), value: Notice.shared.text)
     }

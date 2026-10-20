@@ -66,6 +66,9 @@ import YTMKit
     print(size > 3_000_000 ? "ok  " : "FAIL", "downloaded size", size)
     // Its cover is kept with it, for the lock screen offline.
     await wait("cover kept with the download", 10) { Covers.local(a.videoId) != nil }
+    await wait("lyrics kept with the download", 20) { KeptLyrics.contains(a.videoId) }
+    print(KeptLyrics.get(a.videoId)?.synced == true ? "ok  " : "FAIL", "kept lyrics are synced:",
+          KeptLyrics.get(a.videoId)?.lines.count ?? 0, "lines")
     if let cover = Covers.local(a.videoId), let data = try? Data(contentsOf: cover), let image = squareImage(data) {
         print(image.width == image.height && data.count < 120_000 ? "ok  " : "FAIL", "cover", image.width, "px,", data.count, "bytes")
     }
@@ -75,6 +78,7 @@ import YTMKit
     library.removeDownload(a)
     await wait("download removed") { !library.isDownloaded(a.videoId) }
     await wait("its cover removed") { Covers.local(a.videoId) == nil }
+    await wait("its lyrics removed") { !KeptLyrics.contains(a.videoId) }
 
     // Crossfade: the next song starts 6 s before the end of this one, and
     // takes over once the fade is done (so it is ~6 s in by then).

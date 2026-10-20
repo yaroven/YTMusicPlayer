@@ -58,9 +58,9 @@ fun Root() {
             app.updater.error = null
         }
     }
-    // Covers for songs downloaded before they were kept with them, once online.
+    // Covers and lyrics for songs downloaded before they were kept with them, once online.
     val online by app.network.online.collectAsState()
-    LaunchedEffect(online) { if (online) library.fetchMissingCovers() }
+    LaunchedEffect(online) { if (online) library.fetchMissingExtras() }
     LaunchedEffect(library.error) {
         library.error?.let {
             snackbar.showSnackbar(it)

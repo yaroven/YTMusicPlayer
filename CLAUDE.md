@@ -401,7 +401,15 @@ Domain terms are defined in `CONTEXT.md`.
   10 Hz while on screen, `Player.exactPosition`.
   Words light up whole as they start (`Progress::chars` = the started
   words; the user asked for this 2026-10-18 over the letter-by-letter
-  wipe better-lyrics does). LRCLIB answers 503 at times, and an error fell back
+  wipe better-lyrics does) — but only when LRCLIB has a stamp per word
+  (Enhanced LRC). Most entries time lines only, and words spread by their
+  length ran ahead of or behind the singer, so since 2026-10-20 (user's
+  call) such a line lights up whole; `word_times` no longer guesses.
+  **Lyrics are kept on disk** (`lyrics::Cache`, `<data_dir>/lyrics/`;
+  iPhone `KeptLyrics`, Android `KeptLyrics`, `<id>.json`): fetched with
+  each download (and for older downloads once online), removed with it,
+  plus the last 50 others; the lyrics pane reads the kept copy first, so
+  downloaded songs have lyrics offline. LRCLIB answers 503 at times, and an error fell back
   to YouTube's untimed text (what the user saw as "no progress"): now
   `/api/get` with the duration first, then the search, 3 attempts on
   5xx / 429 / network errors.

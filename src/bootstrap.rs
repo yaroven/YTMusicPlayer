@@ -137,6 +137,7 @@ pub async fn deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
         download_limit: (settings.download_limit_mb > 0)
             .then(|| settings.download_limit_mb * 1_000_000),
         check_updates: settings.check_updates,
+        lyrics_cache: crate::lyrics::Cache::new(paths.data_dir().join("lyrics")),
     })
 }
 

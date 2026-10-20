@@ -422,6 +422,7 @@ private struct PanesSheet: View {
 private struct LyricsPane: View {
     let track: Track
     @Environment(Player.self) private var player
+    @Environment(Library.self) private var library
     @State private var lyrics: Lyrics?
     @State private var loading = true
     @State private var failure: Error?
@@ -464,7 +465,8 @@ private struct LyricsPane: View {
         loading = true
         let duration = track.durationSecs.map(Double.init) ?? (player.duration > 0 ? player.duration : nil)
         do {
-            lyrics = try await Services.lyrics.find(track, duration: duration)
+            // Kept on the phone (a download's, or played lately): offline too.
+            lyrics = try await KeptLyrics.find(track, duration: duration, keep: library.downloadedIds)
         } catch {
             failure = error
         }

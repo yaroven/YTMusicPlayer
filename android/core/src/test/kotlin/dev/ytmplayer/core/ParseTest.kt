@@ -155,12 +155,11 @@ class ParseTest {
     @Test
     fun karaoke() {
         val k = Lyrics(parseLrc("[00:10.00] One two three\n[00:20.00]\n[00:30.00] Last"), "LRCLIB")
-        val times = k.wordTimes(0)
-        assertEquals(3, times.size)
-        assertEquals(10.0, times[0])
-        assertTrue(times[2] > times[1] && times[2] < 12)
-        assertEquals(LyricsProgress(0, 1, 4), k.progress(10.1))
-        assertEquals(LyricsProgress(0, 3, 13), k.progress(15.0))
+        // Only lines timed: no guessed word times, the line lights up whole.
+        assertTrue(k.wordTimes(0).isEmpty())
+        assertEquals(LyricsProgress(0, 3, 13), k.progress(10.1))
+        // Kept on disk and read back, word times too.
+        assertEquals(k, Lyrics.fromJson(k.toJson()))
         assertTrue(k.lines[1].instrumental)
         assertEquals(LyricsProgress(1, 3), k.progress(28.0))
         assertTrue(k.hasIntro)
@@ -170,6 +169,7 @@ class ParseTest {
         assertEquals(listOf("Hello ", "world"), exact.lines[0].words)
         assertEquals(listOf(5.0, 7.0), exact.wordTimes(0))
         assertEquals(LyricsProgress(0, 1, 6), exact.progress(6.0))
+        assertEquals(exact, Lyrics.fromJson(exact.toJson()))
         val lrc = Lyrics(parseLrc("[ar:ABBA]\n[00:17.37] Ooh, you can dance\n[00:25.18] Having the time\n[01:02.00]"), "LRCLIB")
         assertEquals(3, lrc.lines.size)
         assertTrue(lrc.synced)

@@ -520,13 +520,25 @@ final class Library {
                                     duration: stream.duration, loudnessDb: stream.loudnessDb), at: 0)
         save()
         await Covers.fetch(track)
+        await keepLyrics(of: track, duration: stream.duration)
     }
 
-    /// Songs downloaded before covers were kept get theirs (once online).
-    func fetchMissingCovers() async {
+    var downloadedIds: Set<String> { Set(downloads.map(\.track.videoId)) }
+
+    /// A downloaded song's lyrics, kept with it for offline play.
+    private func keepLyrics(of track: Track, duration: TimeInterval?) async {
+        guard !KeptLyrics.contains(track.videoId) else { return }
+        let duration = duration ?? track.durationSecs.map(Double.init)
+        _ = try? await KeptLyrics.find(track, duration: duration, keep: downloadedIds)
+    }
+
+    /// Songs downloaded before covers and lyrics were kept with them get
+    /// theirs (once online).
+    func fetchMissingExtras() async {
         guard Connectivity.shared.online else { return }
-        for item in downloads where Covers.local(item.track.videoId) == nil {
-            await Covers.fetch(item.track)
+        for item in downloads {
+            if Covers.local(item.track.videoId) == nil { await Covers.fetch(item.track) }
+            await keepLyrics(of: item.track, duration: item.duration)
         }
     }
 
@@ -544,6 +556,7 @@ final class Library {
         guard let (url, _) = download(of: track.videoId) else { return }
         try? FileManager.default.removeItem(at: url)
         Covers.remove(track.videoId)
+        KeptLyrics.remove(track.videoId)
         downloads.removeAll { $0.track.videoId == track.videoId }
         save()
     }
@@ -554,6 +567,7 @@ final class Library {
         for item in downloads {
             try? FileManager.default.removeItem(at: Self.downloadsDirectory.appendingPathComponent(item.file))
             Covers.remove(item.track.videoId)
+            KeptLyrics.remove(item.track.videoId)
         }
         downloads = []
         save()

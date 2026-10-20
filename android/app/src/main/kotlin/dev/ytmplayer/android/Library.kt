@@ -497,11 +497,23 @@ class Library(private val context: Context, private val catalog: Catalog, privat
             downloads.filter { it.track.videoId != track.videoId }
         save()
         Covers.fetch(track)
+        keepLyrics(track, stream.duration)
     }
 
-    /** Songs downloaded before covers were kept get theirs (once online). */
-    suspend fun fetchMissingCovers() {
-        downloads.filter { Covers.local(it.track.videoId) == null }.forEach { Covers.fetch(it.track) }
+    val downloadedIds: Set<String> get() = downloads.mapTo(HashSet()) { it.track.videoId }
+
+    /** A downloaded song's lyrics, kept with it for offline play. */
+    private suspend fun keepLyrics(track: Track, duration: Double?) {
+        if (KeptLyrics.contains(track.videoId)) return
+        runCatching { KeptLyrics.find(track, duration ?: track.durationSecs?.toDouble(), downloadedIds) }
+    }
+
+    /** Songs downloaded before covers and lyrics were kept with them get theirs (once online). */
+    suspend fun fetchMissingExtras() {
+        downloads.forEach {
+            if (Covers.local(it.track.videoId) == null) Covers.fetch(it.track)
+            keepLyrics(it.track, it.duration)
+        }
     }
 
     /** Stops what is downloading and forgets what was waiting. */
@@ -519,6 +531,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         file.delete()
         unexport(item)
         Covers.remove(track.videoId)
+        KeptLyrics.remove(track.videoId)
         downloads = downloads.filter { it.track.videoId != track.videoId }
         save()
     }
@@ -530,6 +543,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
             File(downloadsDir, item.file).delete()
             unexport(item)
             Covers.remove(item.track.videoId)
+            KeptLyrics.remove(item.track.videoId)
         }
         downloadsDir.listFiles()?.forEach { it.delete() }
         downloads = emptyList()

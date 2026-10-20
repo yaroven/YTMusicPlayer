@@ -438,12 +438,59 @@ fn synced_lyrics_follow_the_song() {
 }
 
 #[test]
-fn playing_lyrics_light_up_word_by_word() {
+fn playing_lyrics_light_up_by_line_or_word() {
     let h = harness();
     let mut view = session_view();
     view.now = Some(track("Song"));
     view.state = PlayState::Playing;
     view.position = Duration::from_millis(100);
+    let lyrics = |words: bool| {
+        let text = "Caught in a landslide no escape from reality";
+        // Enhanced LRC: a stamp per word, 0.4 s apart.
+        let words = if words {
+            Line {
+                text: text.into(),
+                ..Line::default()
+            }
+            .split_words()
+            .iter()
+            .enumerate()
+            .map(|(i, w)| crate::lyrics::Word {
+                at: Duration::from_millis(400 * i as u64),
+                text: w.to_string(),
+            })
+            .collect()
+        } else {
+            Vec::new()
+        };
+        Arc::new(Lyrics {
+            lines: vec![
+                Line {
+                    at: Some(Duration::ZERO),
+                    text: text.into(),
+                    words,
+                },
+                Line {
+                    at: Some(Duration::from_secs(8)),
+                    text: "Open your eyes".into(),
+                    ..Line::default()
+                },
+            ],
+            source: "LRCLIB".into(),
+        })
+    };
+    let words = || h.view.borrow().lyrics.progress.map(|(_, w)| w);
+    // Only lines timed: the sung line is lit whole.
+    let mut snap = snapshot(
+        view.clone(),
+        Changes {
+            lyrics: true,
+            ..Changes::default()
+        },
+    );
+    snap.lyrics = Some(lyrics(false));
+    h.absorb(snap);
+    assert_eq!(words(), Some(44), "the whole line");
     let mut snap = snapshot(
         view,
         Changes {
@@ -451,23 +498,8 @@ fn playing_lyrics_light_up_word_by_word() {
             ..Changes::default()
         },
     );
-    snap.lyrics = Some(Arc::new(Lyrics {
-        lines: vec![
-            Line {
-                at: Some(Duration::ZERO),
-                text: "Caught in a landslide no escape from reality".into(),
-                ..Line::default()
-            },
-            Line {
-                at: Some(Duration::from_secs(8)),
-                text: "Open your eyes".into(),
-                ..Line::default()
-            },
-        ],
-        source: "LRCLIB".into(),
-    }));
+    snap.lyrics = Some(lyrics(true));
     h.absorb(snap);
-    let words = || h.view.borrow().lyrics.progress.map(|(_, w)| w);
     let start = words().unwrap();
     assert_eq!(start, 7, "\"Caught \" lights up whole");
     // No new snapshot: the window's own timer moves on with the song.

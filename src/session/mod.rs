@@ -105,6 +105,8 @@ pub struct Deps {
     pub download_limit: Option<u64>,
     /// Look for a newer release at startup.
     pub check_updates: bool,
+    /// Lyrics kept on disk: downloaded songs' (offline) and recent ones.
+    pub lyrics_cache: crate::lyrics::Cache,
 }
 
 /// Something that follows playback (Last.fm, Discord). Called on the core
@@ -626,6 +628,7 @@ impl Session {
         if self.deps.check_updates {
             self.check_for_update(false);
         }
+        self.fetch_download_lyrics();
         // Either sign-in can sync: the session through InnerTube, the OAuth
         // client through the Data API.
         let can_sync = self.signed_in() || self.deps.youtube.signed_in();

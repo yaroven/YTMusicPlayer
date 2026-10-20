@@ -197,6 +197,7 @@ pub(crate) async fn session_with(
         autoplay: false,
         crossfade: Duration::ZERO,
         listeners: Vec::new(),
+        lyrics_cache: Default::default(),
         download_limit: None,
         check_updates: false,
     };

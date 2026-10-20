@@ -167,7 +167,7 @@ public struct Page: Sendable {
 }
 
 /// One lyrics line; `at` is when it starts (synced lyrics only).
-public struct LyricLine: Hashable, Sendable {
+public struct LyricLine: Hashable, Sendable, Codable {
     public var at: TimeInterval?
     public var text: String
     /// Word start times when the lyrics have them (Enhanced LRC).
@@ -219,7 +219,7 @@ public struct LyricsProgress: Equatable, Sendable {
     }
 }
 
-public struct Lyrics: Sendable {
+public struct Lyrics: Sendable, Codable {
     public var lines: [LyricLine]
     /// "LRCLIB", or YouTube Music's credit line.
     public var source: String
@@ -234,34 +234,21 @@ public struct Lyrics: Sendable {
 
     /// Before the first line, a gap this long shows as an instrumental intro.
     public static let introGap: TimeInterval = 4
-    static let perChar: TimeInterval = 0.085
-    static let lineExtra: TimeInterval = 0.4
 
     public var hasIntro: Bool {
         synced && (lines.first?.at ?? 0) >= Self.introGap
     }
 
-    /// When each word of line `i` starts: the lyrics' own times, else
-    /// spread by length over the time the line is sung (same as the
+    /// When each word of line `i` starts, when the lyrics time words
+    /// (Enhanced LRC); empty otherwise — guessed word times lit words out
+    /// of step with the singing, so the line lights up whole (same as the
     /// desktop player's `Lyrics::word_times`).
     public func wordTimes(_ i: Int) -> [TimeInterval] {
         guard lines.indices.contains(i) else { return [] }
         let line = lines[i]
         let words = line.words
         if line.wordTimes.count == words.count, !words.isEmpty { return line.wordTimes }
-        guard let start = line.at else { return [] }
-        let chars = words.map { max(1, $0.trimmingCharacters(in: .whitespaces).count) }
-        let total = chars.reduce(0, +)
-        var span = Self.perChar * Double(total) + Self.lineExtra
-        if i + 1 < lines.count, let next = lines[i + 1].at {
-            let gap = next - start
-            span = max(min(span, gap - 0.2), min(gap, 0.5))
-        }
-        var before = 0
-        return chars.map { c in
-            defer { before += c }
-            return start + span * Double(before) / Double(max(total, 1))
-        }
+        return []
     }
 
     public func progress(at position: TimeInterval) -> LyricsProgress? {
@@ -278,6 +265,8 @@ public struct Lyrics: Sendable {
         }
         let times = wordTimes(line)
         let words = current.words
+        // Only lines are timed: the line lights up whole.
+        if times.isEmpty { return LyricsProgress(line: line, words: words.count, chars: current.text.count) }
         let sung = times.filter { $0 <= position }.count
         // Every word that has started lights up whole (not letter by letter).
         let chars = words.prefix(min(sung, words.count)).reduce(0) { $0 + $1.count }

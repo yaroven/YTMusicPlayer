@@ -2,7 +2,7 @@
 //! saved albums and downloads. Writes go to YouTube first (when they have a
 //! YouTube side) and to the local library when they succeed.
 
-use std::{path::Path, sync::Arc};
+use std::{collections::HashSet, path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
 
@@ -797,6 +797,48 @@ impl Session {
 
     // --- downloads ------------------------------------------------------------------
 
+    /// Video ids of the downloaded songs.
+    pub(super) fn downloaded_ids(&self) -> HashSet<String> {
+        self.deps
+            .library
+            .downloads()
+            .map(|d| {
+                d.into_iter()
+                    .map(|d| d.track.video_id.to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Lyrics for downloaded songs that don't have them on disk yet (songs
+    /// downloaded before lyrics were kept, or offline back then). Quiet:
+    /// whatever fails is tried again at the next start.
+    pub(super) fn fetch_download_lyrics(&self) {
+        let missing: Vec<Track> = self
+            .deps
+            .library
+            .downloads()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|d| d.track)
+            .filter(|t| !self.deps.lyrics_cache.contains(&t.video_id))
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        let (http, catalog, cache) = (
+            self.deps.http.clone(),
+            self.deps.catalog.clone(),
+            self.deps.lyrics_cache.clone(),
+        );
+        let downloaded = self.downloaded_ids();
+        tokio::spawn(async move {
+            for track in missing {
+                keep_lyrics(&http, &catalog, &cache, &track, &downloaded).await;
+            }
+        });
+    }
+
     pub fn is_downloaded(&self, video_id: &str) -> bool {
         self.deps
             .library
@@ -839,16 +881,28 @@ impl Session {
             todo.len()
         ));
         let (source, tx) = (self.deps.source.clone(), self.tx.clone());
+        let (http, catalog, cache) = (
+            self.deps.http.clone(),
+            self.deps.catalog.clone(),
+            self.deps.lyrics_cache.clone(),
+        );
+        let mut downloaded = self.downloaded_ids();
         // One task for the batch, so stopping it stops the rest as well.
         self.download_task = Some(tokio::spawn(async move {
             for track in todo {
                 let result = source.download(&track).await;
+                if result.is_ok() {
+                    // Its lyrics go with it, for offline play.
+                    downloaded.insert(track.video_id.to_string());
+                    keep_lyrics(&http, &catalog, &cache, &track, &downloaded).await;
+                }
                 let _ = tx.send(Background::Downloaded { track, result });
             }
         }));
     }
 
     pub fn remove_download(&mut self, video_id: Arc<str>) {
+        self.deps.lyrics_cache.remove(&video_id);
         let (source, tx) = (self.deps.source.clone(), self.tx.clone());
         tokio::spawn(async move {
             let result = source.remove_download(&video_id).await;
@@ -879,6 +933,9 @@ impl Session {
     /// Deletes every downloaded song (stopping downloads that still run).
     pub fn remove_all_downloads(&mut self) {
         self.cancel_downloads();
+        for id in self.downloaded_ids() {
+            self.deps.lyrics_cache.remove(&id);
+        }
         let (source, tx) = (self.deps.source.clone(), self.tx.clone());
         tokio::spawn(async move {
             let result = source.remove_all_downloads().await;
@@ -963,5 +1020,24 @@ impl Session {
         tokio::spawn(async move {
             let _ = tx.send(Background::SignedOut(clearing.await));
         });
+    }
+}
+
+/// Finds a song's lyrics and keeps them on disk, unless they already are.
+async fn keep_lyrics(
+    http: &reqwest::Client,
+    catalog: &crate::catalog::Catalog,
+    cache: &crate::lyrics::Cache,
+    track: &Track,
+    keep: &HashSet<String>,
+) {
+    if cache.contains(&track.video_id) {
+        return;
+    }
+    let duration = track.duration_secs.map(|s| Duration::from_secs(s.into()));
+    match crate::lyrics::find(http, catalog, track, duration).await {
+        Ok(Some(found)) => cache.put(&track.video_id, &found, |id| keep.contains(id)),
+        Ok(None) => {}
+        Err(err) => tracing::debug!(%err, video_id = %track.video_id, "lyrics for a download"),
     }
 }
