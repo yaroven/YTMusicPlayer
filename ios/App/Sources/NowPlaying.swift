@@ -17,6 +17,8 @@ struct NowPlayingView: View {
     @State private var videoStart: TimeInterval = 0
     @State private var videoAt: TimeInterval?
     @State private var addingToPlaylist = false
+    /// How far the cover is dragged sideways (swipe to the next / previous song).
+    @State private var coverOffset: CGFloat = 0
 
     enum Pane: CaseIterable, Identifiable {
         case queue, lyrics, related
@@ -145,11 +147,40 @@ struct NowPlayingView: View {
                 .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
                 .scaleEffect(player.isPlaying ? 1 : 0.9)
                 .animation(.spring(response: 0.45, dampingFraction: 0.7), value: player.isPlaying)
+                .offset(x: coverOffset)
+                .opacity(1 - min(0.6, abs(coverOffset) / max(geo.size.width, 1) * 0.6))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // The cover itself plays and pauses.
                 .contentShape(Rectangle())
                 .onTapGesture { player.togglePlay() }
+                // YouTube Music's swipe: the cover follows the finger; far
+                // enough and the next (left) or previous (right) song slides
+                // in. Vertical drags still close the player (the sheet's).
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 15)
+                        .onChanged { drag in
+                            guard abs(drag.translation.width) > abs(drag.translation.height) else { return }
+                            coverOffset = drag.translation.width
+                        }
+                        .onEnded { drag in
+                            let width = geo.size.width
+                            let dx = drag.translation.width
+                            guard abs(dx) > abs(drag.translation.height), abs(dx) > width * 0.25 else {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { coverOffset = 0 }
+                                return
+                            }
+                            let forward = dx < 0
+                            withAnimation(.easeIn(duration: 0.14)) { coverOffset = forward ? -width : width }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+                                if forward { player.next() } else { player.previous(always: true) }
+                                coverOffset = forward ? width : -width
+                                withAnimation(.easeOut(duration: 0.22)) { coverOffset = 0 }
+                            }
+                        }
+                )
                 .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+                .accessibilityAction(named: "Next song") { player.next() }
+                .accessibilityAction(named: "Previous song") { player.previous(always: true) }
         }
         .transition(.opacity)
     }
@@ -579,6 +610,10 @@ private struct QueuePane: View {
                                     .lineLimit(1)
                             }
                             Spacer()
+                            // Touch and hold, then drag to reorder; swipe left to remove.
+                            Image(systemName: "line.3.horizontal")
+                                .foregroundStyle(YT.secondary)
+                                .accessibilityHidden(true)
                         }
                         .contentShape(Rectangle())
                     }

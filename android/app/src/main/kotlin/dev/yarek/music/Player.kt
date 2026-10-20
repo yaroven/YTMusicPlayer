@@ -319,9 +319,13 @@ class Player(
         }
     }
 
-    fun previous() {
+    /**
+     * ⏮: back to the start of this song after 3 s, else the song before.
+     * `always`: the song before regardless (a swipe on the cover).
+     */
+    fun previous(always: Boolean = false) {
         finishFade()
-        if (exo.currentPosition > 3_000 || !exo.hasPreviousMediaItem()) {
+        if ((!always && exo.currentPosition > 3_000) || !exo.hasPreviousMediaItem()) {
             exo.seekTo(0)
         } else {
             exo.seekToPreviousMediaItem()

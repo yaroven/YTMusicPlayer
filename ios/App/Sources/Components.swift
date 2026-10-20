@@ -554,6 +554,8 @@ struct QuickPicks: View {
 /// Above the tab bar: the song, AirPlay, play / pause; a tap opens the player.
 struct MiniPlayer: View {
     @Environment(Player.self) private var player
+    /// The row follows a sideways swipe (next / previous song).
+    @State private var swipe: CGFloat = 0
 
     var body: some View {
         if let track = player.current {
@@ -600,10 +602,30 @@ struct MiniPlayer: View {
                 .padding(.leading, 10)
                 .padding(.trailing, 8)
                 .padding(.vertical, 6)
+                .offset(x: swipe)
             }
             .background(YT.surface)
             .contentShape(Rectangle())
             .onTapGesture { player.showNowPlaying = true }
+            // As in YouTube Music: swipe sideways for the next / previous
+            // song, swipe up to open the player.
+            .gesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { drag in
+                        if abs(drag.translation.width) > abs(drag.translation.height) { swipe = drag.translation.width }
+                    }
+                    .onEnded { drag in
+                        let (dx, dy) = (drag.translation.width, drag.translation.height)
+                        if -dy > 40, -dy > abs(dx) {
+                            player.showNowPlaying = true
+                        } else if dx < -80 {
+                            player.next()
+                        } else if dx > 80 {
+                            player.previous(always: true)
+                        }
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { swipe = 0 }
+                    }
+            )
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }

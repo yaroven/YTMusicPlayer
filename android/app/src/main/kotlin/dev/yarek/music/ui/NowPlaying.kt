@@ -1,5 +1,9 @@
 package dev.yarek.music.ui
 
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.runtime.mutableIntStateOf
@@ -160,7 +164,35 @@ fun NowPlaying() {
     // Another song: back to its audio, from its start.
     LaunchedEffect(track?.videoId) { if (video) { video = false; videoAt = null } }
 
-    Surface(Modifier.fillMaxSize(), color = Color.Black, contentColor = Color.White) {
+    // Swipe down anywhere (but the scrubber, pills and cover, which move
+    // sideways) folds the player away, as in YouTube Music.
+    val scope = rememberCoroutineScope()
+    val pull = remember { Animatable(0f) }
+    Surface(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer { translationY = pull.value }
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragEnd = {
+                        scope.launch {
+                            if (pull.value > size.height * 0.18f) {
+                                setVideo(false)
+                                player.showNowPlaying = false
+                                pull.snapTo(0f)
+                            } else {
+                                pull.animateTo(0f, spring(dampingRatio = 0.8f))
+                            }
+                        }
+                    },
+                    onDragCancel = { scope.launch { pull.animateTo(0f) } },
+                ) { change, amount ->
+                    change.consume()
+                    scope.launch { pull.snapTo((pull.value + amount).coerceAtLeast(0f)) }
+                }
+            },
+        color = Color.Black, contentColor = Color.White,
+    ) {
     Box(Modifier.fillMaxSize()) {
         if (track != null) Backdrop(track)
         Column(
@@ -338,10 +370,48 @@ private fun MediaSwitch(video: Boolean, onChange: (Boolean) -> Unit) {
 private fun Cover(track: Track) {
     val player = App.instance.player
     val scale by animateFloatAsState(if (player.isPlaying) 1f else 0.86f, spring(dampingRatio = 0.7f), label = "cover")
-    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    val scope = rememberCoroutineScope()
+    // YouTube Music's swipe on the cover: it follows the finger; far enough
+    // and it slides out, the next (left) or previous (right) song slides in.
+    val offset = remember { Animatable(0f) }
+    BoxWithConstraints(
+        Modifier.fillMaxSize().pointerInput(Unit) {
+            val width = size.width.toFloat()
+            detectHorizontalDragGestures(
+                onDragEnd = {
+                    scope.launch {
+                        val x = offset.value
+                        if (kotlin.math.abs(x) < width * 0.25f) {
+                            offset.animateTo(0f, spring(dampingRatio = 0.8f))
+                            return@launch
+                        }
+                        val forward = x < 0
+                        offset.animateTo(if (forward) -width else width, tween(140))
+                        if (forward) player.next() else player.previous(always = true)
+                        offset.snapTo(if (forward) width else -width)
+                        offset.animateTo(0f, tween(220))
+                    }
+                },
+                onDragCancel = { scope.launch { offset.animateTo(0f) } },
+            ) { change, amount ->
+                change.consume()
+                scope.launch { offset.snapTo(offset.value + amount) }
+            }
+        },
+        contentAlignment = Alignment.Center,
+    ) {
         val side = minOf(maxWidth, maxHeight)
+        val width = constraints.maxWidth.toFloat().coerceAtLeast(1f)
         // The cover itself plays and pauses.
-        Box(Modifier.scale(scale).clickable { player.togglePlay() }) {
+        Box(
+            Modifier
+                .graphicsLayer {
+                    translationX = offset.value
+                    alpha = 1f - (kotlin.math.abs(offset.value) / width * 0.6f).coerceIn(0f, 0.6f)
+                }
+                .scale(scale)
+                .clickable { player.togglePlay() },
+        ) {
             Artwork(Art.Video(track.videoId), side)
         }
     }
@@ -777,17 +847,27 @@ private fun RelatedPane(track: Track) {
 fun MiniPlayer() {
     val player = App.instance.player
     val track = player.current ?: return
-    var swipe by remember { mutableFloatStateOf(0f) }
+    // Swipe sideways: next / previous song (the row follows the finger);
+    // swipe up: open the player — as in YouTube Music.
+    var swipe by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     Column(
         Modifier.fillMaxWidth().background(YT.surface).clickable { player.showNowPlaying = true }
             .pointerInput(Unit) {
-                detectHorizontalDragGestures(
+                detectDragGestures(
                     onDragEnd = {
-                        if (swipe < -120) player.next() else if (swipe > 120) player.previous()
-                        swipe = 0f
+                        val (x, y) = swipe
+                        when {
+                            -y > 60 && -y > kotlin.math.abs(x) -> player.showNowPlaying = true
+                            x < -120 -> player.next()
+                            x > 120 -> player.previous(always = true)
+                        }
+                        swipe = androidx.compose.ui.geometry.Offset.Zero
                     },
-                    onDragCancel = { swipe = 0f },
-                ) { _, amount -> swipe += amount }
+                    onDragCancel = { swipe = androidx.compose.ui.geometry.Offset.Zero },
+                ) { change, amount ->
+                    change.consume()
+                    swipe += amount
+                }
             },
     ) {
         // Progress line along the top.
@@ -795,7 +875,11 @@ fun MiniPlayer() {
         Box(Modifier.fillMaxWidth().height(2.dp).background(Color.White.copy(alpha = 0.15f))) {
             Box(Modifier.fillMaxWidth(fraction).height(2.dp).background(Color.White))
         }
-        Row(Modifier.height(64.dp).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.height(64.dp).graphicsLayer { if (kotlin.math.abs(swipe.x) > kotlin.math.abs(swipe.y)) translationX = swipe.x }
+                .padding(start = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Artwork(Art.Video(track.videoId), 48.dp)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {

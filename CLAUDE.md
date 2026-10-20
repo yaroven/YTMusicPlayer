@@ -706,6 +706,16 @@ Domain terms are defined in `CONTEXT.md`.
   with the signed-in Home as playlists `VLRDTMAK…` — checked live 2026-10-20
   (`sync::tests::live_home_mixes`, the user's cookies).
 
+- **Gestures, as in YouTube Music** (user's request 2026-10-20): on the
+  player's cover, swipe left / right = next / previous song (the cover
+  follows the finger, past 25 % it slides out and the next one in; a swipe
+  goes to the song before even after 3 s, `previous(always:)`, unlike ⏮);
+  swipe down closes the player (Android: drag on the player; iPhone: the
+  sheet's own, the cover's drag is simultaneous); on the mini player swipe
+  sideways = next / previous, swipe up = open; the queue reorders by drag
+  (Android ≡, iPhone long-press) and removes by swipe. Checked on the
+  Android emulator with `adb shell input swipe`.
+
 ## Open TODOs
 
 - Android: try on a real phone (Google sign-in in the WebView — Google may

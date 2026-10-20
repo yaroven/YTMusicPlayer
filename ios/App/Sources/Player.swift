@@ -227,9 +227,11 @@ final class Player {
         }
     }
 
-    func previous() {
+    /// ⏮: back to the start of this song after 3 s, else the song before.
+    /// `always`: the song before regardless (a swipe on the cover).
+    func previous(always: Bool = false) {
         settleFade()
-        if position > 3 || index == 0 {
+        if (!always && position > 3) || index == 0 {
             seek(to: 0)
         } else {
             index -= 1
