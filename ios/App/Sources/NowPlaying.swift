@@ -291,7 +291,7 @@ struct NowPlayingView: View {
 }
 
 /// "Save": the song into one of the playlists, or a new one.
-private struct PlaylistPicker: View {
+struct PlaylistPicker: View {
     let track: Track
     @Environment(Library.self) private var library
     @Environment(\.dismiss) private var dismiss

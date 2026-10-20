@@ -69,10 +69,10 @@ struct ChipButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(selected ? .black : .white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .frame(height: 32)
                 .background(selected ? Color.white : YT.raised, in: RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)

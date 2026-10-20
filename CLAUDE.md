@@ -608,6 +608,17 @@ Domain terms are defined in `CONTEXT.md`.
   ("Lyrics", "Related") are parsed in English. Player: ⌄ / ♪▶ / ⋮, pill row
   (👍|👎, Save, Download, Share), white scrubber, UP NEXT / LYRICS /
   RELATED. Library: chips + one list; settings moved behind the avatar.
+  **Measured against the official app** (2026-10-20, YouTube Music 9.41 on
+  the `ytm-play` emulator — Google Play image, the user signed in; use
+  `uiautomator dump` for sizes in dp): tabs Home / Explore / Library with
+  search behind the header's magnifier; song shelves are pages of four
+  72 dp rows (56 dp art), not tiles; song lists 64 dp rows with 48 dp art,
+  library rows 72 dp / 56 dp; chips 32 dp; the song ⋮ is a bottom sheet
+  (three tiles + list); artist pages a full-width picture with the name
+  over it. Android's player differs from iOS's: "Song | Video" as text,
+  scrubber with a dot and both times, "YOUR QUEUE" sheet with ≡ drag and
+  swipe-to-remove, Lyrics as its own sheet, Library's floating "+ New";
+  the iPhone keeps the iOS app's look (thin scrubber, "Shuffle all").
 
 - **Phone parity, 2026-10-19** (user's request): self-update — Android:
   GitHub latest release once a day, APK checked against SHA256SUMS,

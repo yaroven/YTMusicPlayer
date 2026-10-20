@@ -14,7 +14,7 @@ enum Services {
 }
 
 enum AppTab: Hashable {
-    case home, search, library
+    case home, explore, library
 }
 
 enum Route: Hashable {
@@ -22,6 +22,8 @@ enum Route: Hashable {
     case page(String)
     /// The songs on the phone (offline, from an error screen).
     case downloads
+    /// Search, opened from the magnifier in a screen's header.
+    case search
 }
 
 /// Each tab's navigation stack, so "Go to artist" works from anywhere.
@@ -29,13 +31,13 @@ enum Route: Hashable {
 final class Router {
     var tab: AppTab = .home
     var home: [Route] = []
-    var search: [Route] = []
+    var explore: [Route] = []
     var library: [Route] = []
 
     func open(_ route: Route) {
         switch tab {
         case .home: home.append(route)
-        case .search: search.append(route)
+        case .explore: explore.append(route)
         case .library: library.append(route)
         }
     }

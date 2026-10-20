@@ -23,12 +23,7 @@ struct HomeView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 32) {
                 VStack(alignment: .leading, spacing: 18) {
-                    HStack {
-                        YTLogo()
-                        Spacer()
-                        AvatarButton()
-                    }
-                    .padding(.horizontal)
+                    HomeHeader()
                     if !chips.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
@@ -126,8 +121,70 @@ extension Track {
     }
 }
 
-/// Search, with Explore (new releases, moods, charts) when nothing is
-/// typed and YouTube Music's suggestions while typing.
+/// Home's and Explore's header: the logo, search and the account.
+struct HomeHeader: View {
+    @Environment(Router.self) private var router
+
+    var body: some View {
+        HStack(spacing: 20) {
+            YTLogo()
+            Spacer()
+            Button { router.open(.search) } label: {
+                Image(systemName: "magnifyingglass").font(.system(size: 20, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Search")
+            AvatarButton()
+        }
+        .padding(.horizontal)
+    }
+}
+
+/// The Explore tab: the header, then YouTube Music's Explore shelves (new
+/// releases, charts, moods).
+struct ExploreView: View {
+    @State private var explore: [Shelf] = []
+    @State private var error: Error?
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 32) {
+                HomeHeader()
+                ForEach(explore) { ShelfView(shelf: $0) }
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 24)
+        }
+        .background(YT.background)
+        .overlay {
+            if explore.isEmpty {
+                if let error {
+                    ErrorView(error: error) { Task { await load() } }
+                } else {
+                    LoadingView()
+                }
+            }
+        }
+        .hiddenNavigationBar()
+        .task { if explore.isEmpty { await load() } }
+        .onChange(of: Connectivity.shared.cameBack) {
+            if explore.isEmpty { Task { await load() } }
+        }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        do {
+            explore = try await Services.catalog.explore()
+            error = nil
+        } catch {
+            self.error = error
+        }
+    }
+}
+
+/// Search, opened from a header's magnifier: ←, the field, the songs played
+/// lately before anything is typed, YouTube Music's suggestions while typing.
 struct SearchView: View {
     @State private var query = ""
     @State private var kind: SearchKind = .songs
@@ -136,9 +193,9 @@ struct SearchView: View {
     @State private var searching = false
     @State private var error: Error?
     @State private var task: Task<Void, Never>?
-    @State private var explore: [Shelf] = []
-    @State private var exploreError: Error?
     @State private var suggestions: [String] = []
+    @Environment(Library.self) private var library
+    @Environment(\.dismiss) private var dismiss
     @State private var suggestTask: Task<Void, Never>?
     @FocusState private var typing: Bool
 
@@ -163,21 +220,21 @@ struct SearchView: View {
                     }
                     .listStyle(.plain)
                 } else if searched.isEmpty && results.isEmpty {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 32) {
-                            ForEach(explore) { ShelfView(shelf: $0) }
+                    let recent = Array(library.history.prefix(12))
+                    List {
+                        if !recent.isEmpty {
+                            Text("Recently played")
+                                .font(.system(size: 17, weight: .bold))
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
                         }
-                        .padding(.vertical)
-                    }
-                    .overlay {
-                        if explore.isEmpty {
-                            if let exploreError {
-                                ErrorView(error: exploreError) { Task { await loadExplore() } }
-                            } else {
-                                LoadingView()
-                            }
+                        ForEach(Array(recent.enumerated()), id: \.offset) { i, track in
+                            TrackRow(track: track, list: recent, index: i)
                         }
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .scrollDismissesKeyboard(.immediately)
                 } else {
                     resultsList
                 }
@@ -188,17 +245,21 @@ struct SearchView: View {
         .hiddenNavigationBar()
         .onChange(of: kind) { run() }
         .onChange(of: query) { _, text in suggest(text) }
-        .task { if explore.isEmpty { await loadExplore() } }
+        .onAppear { if searched.isEmpty { typing = true } }
         .onChange(of: Connectivity.shared.cameBack) {
-            if explore.isEmpty { Task { await loadExplore() } }
             if error != nil { run() }
         }
     }
 
-    /// YouTube Music's search bar: a dark rounded field.
+    /// YouTube Music's search bar: ←, a dark rounded field.
     private var searchField: some View {
+        HStack(spacing: 6) {
+        Button { dismiss() } label: {
+            Image(systemName: "chevron.left").font(.system(size: 20, weight: .semibold)).frame(width: 40, height: 40)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Back")
         HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass").foregroundStyle(YT.secondary)
             TextField("Search songs, albums, artists", text: $query)
                 .focused($typing)
                 .submitLabel(.search)
@@ -216,20 +277,13 @@ struct SearchView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 14)
-        .frame(height: 42)
-        .background(YT.surface, in: RoundedRectangle(cornerRadius: 21))
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-    }
-
-    private func loadExplore() async {
-        do {
-            explore = try await Services.catalog.explore()
-            exploreError = nil
-        } catch {
-            exploreError = error
+        .padding(.horizontal, 16)
+        .frame(height: 44)
+        .background(YT.surface, in: Capsule())
         }
+        .padding(.leading, 6)
+        .padding(.trailing)
+        .padding(.vertical, 8)
     }
 
     private var resultsList: some View {
@@ -361,9 +415,12 @@ struct PageView: View {
             }
         }
         .background(alignment: .top) {
-            AmbientBackdrop(art: (page?.thumbnail ?? PageCache.shared.preview(id)?.thumbnail).map(ArtworkSource.url) ?? .none,
-                            height: 520)
+            if (page?.kind ?? PageCache.shared.preview(id)?.kind) != .artist {
+                AmbientBackdrop(art: (page?.thumbnail ?? PageCache.shared.preview(id)?.thumbnail).map(ArtworkSource.url) ?? .none,
+                                height: 520)
+            }
         }
+        .background(YT.background)
         .navigationBarTitleDisplayMode(.inline)
         .clearNavigationBar()
         .task {
@@ -409,50 +466,125 @@ struct PageView: View {
         }
     }
 
-    /// Art, title, subtitle, then YouTube Music's three circles: download
-    /// all, play, and ⋮ with save / shuffle (also before the songs are in).
+    /// Art, title, subtitle, then YouTube Music's circles: download, save,
+    /// play, share and ⋮ (also before the songs are in). Artists get their
+    /// own header.
+    @ViewBuilder
     private func header(title: String, subtitle: String, art: ArtworkSource, round: Bool,
                         tracks: [Track], page: Page?) -> some View {
-        VStack(spacing: 14) {
-            Artwork(source: art, size: round ? 200 : 250, round: round)
-                .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
-            Text(title)
-                .font(.system(size: 26, weight: .bold))
-                .multilineTextAlignment(.center)
-            if !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(.system(size: 14))
-                    .foregroundStyle(YT.secondary)
+        if round {
+            artistHeader(title: title, subtitle: subtitle, art: art, tracks: tracks, page: page)
+        } else {
+            VStack(spacing: 14) {
+                Artwork(source: art, size: 220)
+                    .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
+                Text(title)
+                    .font(.system(size: 28, weight: .bold))
                     .multilineTextAlignment(.center)
-            }
-            HStack(spacing: 28) {
-                DownloadAllButton(tracks: tracks)
-                CircleIcon(icon: "play.fill", size: 64, filled: true) { player.playFrom(tracks, at: 0) }
-                    .disabled(tracks.isEmpty)
-                Menu {
+                    .lineLimit(2)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 14))
+                        .foregroundStyle(YT.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                HStack(spacing: 16) {
+                    DownloadAllButton(tracks: tracks)
                     if let page {
                         let saved = library.isSaved(page.id)
-                        Button(saved ? "Remove from library" : "Save", systemImage: saved ? "bookmark.fill" : "bookmark") {
-                            library.toggleSaved(page)
+                        CircleIcon(icon: saved ? "bookmark.fill" : "bookmark") { library.toggleSaved(page) }
+                            .accessibilityLabel(saved ? "Remove from library" : "Save")
+                    } else {
+                        CircleIcon(icon: "bookmark") {}.disabled(true)
+                    }
+                    CircleIcon(icon: "play.fill", size: 64, filled: true) { player.playFrom(tracks, at: 0) }
+                        .disabled(tracks.isEmpty)
+                    if let page {
+                        ShareLink(item: URL(string: "https://music.youtube.com/browse/\(page.id)")!) {
+                            Image(systemName: "arrowshape.turn.up.right")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 48, height: 48)
+                                .background(YT.raised, in: Circle())
+                        }
+                        .accessibilityLabel("Share")
+                    }
+                    Menu {
+                        Button("Shuffle", systemImage: "shuffle") { player.playFrom(tracks.shuffled(), at: 0) }
+                        if let first = tracks.first {
+                            Button("Start mix", systemImage: "dot.radiowaves.left.and.right") { player.startRadio(first) }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .rotationEffect(.degrees(90))
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 48, height: 48)
+                            .background(YT.raised, in: Circle())
+                    }
+                    .disabled(tracks.isEmpty)
+                    .accessibilityLabel("More")
+                }
+                .padding(.top, 4)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+        }
+    }
+
+    /// An artist: the picture across the whole width with the name over its
+    /// bottom, then Subscribe, radio and play.
+    private func artistHeader(title: String, subtitle: String, art: ArtworkSource, tracks: [Track], page: Page?) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            GeometryReader { geo in
+                ZStack(alignment: .bottomLeading) {
+                    if case let .url(url) = art {
+                        AsyncImage(url: URL(string: heroURL(url.absoluteString, width: 1080, height: 1028))) { image in
+                            image.resizable().scaledToFill()
+                        } placeholder: { YT.surface }
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                    }
+                    LinearGradient(stops: [.init(color: .black.opacity(0.35), location: 0), .init(color: .clear, location: 0.25),
+                                           .init(color: .clear, location: 0.6), .init(color: YT.background, location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(.system(size: 40, weight: .bold)).lineLimit(2)
+                        if !subtitle.isEmpty {
+                            Text(subtitle).font(.system(size: 14)).foregroundStyle(YT.secondary).lineLimit(1)
                         }
                     }
-                    if !tracks.isEmpty {
-                        Button("Shuffle", systemImage: "shuffle") { player.playFrom(tracks.shuffled(), at: 0) }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .rotationEffect(.degrees(90))
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 48, height: 48)
-                        .background(YT.raised, in: Circle())
+                    .padding(.horizontal, 16)
                 }
-                .accessibilityLabel("More")
             }
-            .padding(.top, 4)
+            .aspectRatio(1.05, contentMode: .fit)
+            HStack(spacing: 12) {
+                if let page {
+                    let saved = library.isSaved(page.id)
+                    Button { library.toggleSaved(page) } label: {
+                        Text(saved ? "Subscribed" : "Subscribe")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(saved ? .white : .black)
+                            .padding(.horizontal, 18)
+                            .frame(height: 40)
+                            .background(saved ? YT.raised : .white, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+                CircleIcon(icon: "dot.radiowaves.left.and.right", size: 40) {
+                    if let first = tracks.first { player.startRadio(first) }
+                }
+                .disabled(tracks.isEmpty)
+                .accessibilityLabel("Start mix")
+                CircleIcon(icon: "play.fill", size: 56, filled: true) { player.playFrom(tracks, at: 0) }
+                    .disabled(tracks.isEmpty)
+            }
+            .padding(16)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        .listRowInsets(EdgeInsets())
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
     }
@@ -474,13 +606,17 @@ struct PageView: View {
             }
 
             if page.kind == .artist, !page.tracks.isEmpty {
-                Text("Top songs")
-                    .font(YT.sectionTitle)
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+                HStack {
+                    Text("Top songs").font(.system(size: 24, weight: .bold))
+                    Spacer()
+                    OutlinePill(title: "Play all") { player.playFrom(page.tracks, at: 0) }
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             }
             ForEach(Array(shown.enumerated()), id: \.offset) { i, track in
-                TrackRow(track: track, list: page.tracks, index: i, number: page.kind == .album ? i + 1 : nil)
+                TrackRow(track: track, list: page.tracks, index: i, number: page.kind == .album ? i + 1 : nil,
+                         art: page.kind == .artist ? 56 : 48)
             }
             if shown.count < page.tracks.count {
                 HStack {
@@ -504,7 +640,15 @@ struct PageView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        // An artist's picture reaches the top, under the bar.
+        .ignoresSafeArea(edges: page.kind == .artist ? .top : [])
     }
+}
+
+/// An artist's picture big enough for the whole width, cropped by Google.
+func heroURL(_ url: String, width: Int, height: Int) -> String {
+    guard url.contains("googleusercontent.com"), let cut = url.range(of: "=w", options: .backwards) else { return url }
+    return String(url[..<cut.lowerBound]) + "=w\(width)-h\(height)-p-l90-rj"
 }
 
 /// What the library list shows: everything, or one kind.
@@ -536,7 +680,7 @@ struct LibraryView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("History")
-                Button { router.tab = .search } label: {
+                Button { router.open(.search) } label: {
                     Image(systemName: "magnifyingglass").font(.system(size: 20, weight: .medium))
                 }
                 .buttonStyle(.plain)

@@ -31,10 +31,10 @@ struct RootView: View {
                 .miniPlayer()
                 .tabItem { Label("Home", systemImage: router.tab == .home ? "house.fill" : "house") }
                 .tag(AppTab.home)
-            NavigationStack(path: $router.search) { SearchView().routes() }
+            NavigationStack(path: $router.explore) { ExploreView().routes() }
                 .miniPlayer()
-                .tabItem { Label("Search", systemImage: "magnifyingglass") }
-                .tag(AppTab.search)
+                .tabItem { Label("Explore", systemImage: router.tab == .explore ? "safari.fill" : "safari") }
+                .tag(AppTab.explore)
             NavigationStack(path: $router.library) { LibraryView().routes() }
                 .miniPlayer()
                 .tabItem { Label("Library", systemImage: router.tab == .library ? "bookmark.fill" : "bookmark") }
@@ -63,6 +63,7 @@ extension View {
             switch route {
             case let .page(id): PageView(id: id)
             case .downloads: TrackListView(list: .downloads)
+            case .search: SearchView()
             }
         }
     }
@@ -73,6 +74,111 @@ extension View {
 
     func trackMenu(_ track: Track) -> some View {
         contextMenu { TrackMenuItems(track: track) }
+    }
+}
+
+/// A song's ⋮, as YouTube Music shows it: the song with 👍 and ✕, three
+/// tiles (play next, save to playlist, share), then the rest as a list.
+struct TrackSheet: View {
+    let track: Track
+    @Environment(Player.self) private var player
+    @Environment(Library.self) private var library
+    @Environment(Router.self) private var router
+    @Environment(\.dismiss) private var dismiss
+    @State private var saving = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(track.title).font(.system(size: 18, weight: .bold)).lineLimit(1)
+                    Text(subtitle).font(.system(size: 14)).foregroundStyle(YT.secondary).lineLimit(1)
+                }
+                Spacer()
+                let liked = library.isLiked(track)
+                Button { library.toggleLike(track) } label: {
+                    Image(systemName: liked ? "hand.thumbsup.fill" : "hand.thumbsup").font(.system(size: 20))
+                }
+                .accessibilityLabel(liked ? "Remove from liked" : "Like")
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark").font(.system(size: 18, weight: .semibold))
+                }
+                .padding(.leading, 8)
+                .accessibilityLabel("Close")
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            Divider().overlay(.white.opacity(0.1))
+            HStack(spacing: 14) {
+                tile("Play next", icon: "text.insert") { player.playNext(track) }
+                tile("Save to playlist", icon: "text.badge.plus", close: false) { saving = true }
+                ShareLink(item: URL(string: "https://music.youtube.com/watch?v=\(track.videoId)")!) {
+                    tileLabel("Share", icon: "arrowshape.turn.up.right")
+                }
+            }
+            .padding(16)
+            VStack(spacing: 0) {
+                row("Start mix", icon: "dot.radiowaves.left.and.right") { player.startRadio(track) }
+                row("Add to queue", icon: "text.append") { player.addToQueue(track) }
+                if library.isDownloaded(track.videoId) {
+                    row("Remove download", icon: "arrow.down.circle.fill") { library.removeDownload(track) }
+                } else if library.downloading.contains(track.videoId) {
+                    row("Downloading…", icon: "arrow.down.circle") {}.disabled(true).opacity(0.4)
+                } else {
+                    row("Download", icon: "arrow.down.circle") { library.download(track) }
+                }
+                row("Go to artist", icon: "person") {
+                    player.showNowPlaying = false
+                    router.openArtist(of: track)
+                }
+                row("Dislike", icon: "hand.thumbsdown") { player.dislike(track) }
+            }
+            Spacer(minLength: 0)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(YT.surface)
+        .sheet(isPresented: $saving, onDismiss: { dismiss() }) { PlaylistPicker(track: track) }
+    }
+
+    private var subtitle: String {
+        [track.artist, track.durationSecs.map { formatTime(Double($0)) }].compactMap { $0 }.joined(separator: " • ")
+    }
+
+    private func tile(_ title: LocalizedStringKey, icon: String, close: Bool = true, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+            if close { dismiss() }
+        } label: { tileLabel(title, icon: icon) }
+    }
+
+    private func tileLabel(_ title: LocalizedStringKey, icon: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 20))
+                .frame(maxWidth: .infinity)
+                .frame(height: 64)
+                .background(.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+            Text(title).font(.system(size: 13)).lineLimit(1)
+        }
+    }
+
+    private func row(_ title: LocalizedStringKey, icon: String, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+            dismiss()
+        } label: {
+            HStack(spacing: 24) {
+                Image(systemName: icon).font(.system(size: 20)).frame(width: 24)
+                Text(title).font(.system(size: 16))
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+            .frame(height: 52)
+            .contentShape(Rectangle())
+        }
     }
 }
 
@@ -137,8 +243,10 @@ struct TrackRow: View {
     var number: Int?
     /// Shown when the list is sorted by plays.
     var plays: Int?
+    var art: CGFloat = 48
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
+    @State private var menu = false
 
     var body: some View {
         HStack(spacing: 14) {
@@ -148,9 +256,9 @@ struct TrackRow: View {
                         Text("\(number)")
                             .font(.system(size: 15).monospacedDigit())
                             .foregroundStyle(isCurrent ? .white : YT.secondary)
-                            .frame(width: 24)
+                            .frame(width: 32)
                     } else {
-                        Artwork(source: .video(track.videoId), size: 56)
+                        Artwork(source: .video(track.videoId), size: art)
                             .overlay {
                                 if isCurrent {
                                     Image(systemName: player.isPlaying ? "waveform" : "play.fill")
@@ -162,7 +270,7 @@ struct TrackRow: View {
                     }
                     VStack(alignment: .leading, spacing: 3) {
                         Text(track.title)
-                            .font(.system(size: 17))
+                            .font(.system(size: 16))
                             .lineLimit(1)
                         HStack(spacing: 5) {
                             if track.explicit { ExplicitBadge() }
@@ -179,13 +287,18 @@ struct TrackRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            Menu { TrackMenuItems(track: track) } label: {
+            Button { menu = true } label: {
                 Image(systemName: "ellipsis")
                     .rotationEffect(.degrees(90))
                     .foregroundStyle(YT.secondary)
-                    .frame(width: 32, height: 44)
+                    .frame(width: 36, height: 44)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("More")
         }
+        .frame(minHeight: art + 16)
+        .sheet(isPresented: $menu) { TrackSheet(track: track) }
         // Offline, what can't play is dimmed.
         .opacity(!Connectivity.shared.online && !library.isDownloaded(track.videoId) ? 0.4 : 1)
         .listRowBackground(Color.clear)
@@ -209,7 +322,7 @@ struct ItemRow: View {
 
     var body: some View {
         NavigationLink(value: Route.page(item.browseId)) {
-            HStack(spacing: 14) {
+            HStack(spacing: 16) {
                 Artwork(source: item.artwork, size: 56, round: item.kind == .artist)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
@@ -401,68 +514,29 @@ struct ShelfView: View {
 /// picture, paged sideways, dots under them.
 struct QuickPicks: View {
     let songs: [Track]
-    @Environment(Player.self) private var player
-    @State private var visible: String?
     @State private var width: CGFloat = 390
 
-    private var tile: CGFloat { max(80, (width - 32 - 12) / 3) }
-    private var pages: Int { (songs.count + 8) / 9 }
-    private var page: Int {
-        guard let visible, let i = songs.firstIndex(where: { $0.videoId == visible }) else { return 0 }
-        return min(pages - 1, (i + 4) / 9)
-    }
-
     var body: some View {
-        VStack(spacing: 12) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHGrid(rows: Array(repeating: GridItem(.fixed(tile), spacing: 6), count: 3), spacing: 6) {
-                    ForEach(Array(songs.enumerated()), id: \.element.videoId) { i, track in
-                        tileView(track, index: i)
+        let columns = stride(from: 0, to: songs.count, by: 4).map { Array(songs[$0..<min($0 + 4, songs.count)]) }
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(alignment: .top, spacing: 0) {
+                ForEach(Array(columns.enumerated()), id: \.offset) { c, column in
+                    VStack(spacing: 0) {
+                        ForEach(Array(column.enumerated()), id: \.offset) { r, track in
+                            TrackRow(track: track, list: songs, index: c * 4 + r, art: 56)
+                                .frame(height: 72)
+                        }
                     }
+                    .frame(width: width - 32)
                 }
-                .scrollTargetLayout()
             }
-            .contentMargins(.horizontal, 16, for: .scrollContent)
-            .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $visible)
-            .frame(height: tile * 3 + 12)
-            if pages > 1 {
-                HStack(spacing: 6) {
-                    ForEach(0..<pages, id: \.self) { p in
-                        Circle()
-                            .fill(.white.opacity(p == page ? 1 : 0.35))
-                            .frame(width: 7, height: 7)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-            }
+            .scrollTargetLayout()
         }
+        .contentMargins(.leading, 16, for: .scrollContent)
+        .scrollTargetBehavior(.viewAligned)
         .background(GeometryReader { geo in
             Color.clear.onAppear { width = geo.size.width }.onChange(of: geo.size.width) { width = geo.size.width }
         })
-    }
-
-    private func tileView(_ track: Track, index: Int) -> some View {
-        Button { player.playFrom(songs, at: index) } label: {
-            ZStack(alignment: .bottomLeading) {
-                Artwork(source: .video(track.videoId), size: tile)
-                LinearGradient(colors: [.clear, .black.opacity(0.75)], startPoint: .center, endPoint: .bottom)
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                Text(track.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .lineLimit(1)
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 7)
-            }
-            .frame(width: tile, height: tile)
-            .overlay {
-                if player.current?.videoId == track.videoId {
-                    RoundedRectangle(cornerRadius: 5).stroke(.white, lineWidth: 3)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .trackMenu(track)
     }
 }
 
