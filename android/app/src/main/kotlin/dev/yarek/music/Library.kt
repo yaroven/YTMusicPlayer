@@ -487,7 +487,8 @@ class Library(private val context: Context, private val catalog: Catalog, privat
     }
 
     private suspend fun fetchSong(track: Track) {
-        val stream = resolver.stream(track.videoId)
+        // The studio song's sound, also for a clip (as it plays).
+        val stream = resolver.stream(Pairs.audioId(track))
         if (stream.hls) throw YTMError.Unplayable(context.getString(R.string.download_age_restricted))
         val name = "${track.videoId}.m4a"
         val file = File(downloadsDir, name)

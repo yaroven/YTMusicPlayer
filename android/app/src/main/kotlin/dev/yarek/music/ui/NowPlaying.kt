@@ -149,6 +149,15 @@ fun NowPlaying() {
     var video by remember { mutableStateOf(false) }
     var videoStart by remember { mutableDoubleStateOf(0.0) }
     var videoAt by remember { mutableStateOf<Double?>(null) }
+    // The song and its clip (Pairs): "Video" only when there is a clip,
+    // started where the song is (its intro added).
+    var pair by remember { mutableStateOf<dev.yarek.core.MediaPair?>(null) }
+    LaunchedEffect(player.current?.videoId) {
+        pair = null
+        val now = player.current ?: return@LaunchedEffect
+        pair = dev.yarek.music.Pairs.pair(now, findClip = true)
+    }
+    val offset = pair?.offset ?: 0.0
     val track = player.current
 
     fun setVideo(on: Boolean) {
@@ -158,7 +167,8 @@ fun NowPlaying() {
             videoAt = null
             videoStart = player.pauseForVideo()
         } else {
-            player.resumeAfterVideo(videoAt)
+            // Clip time → song time (the clip's intro isn't in the song).
+            player.resumeAfterVideo(videoAt?.let { maxOf(0.0, it - offset) })
         }
     }
     // Another song: back to its audio, from its start.
@@ -205,7 +215,8 @@ fun NowPlaying() {
                     player.showNowPlaying = false
                 }) { Icon(Icons.Default.ExpandMore, stringResource(R.string.close), Modifier.size(32.dp)) }
                 Spacer(Modifier.weight(1f))
-                if (track != null) MediaSwitch(video, ::setVideo)
+                // Only songs with a clip offer "Video" (YouTube Music's switch).
+                if (track != null && (pair?.video != null || video)) MediaSwitch(video, ::setVideo)
                 Spacer(Modifier.weight(1f))
                 if (track != null) {
                     Box {
@@ -228,7 +239,8 @@ fun NowPlaying() {
                 return@Column
             }
             Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 32.dp)) {
-                if (video) VideoPane(track.videoId, videoStart) { videoAt = it } else Cover(track)
+                val clip = pair?.video
+                if (video && clip != null) VideoPane(clip, videoStart + offset) { videoAt = it } else Cover(track)
             }
             Header(track)
             Actions(track) { lyricsOpen = true }

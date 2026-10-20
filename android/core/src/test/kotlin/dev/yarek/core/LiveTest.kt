@@ -10,6 +10,18 @@ class LiveTest {
     private val live = System.getenv("YTM_LIVE") == "1"
 
     @Test
+    fun songAndClip() = runBlocking {
+        if (!live) return@runBlocking
+        val catalog = Catalog()
+        val clip = catalog.mediaPair("fJ9rUzIMcZQ", "Queen – Bohemian Rhapsody (Official Video Remastered)", "Queen Official", false)
+        println("clip: $clip")
+        assertEquals("BSTsnWoslP4", clip.song, "the clip plays its studio song")
+        val song = catalog.mediaPair("BSTsnWoslP4", "Bohemian Rhapsody", "Queen", true)
+        println("song: $song")
+        assertEquals("fJ9rUzIMcZQ", song.video, "the song finds its clip")
+    }
+
+    @Test
     fun catalog() = runBlocking {
         if (!live) return@runBlocking
         val catalog = Catalog()

@@ -192,6 +192,10 @@ impl Session {
                     }
                 }
             }
+            Background::VideoPair { video_id, pair } => {
+                let clip = pair.and_then(|p| Some((Arc::<str>::from(p.video?), p.offset)));
+                self.video_pair = Some((video_id, clip));
+            }
             Background::Lyrics { video_id, result } => {
                 if self.queue.current().is_some_and(|t| t.video_id == video_id) {
                     let lyrics = result.unwrap_or_else(|err| {
@@ -528,12 +532,36 @@ impl Session {
 
     /// The playing track changed: refresh what's shown about it.
     pub(super) fn now_changed(&mut self) {
+        self.fetch_video_pair();
         if self.want_lyrics {
             self.fetch_lyrics();
         }
         if self.want_related {
             self.fetch_related();
         }
+    }
+
+    /// Looks up the playing song's clip (YouTube Music's "Video"), so the
+    /// window offers it only when there is one.
+    fn fetch_video_pair(&mut self) {
+        let Some(track) = self.queue.current().cloned() else {
+            return;
+        };
+        if self
+            .video_pair
+            .as_ref()
+            .is_some_and(|(id, _)| *id == track.video_id)
+        {
+            return;
+        }
+        let (source, tx) = (self.deps.source.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            let pair = source.media_pair(&track).await;
+            let _ = tx.send(Background::VideoPair {
+                video_id: track.video_id,
+                pair,
+            });
+        });
     }
 
     fn fetch_lyrics(&mut self) {

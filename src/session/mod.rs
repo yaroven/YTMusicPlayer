@@ -207,7 +207,14 @@ pub struct SessionView {
     pub updating: bool,
     /// The last request failed for want of a connection (until one works).
     pub offline: bool,
+    /// The playing song's clip and how many seconds it runs ahead of the
+    /// song; `None` while unknown or when there is none.
+    pub video: Option<Clip>,
 }
+
+/// A song's clip (its video id) and how many seconds it runs ahead of the
+/// song.
+pub type Clip = (Arc<str>, f64);
 
 enum Background {
     /// YouTube Music answers again (after `offline`), or still doesn't.
@@ -338,6 +345,10 @@ enum Background {
         video_id: Arc<str>,
         result: Result<Option<Lyrics>>,
     },
+    VideoPair {
+        video_id: Arc<str>,
+        pair: Option<crate::catalog::MediaPair>,
+    },
     SignedIn {
         generation: u64,
         result: Result<()>,
@@ -390,6 +401,9 @@ pub struct Session {
     /// Lyrics of the playing track (when asked for with `want_lyrics`).
     pub lyrics: Option<(Arc<str>, Option<Arc<Lyrics>>)>,
     want_lyrics: bool,
+    /// The playing track's clip (YouTube Music's "Video") and how far it
+    /// runs ahead of the song, once looked up; `None` inside: no clip.
+    video_pair: Option<(Arc<str>, Option<Clip>)>,
     /// Related shelves of the playing track (when asked for).
     pub related: Option<(Arc<str>, Arc<[Shelf]>)>,
     want_related: bool,
@@ -539,6 +553,7 @@ impl Session {
             suggestions: Arc::from([]),
             suggesting: String::new(),
             lyrics: None,
+            video_pair: None,
             want_lyrics: false,
             related: None,
             want_related: false,
@@ -620,6 +635,7 @@ impl Session {
             update: self.update.as_ref().map(|u| u.version.clone()),
             updating: self.updating,
             offline: self.offline,
+            video: self.clip(),
         }
     }
 
@@ -848,7 +864,8 @@ impl Session {
             | Background::Explore(_)
             | Background::Suggestions { .. }
             | Background::Related { .. }
-            | Background::Lyrics { .. } => self.discover_event(event, &mut changes),
+            | Background::Lyrics { .. }
+            | Background::VideoPair { .. } => self.discover_event(event, &mut changes),
             Background::CastDevices(_) | Background::CastConnected { .. } => {
                 self.cast_event(event, &mut changes)
             }
@@ -1093,6 +1110,21 @@ impl Session {
     }
 
     /// The window switched to the video: the audio waits there.
+    /// The playing track's clip and its offset, when known.
+    pub(super) fn clip(&self) -> Option<Clip> {
+        let now = self.queue.current()?;
+        match &self.video_pair {
+            Some((id, clip)) if *id == now.video_id => clip.clone(),
+            _ => None,
+        }
+    }
+
+    /// Clip time → song time (the clip's intro isn't in the song).
+    fn song_time(&self, clip_at: Duration) -> Duration {
+        let offset = self.clip().map_or(0.0, |(_, o)| o);
+        clip_at.saturating_sub(Duration::from_secs_f64(offset))
+    }
+
     pub fn pause_for_video(&mut self) {
         self.watching = true;
         self.player.set_paused(true);
@@ -1104,10 +1136,11 @@ impl Session {
     }
 
     /// Back from the video: the song carries on where the video stopped.
+    /// `at`: where the clip got (its own time).
     pub fn resume_from_video(&mut self, at: Option<Duration>) {
         self.watching = false;
         if let Some(at) = at {
-            self.seek_to(at);
+            self.seek_to(self.song_time(at));
         }
         self.player.set_paused(false);
         self.set_info(tr!(self.lang, "Back to the song", "Назад до пісні"));
@@ -1129,10 +1162,12 @@ impl Session {
             ));
             return;
         }
-        let at = self.player_status.position;
+        // The song's clip, where the song is (its intro added).
+        let (clip, offset) = self.clip().unwrap_or((track.video_id.clone(), 0.0));
+        let at = self.player_status.position + Duration::from_secs_f64(offset);
         self.player.set_paused(true);
         if !video::in_window() {
-            let url = video::watch_url(&track.video_id, at);
+            let url = video::watch_url(&clip, at);
             match open::that_detached(&url) {
                 Ok(_) => self.set_info(trf!(
                     self.lang,
@@ -1157,7 +1192,7 @@ impl Session {
         ));
         let (tx, video_id) = (self.tx.clone(), track.video_id.clone());
         tokio::spawn(async move {
-            let result = video::watch(&video_id, at).await;
+            let result = video::watch(&clip, at).await;
             let _ = tx.send(Background::VideoClosed { video_id, result });
         });
     }
@@ -1430,7 +1465,7 @@ impl Session {
 
     fn prefetch_next(&self) {
         if let Some(next) = self.queue.peek_next() {
-            self.deps.source.prefetch(&next.video_id);
+            self.deps.source.prefetch(next);
         }
     }
 

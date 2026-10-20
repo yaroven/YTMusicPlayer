@@ -83,6 +83,8 @@ final class Player {
     private struct Loaded {
         let index: Int
         let videoId: String
+        /// Whose sound plays: the studio song, also for a clip (`Pairs`).
+        var audioId: String
         let item: AVPlayerItem
         let loudnessDb: Double?
         let duration: TimeInterval?
@@ -352,10 +354,12 @@ final class Player {
                 item.forwardPlaybackEndTime = CMTime(seconds: duration, preferredTimescale: 1000)
             }
             watch(item)
-            return Loaded(index: index, videoId: track.videoId, item: item, loudnessDb: saved.loudnessDb,
-                          duration: duration)
+            return Loaded(index: index, videoId: track.videoId, audioId: track.videoId, item: item,
+                          loudnessDb: saved.loudnessDb, duration: duration)
         }
-        let stream = try await Services.resolver.stream(track.videoId)
+        // The studio song's sound, also for a clip (no intro or crowd noise).
+        let audioId = await Pairs.shared.audioId(track)
+        let stream = try await Services.resolver.stream(audioId)
         try Task.checkCancellation()
         let item: AVPlayerItem
         if stream.hls {
@@ -383,8 +387,8 @@ final class Player {
         // Enough to ride out a weak signal, not the whole song in memory.
         item.preferredForwardBufferDuration = 30
         watch(item)
-        return Loaded(index: index, videoId: track.videoId, item: item, loudnessDb: stream.loudnessDb,
-                      duration: stream.duration)
+        return Loaded(index: index, videoId: track.videoId, audioId: audioId, item: item,
+                      loudnessDb: stream.loudnessDb, duration: stream.duration)
     }
 
     private func gain(_ loaded: Loaded) -> Float {
@@ -701,14 +705,14 @@ final class Player {
         guard let item else { return }
         if let preloaded, preloaded.item === item {
             dropPreload()
-            Task { await Services.resolver.forget(preloaded.videoId) }
+            Task { await Services.resolver.forget(preloaded.audioId) }
             return
         }
         guard let loaded, loaded.item === item, let track = current else { return }
         if retried.insert(loaded.videoId).inserted {
             let at = position
             Task {
-                await Services.resolver.forget(loaded.videoId)
+                await Services.resolver.forget(loaded.audioId)
                 load(resumeAt: at)
             }
         } else {

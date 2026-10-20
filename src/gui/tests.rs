@@ -73,6 +73,7 @@ fn session_view() -> SessionView {
         signed_in: true,
         signing_in: false,
         youtube_signed_in: true,
+        video: None,
         youtube_signing_in: false,
         client_id: String::new(),
         memory: String::new(),

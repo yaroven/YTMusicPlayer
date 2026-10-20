@@ -510,7 +510,8 @@ final class Library {
     }
 
     private func fetchSong(_ track: Track) async throws {
-        let stream = try await Services.resolver.stream(track.videoId)
+        // The studio song's sound, also for a clip (as it plays).
+        let stream = try await Services.resolver.stream(await Pairs.shared.audioId(track))
         guard !stream.hls else { throw DownloadError.notADownloadableFile }
         let file = Self.fileName(track)
         let target = Self.downloadsDirectory.appendingPathComponent(file)

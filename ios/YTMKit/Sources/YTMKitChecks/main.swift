@@ -142,6 +142,12 @@ let albumRow = #"""
     check(cleanTitle(artist: "RickAstleyVEVO", title: "Rick Astley - Never Gonna Give You Up [4K]") == ("Rick Astley", "Never Gonna Give You Up"), "clean 2")
     check(cleanTitle(artist: "Daft Punk", title: "Get Lucky feat. Pharrell Williams") == ("Daft Punk", "Get Lucky"), "clean 3")
     check(cleanTitle(artist: "Queen", title: "Bohemian Rhapsody") == ("Queen", "Bohemian Rhapsody"), "clean 4")
+    // Songs and their clips (same rules as the desktop player).
+    check(sameRecording("Bohemian Rhapsody", "Queen", "Queen - Bohemian Rhapsody (Official Video Remastered)", "Queen Official"), "pair 1")
+    check(sameRecording("Numb", "Linkin Park", "Numb [Official Music Video] [4K UPGRADE] – Linkin Park", "Linkin Park"), "pair 2")
+    check(!sameRecording("Numb", "Linkin Park", "Numb / Encore", "Linkin Park"), "pair 3")
+    check(!sameRecording("Halo", "Beyoncé", "Halo", "Soil"), "pair 4")
+    check(clipOffset(song: 355, video: 367) == 12 && clipOffset(song: 200, video: 400) == 0, "clip offset")
 
     let karaoke = Lyrics(lines: parseLrc("[00:10.00] One two three\n[00:20.00]\n[00:30.00] Last"), source: "LRCLIB")
     // Only lines timed: no guessed word times, the line lights up whole.
@@ -291,6 +297,10 @@ let albumRow = #"""
 
 @MainActor func live() async throws {
     let catalog = Catalog()
+    let clipPair = try await catalog.mediaPair(videoId: "fJ9rUzIMcZQ", title: "Queen – Bohemian Rhapsody (Official Video Remastered)", artist: "Queen Official", findClip: false)
+    check(clipPair.song == "BSTsnWoslP4" && clipPair.video == "fJ9rUzIMcZQ", "live clip plays its studio song \(clipPair)")
+    let songPair = try await catalog.mediaPair(videoId: "BSTsnWoslP4", title: "Bohemian Rhapsody", artist: "Queen", findClip: true)
+    check(songPair.song == "BSTsnWoslP4" && songPair.video == "fJ9rUzIMcZQ", "live song finds its clip \(songPair)")
     let found = try await catalog.search("abba dancing queen", kind: .songs)
     print("search: \(found.count) songs, first \(found.first?.title ?? "-") by \(found.first?.track?.artist ?? "-")")
     check(!found.isEmpty, "live search")

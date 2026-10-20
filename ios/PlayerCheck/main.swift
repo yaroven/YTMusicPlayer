@@ -29,7 +29,9 @@ import YTMKit
     await wait("radio appended (autoplay)") { player.queue.count > 2 }
     player.seek(to: 226)
     await wait("gapless advance to second", 12) { player.index == 1 && player.position > 0.3 }
-    await wait("second song's duration") { abs(player.duration - 359) < 3 }
+    // b is Bohemian Rhapsody's clip: its studio song plays instead (354 s,
+    // the clip runs 359 s with its intro).
+    await wait("the clip plays its studio song") { abs(player.duration - 354.3) < 1.5 }
     player.next()
     await wait("skip to radio song") { player.index == 2 && player.isPlaying }
     player.previous()  // position < 3: back to song 1

@@ -1355,6 +1355,8 @@ slint::slint! {
         callback set-language(string);
         // Showing the video instead of the cover.
         in-out property <bool> video-on;
+        // The playing song has a clip (YouTube Music's "Video").
+        in property <bool> has-video;
         // Where the video goes (window coordinates).
         callback video-rect(length, length, length, length);
         // The video was switched off (closing the full-screen view).
@@ -1965,7 +1967,8 @@ slint::slint! {
                                 spacing: 16px;
                                 HorizontalLayout {
                                     alignment: center;
-                                    MediaSwitch {
+                                    // Only songs with a clip (or a video on) offer "Video".
+                                    if root.has-video || root.video-on: MediaSwitch {
                                         video: root.video-on;
                                         choose(v) => {
                                             if (v != root.video-on) { root.watch-video(); }
@@ -2021,7 +2024,7 @@ slint::slint! {
                             spacing: 16px;
                             HorizontalLayout {
                                 alignment: center;
-                                MediaSwitch {
+                                if root.has-video || root.video-on: MediaSwitch {
                                     video: root.video-on;
                                     choose(v) => {
                                         if (v != root.video-on) { root.watch-video(); }

@@ -17,6 +17,9 @@ struct NowPlayingView: View {
     @State private var videoStart: TimeInterval = 0
     @State private var videoAt: TimeInterval?
     @State private var addingToPlaylist = false
+    /// The playing song and its clip (`Pairs`): "Video" only when there is
+    /// a clip, started where the song is (its intro added).
+    @State private var pair: MediaPair?
     /// How far the cover is dragged sideways (swipe to the next / previous song).
     @State private var coverOffset: CGFloat = 0
 
@@ -42,9 +45,9 @@ struct NowPlayingView: View {
                     if video && !Connectivity.shared.online {
                         ContentUnavailableView("You're offline", systemImage: "wifi.slash",
                                                description: Text("The video needs the internet. The song itself plays if it's downloaded."))
-                    } else if video {
-                        VideoPane(videoId: track.videoId, start: videoStart) { videoAt = $0 }
-                            .id(track.videoId)
+                    } else if video, let clip = pair?.video {
+                        VideoPane(videoId: clip, start: videoStart + clipOffset) { videoAt = $0 }
+                            .id(clip)
                     } else {
                         cover(track)
                     }
@@ -67,8 +70,14 @@ struct NowPlayingView: View {
                 videoAt = nil
                 videoStart = player.pauseForVideo()
             } else {
-                player.resumeAfterVideo(at: videoAt)
+                player.resumeAfterVideo(at: songTime(videoAt))
             }
+        }
+        .task(id: player.current?.videoId) {
+            pair = nil
+            guard let track = player.current else { return }
+            let found = await Pairs.shared.pair(track, findClip: true)
+            if player.current?.videoId == track.videoId { pair = found }
         }
         .onChange(of: player.current?.videoId) { _, _ in
             // Another song: back to its audio, from its start.
@@ -78,7 +87,7 @@ struct NowPlayingView: View {
             }
         }
         .onDisappear {
-            if video { video = false; player.resumeAfterVideo(at: videoAt) }
+            if video { video = false; player.resumeAfterVideo(at: songTime(videoAt)) }
         }
         .background {
             ZStack {
@@ -117,6 +126,14 @@ struct NowPlayingView: View {
         .gesture(DragGesture(minimumDistance: 20).onEnded { if $0.translation.height < 0 { sheet = .queue } })
     }
 
+    /// Seconds the clip runs ahead of the song.
+    private var clipOffset: TimeInterval { pair?.offset ?? 0 }
+
+    /// Clip time → song time (the clip's intro isn't in the song).
+    private func songTime(_ clipAt: TimeInterval?) -> TimeInterval? {
+        clipAt.map { max(0, $0 - clipOffset) }
+    }
+
     private func topBar(_ track: Track) -> some View {
         HStack {
             Button { player.showNowPlaying = false } label: {
@@ -124,7 +141,8 @@ struct NowPlayingView: View {
             }
             .buttonStyle(.plain)
             Spacer()
-            MediaSwitch(video: $video)
+            // Only songs with a clip offer "Video" (YouTube Music's switch).
+            if pair?.video != nil || video { MediaSwitch(video: $video) }
             Spacer()
             #if os(iOS)
             AirPlayButton().frame(width: 40, height: 40)

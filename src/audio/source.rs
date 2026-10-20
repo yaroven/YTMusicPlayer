@@ -32,7 +32,7 @@ use super::{
 };
 use crate::{
     api::models::Track,
-    catalog::Catalog,
+    catalog::{Catalog, MediaPair},
     storage::{Download, Library},
 };
 
@@ -184,7 +184,13 @@ pub struct TrackSource {
     extractor: Arc<dyn Extractor>,
     http: reqwest::Client,
     options: SourceOptions,
+    /// Songs and their clips found so far (video id → pair, and whether the
+    /// clip of a song was looked for), see [`TrackSource::audio_id`].
+    pairs: Arc<std::sync::Mutex<std::collections::HashMap<String, (MediaPair, bool)>>>,
 }
+
+/// Pairs kept in memory (a few hundred bytes each).
+const PAIRS_KEEP: usize = 500;
 
 /// HLS audio files kept in the temp dir (each ~3 MB).
 const HLS_KEEP: usize = 3;
@@ -226,6 +232,55 @@ impl TrackSource {
             extractor,
             http,
             options,
+            pairs: Arc::default(),
+        }
+    }
+
+    /// What plays as `track`'s sound: the studio song, also when the track
+    /// is a clip (YouTube Music's "Song"), so a clip's intro or crowd noise
+    /// isn't heard. One request the first time, then from memory; the
+    /// track's own id when the catalog can't tell.
+    async fn audio_id(&self, track: &Track) -> Arc<str> {
+        match self.pair(track, false).await {
+            Some(pair) => pair.song.into(),
+            None => track.video_id.clone(),
+        }
+    }
+
+    /// The track's song and clip (for the player's "Video"), looking for
+    /// the clip of a song too.
+    pub async fn media_pair(&self, track: &Track) -> Option<MediaPair> {
+        self.pair(track, true).await
+    }
+
+    async fn pair(&self, track: &Track, find_clip: bool) -> Option<MediaPair> {
+        let key = track.video_id.to_string();
+        if let Some((pair, complete)) = self
+            .pairs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+            && (*complete || !find_clip || pair.video.is_some())
+        {
+            return Some(pair.clone());
+        }
+        let catalog = self.options.catalog.as_ref()?;
+        let found = catalog
+            .media_pair(&track.video_id, &track.title, &track.artist, find_clip)
+            .await;
+        match found {
+            Ok(pair) => {
+                let mut pairs = self.pairs.lock().unwrap_or_else(|e| e.into_inner());
+                if pairs.len() >= PAIRS_KEEP {
+                    pairs.clear();
+                }
+                pairs.insert(key, (pair.clone(), find_clip));
+                Some(pair)
+            }
+            Err(err) => {
+                tracing::debug!(%err, video_id = %track.video_id, "song / clip pair");
+                None
+            }
         }
     }
 
@@ -236,7 +291,8 @@ impl TrackSource {
     pub async fn open(&self, track: &Track, remote: bool) -> Result<Opened> {
         let listed = track.duration_secs.map(|s| Duration::from_secs(s.into()));
         if remote {
-            let stream = self.resolver.resolve(&track.video_id).await?;
+            let audio = self.audio_id(track).await;
+            let stream = self.resolver.resolve(&audio).await?;
             return Ok(Opened {
                 media: None,
                 duration: stream.duration.or(listed),
@@ -259,7 +315,11 @@ impl TrackSource {
                 stream: None,
             });
         }
-        let (opened, gain) = tokio::join!(self.stream(track), self.gain(&track.video_id));
+        let audio = self.audio_id(track).await;
+        if audio != track.video_id {
+            tracing::info!(clip = %track.video_id, song = %audio, "playing the clip's studio song");
+        }
+        let (opened, gain) = tokio::join!(self.stream(&audio), self.gain(&audio));
         let (media, stream) = opened?;
         Ok(Opened {
             media: Some(media),
@@ -269,8 +329,7 @@ impl TrackSource {
         })
     }
 
-    async fn stream(&self, track: &Track) -> Result<(Media, AudioStream)> {
-        let video_id = &*track.video_id;
+    async fn stream(&self, video_id: &str) -> Result<(Media, AudioStream)> {
         let stream = self.resolver.resolve(video_id).await?;
         if !stream.is_decodable() {
             bail!(
@@ -360,7 +419,9 @@ impl TrackSource {
         };
         tokio::fs::create_dir_all(dir).await?;
         let path = dir.join(format!("{}.m4a", track.video_id));
-        self.extractor.download(&track.video_id, &path).await?;
+        // The studio song's sound, also for a clip (as it plays).
+        let audio = self.audio_id(track).await;
+        self.extractor.download(&audio, &path).await?;
         let bytes = tokio::fs::metadata(&path).await?.len();
         let download = Download {
             track: track.clone(),
@@ -429,9 +490,15 @@ impl TrackSource {
         self.resolver.uses_js()
     }
 
-    /// Warms the URL cache for the next queued track.
-    pub fn prefetch(&self, video_id: &str) {
-        self.resolver.prefetch(video_id);
+    /// Warms the URL cache (and the song / clip pair) for the next queued
+    /// track.
+    pub fn prefetch(&self, track: &Track) {
+        let source = self.clone();
+        let track = track.clone();
+        tokio::spawn(async move {
+            let audio = source.audio_id(&track).await;
+            source.resolver.prefetch(&audio);
+        });
     }
 
     /// Searches YouTube without the Data API (shares the one-yt-dlp permit).

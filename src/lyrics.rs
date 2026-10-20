@@ -433,7 +433,7 @@ fn parse_lrc(lrc: &str) -> Vec<Line> {
 
 /// Artist and song title without YouTube decorations: "ABBA - Dancing Queen
 /// (Official Music Video)" by "ABBA" → ("ABBA", "Dancing Queen").
-fn clean_title(artist: &str, title: &str) -> (String, String) {
+pub(crate) fn clean_title(artist: &str, title: &str) -> (String, String) {
     let mut artist = artist.trim().to_owned();
     let mut title = title.trim().to_owned();
     // "Artist - Title" in the title (music videos).

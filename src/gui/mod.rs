@@ -1120,6 +1120,7 @@ impl View {
             return;
         };
         ui.set_loading(view.loading);
+        ui.set_has_video(view.video.is_some());
         ui.set_playing(view.state == PlayState::Playing);
         ui.set_volume(view.volume);
         ui.set_shuffle(view.shuffle);
@@ -2230,11 +2231,11 @@ fn wire_callbacks(
         if !ui.get_video_on() {
             return;
         }
-        let Some((id, at)) = v
-            .last
-            .as_ref()
-            .and_then(|s| s.now.as_ref().map(|t| (t.video_id.clone(), s.position)))
-        else {
+        // The song's clip, where the song is (the clip's intro added).
+        let Some((id, at)) = v.last.as_ref().and_then(|s| {
+            let (clip, offset) = s.video.clone()?;
+            Some((clip, s.position + Duration::from_secs_f64(offset)))
+        }) else {
             return;
         };
         match video::VideoView::open(ui, id, at, v.video_rect) {

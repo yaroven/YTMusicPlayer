@@ -320,7 +320,7 @@ impl Session {
                 match result {
                     // Carry on in audio where the video stopped.
                     Ok(at) if self.queue.current().is_some_and(|t| t.video_id == video_id) => {
-                        self.seek_to(at);
+                        self.seek_to(self.song_time(at));
                         self.player.set_paused(false);
                         self.set_info(tr!(self.lang, "Back to audio", "Назад до аудіо"));
                     }

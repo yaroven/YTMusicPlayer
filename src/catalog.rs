@@ -229,6 +229,101 @@ impl Catalog {
         Ok(parse_search(&data, kind))
     }
 
+    /// The song and the clip of the same recording, as YouTube Music pairs
+    /// them ("Song" / "Video"). YouTube only gives its own apps the exact
+    /// pair and the time map, so this finds the other half by search: the
+    /// studio track for a clip, the official clip for a song, matched by
+    /// title, artist and length (see [`MediaPair`]). Without `find_clip` a
+    /// song costs one request (what it is) and its clip isn't looked for —
+    /// enough to know what to play.
+    pub async fn media_pair(
+        &self,
+        video_id: &str,
+        title: &str,
+        artist: &str,
+        find_clip: bool,
+    ) -> Result<MediaPair> {
+        let data = self
+            .call("next", json!({ "videoId": video_id, "isAudioOnly": true }))
+            .await?;
+        // The queue's own entry for it says what it is and how long.
+        let entry = find_all(&data, "playlistPanelVideoRenderer")
+            .into_iter()
+            .find(|r| r.get("videoId").and_then(Value::as_str) == Some(video_id));
+        let kind = entry
+            .and_then(|r| find_first(r, "musicVideoType"))
+            .or_else(|| find_first(&data["currentVideoEndpoint"], "musicVideoType"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let length = entry
+            .and_then(|r| parse_duration(&text(r.get("lengthText"))))
+            .map(f64::from);
+        let lead = lead_artist(artist);
+        let query = format!("{lead} {}", song_title(title, &lead));
+        let is_song = matches!(
+            kind,
+            "MUSIC_VIDEO_TYPE_ATV" | "MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK"
+        );
+        if is_song && !find_clip {
+            return Ok(MediaPair {
+                song: video_id.to_owned(),
+                video: None,
+                offset: 0.0,
+            });
+        }
+        let params = if is_song {
+            SEARCH_VIDEOS
+        } else {
+            SearchKind::Songs.params()
+        };
+        let found = self
+            .call("search", json!({ "query": query, "params": params }))
+            .await
+            .map(|data| search_rows(&data))
+            .unwrap_or_default();
+        let other = found.into_iter().find(|(t, kind)| {
+            t.video_id.as_ref() != video_id
+                && (!is_song || kind.as_deref() == Some("MUSIC_VIDEO_TYPE_OMV"))
+                && same_recording(title, artist, &t.title, &t.artist)
+                && match (length, t.duration_secs.map(f64::from)) {
+                    // A clip runs as long as its song or longer (an intro,
+                    // an outro), not much shorter.
+                    (Some(mine), Some(theirs)) if is_song => {
+                        theirs >= mine - 3.0 && theirs <= mine + 180.0
+                    }
+                    (Some(mine), Some(theirs)) => theirs <= mine + 3.0 && theirs >= mine * 0.6,
+                    _ => true,
+                }
+        });
+        let Some((other, _)) = other else {
+            // Nothing better: a song without a clip, or a clip without its
+            // song (then its own sound).
+            return Ok(MediaPair {
+                song: video_id.to_owned(),
+                video: (!is_song).then(|| video_id.to_owned()),
+                offset: 0.0,
+            });
+        };
+        let (song_len, video_len) = if is_song {
+            (length, other.duration_secs.map(f64::from))
+        } else {
+            (other.duration_secs.map(f64::from), length)
+        };
+        Ok(MediaPair {
+            song: if is_song {
+                video_id.to_owned()
+            } else {
+                other.video_id.to_string()
+            },
+            video: Some(if is_song {
+                other.video_id.to_string()
+            } else {
+                video_id.to_owned()
+            }),
+            offset: clip_offset(song_len, video_len),
+        })
+    }
+
     /// Album (`MPREb_…`), artist (`UC…`) or playlist (`VL…` / `PL…`) page.
     pub async fn page(&self, browse_id: &str) -> Result<Page> {
         // Explore chips carry their params after a `#` (see `nav_button`).
@@ -937,6 +1032,118 @@ fn parse_suggestions(data: &Value) -> Vec<String> {
         .collect()
 }
 
+/// YouTube Music's search filter for videos (clips).
+const SEARCH_VIDEOS: &str = "EgWKAQIQAWoMEA4QChADEAQQCRAF";
+
+/// A song and its clip (YouTube Music's "Song" / "Video"), see
+/// [`Catalog::media_pair`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MediaPair {
+    /// What plays as sound: the studio track (the clip's own sound only
+    /// when no studio track was found).
+    pub song: String,
+    /// The clip "Video" shows, when there is one.
+    pub video: Option<String>,
+    /// Seconds the clip runs ahead of the song: clip time = song time +
+    /// offset. Guessed from the lengths (a longer clip has an intro), so it
+    /// can be a few seconds off when the extra is an outro instead.
+    pub offset: f64,
+}
+
+/// A longer clip is taken to have an intro of the difference (up to 45 s;
+/// beyond that it's more likely scenes after the song).
+fn clip_offset(song: Option<f64>, video: Option<f64>) -> f64 {
+    match (song, video) {
+        (Some(song), Some(video)) if video > song && video - song <= 45.0 => video - song,
+        _ => 0.0,
+    }
+}
+
+/// Search rows that play (songs, clips), with the kind of video each is.
+fn search_rows(data: &Value) -> Vec<(Track, Option<String>)> {
+    find_all(data, "musicResponsiveListItemRenderer")
+        .into_iter()
+        .filter_map(|r| {
+            let track = list_item(r, None)?.track?;
+            let kind = find_first(r, "musicVideoType")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            Some((track, kind))
+        })
+        .collect()
+}
+
+/// Lower case, letters and digits only, words single-spaced.
+fn normalized(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A title without its decorations: bracketed parts ("(Official Video)",
+/// "[4K]"), "feat. …", normalized.
+fn bare_title(title: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0;
+    for c in title.chars() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = (depth - 1).max(0),
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    let lower = out.to_lowercase();
+    let cut = [" feat.", " feat ", " ft.", " ft "]
+        .iter()
+        .filter_map(|n| lower.find(n))
+        .min()
+        .unwrap_or(lower.len());
+    normalized(&lower[..cut])
+}
+
+/// An artist's lead name: the first of several, without "VEVO" / "Official".
+fn lead_artist(artist: &str) -> String {
+    let first = artist.split([',', '&']).next().unwrap_or(artist);
+    let mut name = normalized(first).replace("vevo", "");
+    for tail in [" official", " music", " topic"] {
+        if let Some(stripped) = name.trim_end().strip_suffix(tail) {
+            name = stripped.to_owned();
+        }
+    }
+    name.trim().to_owned()
+}
+
+/// The same title by the same artist, decorations ("(Official Video)",
+/// "Remastered", "feat. …", "Artist - " in a clip's title, a "VEVO"
+/// channel) aside.
+fn same_recording(title: &str, artist: &str, other_title: &str, other_artist: &str) -> bool {
+    let (x, y) = (lead_artist(artist), lead_artist(other_artist));
+    let (a, b) = (song_title(title, &x), song_title(other_title, &x));
+    !a.is_empty() && a == b && related(&x, &y)
+}
+
+fn related(a: &str, b: &str) -> bool {
+    !a.is_empty() && !b.is_empty() && (a.contains(b) || b.contains(a))
+}
+
+/// A clip's title without the artist in it ("Artist - Title", "Title –
+/// Artist") and without decorations, normalized; `artist` is the lead
+/// artist ([`lead_artist`]).
+fn song_title(title: &str, artist: &str) -> String {
+    let dashed = title.replace(['–', '—'], "-");
+    let title = match dashed.split_once(" - ") {
+        Some((left, right)) if related(&lead_artist(left), artist) => right.to_owned(),
+        Some((left, right)) if related(&lead_artist(&bare_title(right)), artist) => left.to_owned(),
+        _ => dashed,
+    };
+    bare_title(&title)
+}
+
 fn parse_search(data: &Value, kind: SearchKind) -> Vec<Item> {
     find_all(data, "musicResponsiveListItemRenderer")
         .into_iter()
@@ -1199,6 +1406,63 @@ fn continuation(data: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pairs_a_song_with_its_clip() {
+        assert!(same_recording(
+            "Bohemian Rhapsody",
+            "Queen",
+            "Queen - Bohemian Rhapsody (Official Video Remastered)",
+            "Queen Official"
+        ));
+        assert!(same_recording(
+            "Numb",
+            "Linkin Park",
+            "Numb [Official Music Video] [4K UPGRADE] – Linkin Park",
+            "Linkin Park"
+        ));
+        assert!(!same_recording(
+            "Numb",
+            "Linkin Park",
+            "Numb / Encore",
+            "Linkin Park"
+        ));
+        assert!(!same_recording("Halo", "Beyoncé", "Halo", "Soil"));
+        assert_eq!(clip_offset(Some(355.0), Some(367.0)), 12.0);
+        assert_eq!(
+            clip_offset(Some(200.0), Some(400.0)),
+            0.0,
+            "a long extra is more likely an outro"
+        );
+        assert_eq!(clip_offset(Some(200.0), Some(195.0)), 0.0);
+    }
+
+    /// `cargo test -- --ignored live_media_pair --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn live_media_pair() {
+        let catalog = Catalog::new(reqwest::Client::new());
+        // The song finds its clip, the clip finds its song.
+        let song = catalog
+            .media_pair("BSTsnWoslP4", "Bohemian Rhapsody", "Queen", true)
+            .await
+            .unwrap();
+        println!("{song:?}");
+        assert_eq!(song.song, "BSTsnWoslP4");
+        assert!(song.video.is_some(), "Bohemian Rhapsody has a clip");
+        let clip = catalog
+            .media_pair(
+                "fJ9rUzIMcZQ",
+                "Queen – Bohemian Rhapsody (Official Video Remastered)",
+                "Queen Official",
+                false,
+            )
+            .await
+            .unwrap();
+        println!("{clip:?}");
+        assert_ne!(clip.song, "fJ9rUzIMcZQ", "the clip plays the studio track");
+        assert_eq!(clip.video.as_deref(), Some("fJ9rUzIMcZQ"));
+    }
+
     use super::*;
 
     #[test]

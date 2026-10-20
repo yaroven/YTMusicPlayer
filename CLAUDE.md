@@ -716,6 +716,29 @@ Domain terms are defined in `CONTEXT.md`.
   (Android ≡, iPhone long-press) and removes by swipe. Checked on the
   Android emulator with `adb shell input swipe`.
 
+- **Song vs clip, YouTube Music's "Song" / "Video"** (user's request
+  2026-10-20: a clip's crowd noise / intro must not be the song's sound;
+  "Video" only when there is a clip, in step with the song). YouTube gives
+  the exact pair and time map (`playlistPanelVideoWrapperRenderer` →
+  `counterpart` + `segmentMap`) only to its own apps: checked 2026-10-20
+  with WEB_REMIX (anonymous, the user's cookies, a newer client version),
+  IOS_MUSIC / ANDROID_MUSIC (cookies not accepted: `logged_in 0`), and
+  music.youtube.com signed in (its toggle stays `toggle-disabled`, no
+  counterpart in its state). So `media_pair` (Rust `catalog`, YTMKit
+  `MediaPair.swift`, Kotlin `MediaPair.kt`, same rules) finds the other
+  half by search: `next` tells what the id is (`musicVideoType` of its
+  queue entry: ATV = song); a clip looks for its studio song (search songs),
+  a song for its official clip (search videos, `MUSIC_VIDEO_TYPE_OMV`),
+  matched by bare title + lead artist + length; offset = clip length −
+  song length when 0 < diff ≤ 45 s (an intro), else 0 — can be seconds off
+  when the extra is an outro. Sound = the song everywhere (desktop
+  `TrackSource::audio_id`, iPhone / Android `Pairs.audioId` before the
+  resolver, downloads too); "Video" is offered only with a clip and opens
+  it at song time + offset (back: clip time − offset). Sample of 12 songs:
+  11 clips found. `catalog::tests::live_media_pair`, YTMKitChecks --live,
+  `YTM_LIVE=1 :core:test`; Android checked on the emulator (song 0:20 →
+  clip 25 s; clip 42 s → song 0:37).
+
 ## Open TODOs
 
 - Android: try on a real phone (Google sign-in in the WebView — Google may

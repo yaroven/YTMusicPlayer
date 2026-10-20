@@ -337,4 +337,14 @@ class ParseTest {
         assertTrue(!YTMError.Http("x", 500).isNetworkFailure())
         assertTrue(!YTMError.NoStream.isNetworkFailure())
     }
+
+    @Test
+    fun pairsASongWithItsClip() {
+        assertTrue(sameRecording("Bohemian Rhapsody", "Queen", "Queen - Bohemian Rhapsody (Official Video Remastered)", "Queen Official"))
+        assertTrue(sameRecording("Numb", "Linkin Park", "Numb [Official Music Video] [4K UPGRADE] – Linkin Park", "Linkin Park"))
+        assertTrue(!sameRecording("Numb", "Linkin Park", "Numb / Encore", "Linkin Park"))
+        assertTrue(!sameRecording("Halo", "Beyoncé", "Halo", "Soil"))
+        assertEquals(12.0, clipOffset(355.0, 367.0))
+        assertEquals(0.0, clipOffset(200.0, 400.0))
+    }
 }

@@ -130,6 +130,8 @@ class Player(
 
     /** Resolved streams by video id (their loudness sets the volume). */
     private val streams = ConcurrentHashMap<String, Stream>()
+    /** The queue's songs by id, for the loader thread (titles for [Pairs]). */
+    private val tracks = ConcurrentHashMap<String, Track>()
 
     /** Songs that play only as HLS. */
     private val hlsOnly = ConcurrentHashMap.newKeySet<String>()
@@ -179,7 +181,8 @@ class Player(
             if (scheme != "ytm" && scheme != "ytmhls") return@Factory spec
             val id = spec.uri.host ?: throw ResolveFailed(IllegalArgumentException("no video id"))
             val stream = try {
-                runBlocking { resolver.stream(id) }
+                // The studio song's sound, also for a clip (no intro or crowd noise).
+                runBlocking { resolver.stream(tracks[id]?.let { Pairs.audioId(it) } ?: id) }
             } catch (e: Exception) {
                 throw ResolveFailed(e)
             }
@@ -421,6 +424,7 @@ class Player(
     }
 
     private fun item(track: Track): MediaItem {
+        tracks[track.videoId] = track
         val builder = MediaItem.Builder()
             .setMediaId(track.videoId)
             .setMediaMetadata(
@@ -542,7 +546,7 @@ class Player(
             // An expired URL, or the network moved to another IP: resolve
             // once more and continue where it stopped.
             scope.launch {
-                resolver.forget(track.videoId)
+                resolver.forget(Pairs.cachedAudioId(track.videoId))
                 exo.prepare()
             }
             return
