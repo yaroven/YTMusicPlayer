@@ -248,12 +248,6 @@ private fun IconArt(icon: androidx.compose.ui.graphics.vector.ImageVector, size:
     }
 }
 
-/** A small grey heading over a part of a list. */
-@Composable
-private fun SectionTitle(text: String) {
-    Text(text, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), fontSize = 14.sp, color = YT.secondary)
-}
-
 /** A library entry: picture, title, "N songs". */
 @Composable
 private fun Entry(title: String, subtitle: String, art: @Composable () -> Unit, onClick: () -> Unit) {
