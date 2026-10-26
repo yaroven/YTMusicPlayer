@@ -490,6 +490,21 @@ impl App {
             }
             Action::FindOnline => self.mode = Mode::Find(String::new()),
             Action::CategoryPrev | Action::CategoryNext => {
+                // Downloads: step through "all songs" and the playlists
+                // downloaded whole.
+                let lists = self.library.download_lists().len();
+                if lists > 0 {
+                    let i = self.library.download_list().map_or(0, |i| i + 1);
+                    let next = if action == Action::CategoryNext {
+                        (i + 1) % (lists + 1)
+                    } else {
+                        (i + lists) % (lists + 1)
+                    };
+                    if let Err(err) = self.library.select_download_list(next.checked_sub(1)) {
+                        tracing::warn!(%err, "downloaded playlist");
+                    }
+                    return;
+                }
                 let (Some(query), Some(kind)) = (
                     self.library.search_query().map(str::to_owned),
                     self.library.search_kind(),

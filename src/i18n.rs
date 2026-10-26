@@ -143,6 +143,9 @@ pub struct Text {
     pub artists: &'static str,
     pub playlists: &'static str,
     pub songs: &'static str,
+    /// Downloads: the chip for every downloaded song (next to the playlists
+    /// downloaded whole).
+    pub all_songs: &'static str,
     pub account: &'static str,
     pub sign_in: &'static str,
     pub sign_out: &'static str,
@@ -292,6 +295,7 @@ pub static EN: Text = Text {
     artists: "Artists",
     playlists: "Playlists",
     songs: "Songs",
+    all_songs: "All songs",
     account: "Account",
     sign_in: "Sign in",
     sign_out: "Sign out",
@@ -441,6 +445,7 @@ pub static UK: Text = Text {
     artists: "Виконавці",
     playlists: "Плейлисти",
     songs: "Пісні",
+    all_songs: "Усі пісні",
     account: "Акаунт",
     sign_in: "Увійти",
     sign_out: "Вийти",

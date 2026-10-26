@@ -138,6 +138,12 @@ final class Library {
             }
             let pages = try await catalog.libraryAlbums() + catalog.libraryArtists()
             liked = likedSongs
+            // Keep the local ids of playlists already here (open screens point at them).
+            let known = Dictionary(playlists.compactMap { p in p.remoteId.map { ($0, p.id) } },
+                                   uniquingKeysWith: { first, _ in first })
+            for i in remote.indices {
+                if let remoteId = remote[i].remoteId, let id = known[remoteId] { remote[i].id = id }
+            }
             playlists = remote + playlists.filter { $0.remoteId == nil }
             let fromAccount = pages.map {
                 SavedPage(id: $0.browseId, kind: $0.kind, title: $0.title, subtitle: $0.subtitle,
@@ -516,9 +522,10 @@ final class Library {
         let file = Self.fileName(track)
         let target = Self.downloadsDirectory.appendingPathComponent(file)
         let bytes = try await Self.fetch(stream.url, length: stream.contentLength, to: target)
+        // At the end: a list downloaded whole keeps its order.
         downloads.removeAll { $0.track.videoId == track.videoId }
-        downloads.insert(Downloaded(track: track, file: file, bytes: bytes,
-                                    duration: stream.duration, loudnessDb: stream.loudnessDb), at: 0)
+        downloads.append(Downloaded(track: track, file: file, bytes: bytes,
+                                    duration: stream.duration, loudnessDb: stream.loudnessDb))
         save()
         await Covers.fetch(track)
         await keepLyrics(of: track, duration: stream.duration)

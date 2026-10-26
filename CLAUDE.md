@@ -219,6 +219,11 @@ Domain terms are defined in `CONTEXT.md`.
   `width` in `changed` handlers — binding to `root.width` makes a layout
   binding loop. A `max-width` on a child of a VerticalLayout caps the whole
   column: put such items in their own HorizontalLayout with a spacer.
+  A Flickable takes `max-width` / `preferred-width` from the layout inside
+  it (compiler pass `flickable.rs`): a row of a few fixed-size cards capped
+  the whole page column (2026-10-26, user's screenshots: a 7-album shelf
+  left a 2560 px window half empty) — give sideways Flickables an explicit
+  `max-width: 100000px; preferred-width: 0px` (`ShelfView`, Home's chips).
 - GUI testing on macOS: `swift` scripts with `CGWindowListCopyWindowInfo`
   (window id → `screencapture -l`) and `CGEvent` clicks (Accessibility is
   granted here); run with `HOME=<sandbox>`.
@@ -738,6 +743,53 @@ Domain terms are defined in `CONTEXT.md`.
   11 clips found. `catalog::tests::live_media_pair`, YTMKitChecks --live,
   `YTM_LIVE=1 :core:test`; Android checked on the emulator (song 0:20 →
   clip 25 s; clip 42 s → song 0:37).
+
+- **The last run comes back** (user's request 2026-10-26): `meta` keys
+  `queue` (the `Queue` as JSON — source, extra, order, pos, queued_next —
+  written from `refresh_status` whenever its revision changed, serde `rc`
+  borrows the tracks) and `position` (on `save_state`). `Session::assemble`
+  restores the queue with its song shown idle and `resume_at` at the saved
+  place; play from idle is `play_current` (startup still never loads: no
+  yt-dlp). A new choice (`play`, `skip`, `skip_ahead`) forgets `resume_at`.
+- **Sync on every start** when the YouTube session is signed in (no quota;
+  user's request 2026-10-26). A Data-API-only sign-in still syncs only an
+  empty library. Phones: Android `Library.syncInBackground()` from
+  `App.onCreate`, iPhone `.task` on `RootView` (playlist ids are kept by
+  `remoteId` across syncs so open screens survive).
+- **Album art over the clip's frame** (user's request 2026-10-26): the
+  `next` queue entry's largest thumbnail is the square album art when it
+  is googleusercontent (`MediaPair.cover`, Rust / Kotlin / Swift) — i.ytimg
+  frames are a clip's picture, cropped to the middle. Desktop:
+  `SessionView.cover` (`Cover::{Pending, Video, Album}`); the window's big
+  cover waits for it, asks `art::large_edge(window px)` — 70 % of the
+  height or 45 % of the width, 640–1024 px (at most 4 MB RGBA, was 1.6;
+  the user saw pixels on a 2560 px screen) — and `decode_square` never
+  scales up. Rows keep i.ytimg `mqdefault`: one `next` call per row is too
+  much. Phones: `Pairs.cover(id)` (cached, no request) for rows, lock
+  screen / notification; the big cover and the kept covers (`Covers.fetch`)
+  wait for the pair.
+- **Downloads in download order**, not newest first (it looked shuffled),
+  and **playlists downloaded whole** (`Library::downloaded_playlists`, SQL:
+  every song in `downloads`): desktop chips on the Downloads screen
+  (`LibraryView::download_lists` / `select_download_list`; TUI `[` `]`),
+  phones a "Downloaded playlists" section above the songs. Playlist pages
+  show "N songs" in the subtitle on all three (YouTube's line names the
+  owner only).
+- **Player bar**: both side layouts take the wider one's preferred width
+  (`side`), so the song block is centred in the window, not in what the
+  sides left (user's screenshot 2026-10-26). iPhone's top row got a 40 pt
+  spacer opposite the AirPlay button for the same reason.
+- **Phone queues** (2026-10-26): iPhone rows were keyed by offset, so a
+  removed row made every row below change its text in place (the
+  "flicker"); keys are `videoId#n` now. Android removes a swiped song after
+  the dismiss animation (`LaunchedEffect(dismiss.currentValue)`) with
+  `animateItem()`, not inside `confirmValueChange`. "Up next" swipe-up:
+  iPhone `.simultaneousGesture` (the sheet's own pan took every vertical
+  drag from a plain `.gesture`), Android consumes the drag and opens once
+  past 24 px.
+- **This Linux box (2026-10-26)** has no JDK 17, Android SDK or Swift,
+  and installing them was blocked: phone changes compile only in CI
+  (`.github/workflows`) or on the Mac. Review Kotlin/Swift edits by eye.
 
 ## Open TODOs
 

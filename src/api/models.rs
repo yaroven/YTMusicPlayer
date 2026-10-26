@@ -16,7 +16,7 @@ pub struct Playlist {
 
 /// Strings are `Arc<str>`: a track is shared by the library view, the queue
 /// and the now-playing state, and cloning must not copy text.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Track {
     pub video_id: Arc<str>,
     pub title: Arc<str>,

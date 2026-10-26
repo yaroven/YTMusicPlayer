@@ -59,6 +59,7 @@
     <string name="history">History</string>
     <string name="downloads">Downloads</string>
     <string name="playlist">Playlist</string>
+    <string name="downloaded_playlists">Downloaded playlists</string>
     <string name="playlist_n">Playlist %1$d</string>
     <string name="saved_pages">Albums, artists, playlists</string>
     <string name="remove_from_library">Remove from library</string>

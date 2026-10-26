@@ -145,6 +145,28 @@ fn heading(app: &App, count: usize) -> Vec<Span<'static>> {
         }
         title.push(Span::raw("[ ] ").dark_gray());
     }
+    // Downloads: every song, or a playlist downloaded whole.
+    if !lib.download_lists().is_empty() {
+        let current = lib.download_list();
+        let all = lang.text().all_songs.to_owned();
+        let names = std::iter::once((None, all)).chain(
+            lib.download_lists().iter().enumerate().map(|(i, p)| {
+                (
+                    Some(i),
+                    crate::library_view::playlist_title(lang, p).to_owned(),
+                )
+            }),
+        );
+        for (i, name) in names {
+            let label = format!("{name} ");
+            title.push(if i == current {
+                Span::raw(label).fg(ACCENT).bold()
+            } else {
+                Span::raw(label).dark_gray()
+            });
+        }
+        title.push(Span::raw("[ ] ").dark_gray());
+    }
     if lib
         .page_item()
         .is_some_and(|(item, _)| lib.is_saved(&item.id))

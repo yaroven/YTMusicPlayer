@@ -23,14 +23,28 @@ pub enum ArtSize {
     Round,
 }
 
+/// The big cover's edge is chosen by the window ([`large_edge`]): never
+/// below what `maxresdefault` holds, never more than a 1024 px square
+/// (4 MB decoded, the one large image that lives).
+pub const LARGE_MIN: u32 = 640;
+pub const LARGE_MAX: u32 = 1024;
+
+/// Pixels the now-playing cover needs on a window of `width` x `height`
+/// physical pixels: it fills about 45 % of the width side by side with the
+/// queue, or 70 % of the height stacked, whichever is smaller — scaling a
+/// sharp picture down a little beats showing its pixels (user's report
+/// 2026-10-26 on a 2560 px screen).
+pub fn large_edge(width: u32, height: u32) -> u32 {
+    let wanted = (height as f32 * 0.7).min(width as f32 * 0.45) as u32;
+    wanted.clamp(LARGE_MIN, LARGE_MAX) / 8 * 8
+}
+
 impl ArtSize {
     /// Output edge in pixels (2x for HiDPI screens).
-    fn pixels(self) -> u32 {
+    pub fn pixels(self) -> u32 {
         match self {
             Self::Thumb => 96,
-            // The now-playing cover fills half a window: 640 keeps it sharp
-            // on HiDPI screens (1.6 MB for the one image that lives).
-            Self::Large => 640,
+            Self::Large => LARGE_MIN,
             Self::Card | Self::Round => 160,
         }
     }
@@ -114,14 +128,27 @@ pub struct Art {
     pub backdrop: Option<SharedPixelBuffer<Rgb8Pixel>>,
 }
 
-/// Art for `key`: a video id, or for [`ArtSize::Card`] the image URL.
-pub async fn fetch(http: &reqwest::Client, key: &str, size: ArtSize) -> Result<Art> {
+/// Art for `key`: a video id, or for [`ArtSize::Card`] the image URL;
+/// `edge` px square. A large cover comes from the song's album art
+/// (`cover`, square and sharp at any size) when the catalog has one, else
+/// from the clip's frames.
+pub async fn fetch(
+    http: &reqwest::Client,
+    key: &str,
+    size: ArtSize,
+    edge: u32,
+    cover: Option<&str>,
+) -> Result<Art> {
     let urls: Vec<String> = match size {
-        ArtSize::Card | ArtSize::Round => vec![card_url(key, size.pixels())],
-        _ => size
-            .sources()
-            .iter()
-            .map(|name| format!("https://i.ytimg.com/vi/{key}/{name}.jpg"))
+        ArtSize::Card | ArtSize::Round => vec![card_url(key, edge)],
+        _ => cover
+            .map(|url| card_url(url, edge))
+            .into_iter()
+            .chain(
+                size.sources()
+                    .iter()
+                    .map(|name| format!("https://i.ytimg.com/vi/{key}/{name}.jpg")),
+            )
             .collect(),
     };
     let mut last_err = None;
@@ -138,7 +165,7 @@ pub async fn fetch(http: &reqwest::Client, key: &str, size: ArtSize) -> Result<A
                     // Only round artist pictures and the large cover need
                     // the alpha byte (circle / rounded corners).
                     let alpha = matches!(size, ArtSize::Round | ArtSize::Large);
-                    let mut art = decode_square(&bytes, size.pixels(), alpha)?;
+                    let mut art = decode_square(&bytes, edge, alpha)?;
                     if size == ArtSize::Round {
                         cut_circle(&mut art);
                     }
@@ -176,9 +203,10 @@ const BACKDROP: u32 = 160;
 const BACKDROP_BLUR: f32 = 3.0;
 
 /// Decodes a JPEG (or PNG), crops the centre square of its 16:9 picture area
-/// and scales it to `edge` px. With `alpha` the pixels keep their alpha byte
-/// (round pictures, the large cover's rounded corners); without it they are
-/// a quarter smaller in the cache.
+/// and scales it to `edge` px (never up: a small source stays small, the
+/// renderer stretches it — same look, less memory). With `alpha` the pixels
+/// keep their alpha byte (round pictures, the large cover's rounded corners);
+/// without it they are a quarter smaller in the cache.
 pub fn decode_square(jpeg: &[u8], edge: u32, alpha: bool) -> Result<Art> {
     let img = image::load_from_memory(jpeg)
         .context("decoding thumbnail")?
@@ -191,6 +219,7 @@ pub fn decode_square(jpeg: &[u8], edge: u32, alpha: bool) -> Result<Art> {
     let y = (h - side) / 2;
     let square = image::imageops::crop_imm(&img, x, y, side, side).to_image();
     drop(img);
+    let edge = edge.min(side);
     // Lanczos keeps the detail of a big cover being scaled down; rows are
     // tiny and get the cheap filter.
     let filter = if edge >= 256 && side > edge {
@@ -336,9 +365,24 @@ mod tests {
         assert!(edge <= 720, "no upscaling of the 720 px square");
     }
 
+    /// The big cover asks for as many pixels as the window needs, within
+    /// bounds, and a small source is never scaled up.
+    #[test]
+    fn the_big_cover_follows_the_window() {
+        assert_eq!(large_edge(2560, 1440), 1008, "70 % of the height, in 8s");
+        assert_eq!(
+            large_edge(1040, 660),
+            LARGE_MIN,
+            "never below maxresdefault"
+        );
+        assert_eq!(large_edge(5120, 2880), LARGE_MAX, "capped");
+        let art = decode_square(&jpeg(320, 180), 480, true).unwrap();
+        assert_eq!(art.pixels.width(), 180, "not upscaled");
+    }
+
     #[test]
     fn wide_thumbnail_is_square_and_rounded_when_large() {
-        let art = decode_square(&jpeg(320, 180), 480, true).unwrap();
+        let art = decode_square(&jpeg(1280, 720), 480, true).unwrap();
         assert_eq!(art.pixels.width(), 480);
         assert!(
             art.pixels.corner_alpha() < 128,

@@ -30,11 +30,15 @@ object Covers {
     /** The cover's file, when this song's cover is on the phone. */
     fun local(videoId: String): File? = if (videoId in saved) File(dir, "$videoId.jpg") else null
 
-    /** Fetches and keeps the song's cover (maxresdefault, else hqdefault). */
-    suspend fun fetch(track: Track) = withContext(Dispatchers.IO) {
-        if (local(track.videoId) != null) return@withContext
-        val image = listOf(track.largeThumbnailUrl, "https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg")
-            .firstNotNullOfOrNull(::download) ?: return@withContext
+    /** Fetches and keeps the song's cover: its album art when YouTube Music has one, else the clip's frame (maxresdefault, then hqdefault). */
+    suspend fun fetch(track: Track) {
+        if (local(track.videoId) != null) return
+        val album = Pairs.pair(track, findClip = false)?.cover?.let { dev.yarek.music.ui.resized(it, 1200) }
+        withContext(Dispatchers.IO) { keep(track, listOfNotNull(album, track.largeThumbnailUrl, "https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg")) }
+    }
+
+    private fun keep(track: Track, urls: List<String>) {
+        val image = urls.firstNotNullOfOrNull(::download) ?: return
         val square = square(image, 544)
         val file = File(dir, "${track.videoId}.jpg")
         val part = File(dir, "${track.videoId}.jpg.part")

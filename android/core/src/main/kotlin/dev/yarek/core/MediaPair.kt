@@ -15,6 +15,11 @@ data class MediaPair(
      * can be a few seconds off when the extra is an outro instead.
      */
     val offset: Double,
+    /**
+     * The square album art (googleusercontent) YouTube Music shows for the
+     * song, when it has one; null when only a frame of the clip exists.
+     */
+    val cover: String? = null,
 )
 
 /** YouTube Music's search filter for videos (clips). */
@@ -35,7 +40,8 @@ suspend fun Catalog.mediaPair(videoId: String, title: String, artist: String, fi
     val kind = (entry?.let { findFirst(it, "musicVideoType") } ?: findFirst(data.opt("currentVideoEndpoint"), "musicVideoType")) as? String ?: ""
     val length = entry?.let { parseDuration(text(it.opt("lengthText"))) }?.toDouble()
     val isSong = kind == "MUSIC_VIDEO_TYPE_ATV" || kind == "MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK"
-    if (isSong && !findClip) return MediaPair(videoId, null, 0.0)
+    val cover = entry?.let { albumArt(it.opt("thumbnail")) }
+    if (isSong && !findClip) return MediaPair(videoId, null, 0.0, cover)
     val lead = leadArtist(artist)
     val query = "$lead ${songTitle(title, lead)}"
     val rows = runCatching {
@@ -55,13 +61,21 @@ suspend fun Catalog.mediaPair(videoId: String, title: String, artist: String, fi
             isSong -> theirs >= length - 3 && theirs <= length + 180
             else -> theirs <= length + 3 && theirs >= length * 0.6
         }
-    }?.first ?: return MediaPair(videoId, if (isSong) null else videoId, 0.0)
+    }?.first ?: return MediaPair(videoId, if (isSong) null else videoId, 0.0, cover)
     val theirs = other.durationSecs?.toDouble()
     return MediaPair(
         song = if (isSong) videoId else other.videoId,
         video = if (isSong) other.videoId else videoId,
         offset = clipOffset(if (isSong) length else theirs, if (isSong) theirs else length),
+        cover = cover,
     )
+}
+
+/** The largest thumbnail below [value] when it is album art (googleusercontent), not a frame of the clip (i.ytimg.com). */
+internal fun albumArt(value: Any?): String? {
+    val thumbs = (findFirst(value, "thumbnails") as? org.json.JSONArray)?.objects() ?: return null
+    val url = thumbs.maxByOrNull { it.optInt("width") }?.str("url") ?: return null
+    return url.takeIf { it.contains("googleusercontent.com") }
 }
 
 /** A longer clip is taken to have an intro of the difference (up to 45 s; beyond that more likely scenes after the song). */

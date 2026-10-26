@@ -210,11 +210,32 @@ pub struct SessionView {
     /// The playing song's clip and how many seconds it runs ahead of the
     /// song; `None` while unknown or when there is none.
     pub video: Option<Clip>,
+    /// The playing song's album art, once known.
+    pub cover: Cover,
 }
 
 /// A song's clip (its video id) and how many seconds it runs ahead of the
 /// song.
 pub type Clip = (Arc<str>, f64);
+
+/// What the catalog knows about a song: its clip and its album art.
+#[derive(Debug, Clone)]
+struct Pair {
+    video_id: Arc<str>,
+    clip: Option<Clip>,
+    cover: Option<Arc<str>>,
+}
+
+/// The playing song's picture, for the frontends' big cover.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cover {
+    /// The catalog hasn't answered yet.
+    Pending,
+    /// No album art: the clip's frame (i.ytimg.com) is all there is.
+    Video,
+    /// The square album art (googleusercontent, any size through its URL).
+    Album(Arc<str>),
+}
 
 enum Background {
     /// YouTube Music answers again (after `offline`), or still doesn't.
@@ -403,7 +424,8 @@ pub struct Session {
     want_lyrics: bool,
     /// The playing track's clip (YouTube Music's "Video") and how far it
     /// runs ahead of the song, once looked up; `None` inside: no clip.
-    video_pair: Option<(Arc<str>, Option<Clip>)>,
+    /// The playing song's `next` lookup: its clip and its album art.
+    video_pair: Option<Pair>,
     /// Related shelves of the playing track (when asked for).
     pub related: Option<(Arc<str>, Arc<[Shelf]>)>,
     want_related: bool,
@@ -423,6 +445,8 @@ pub struct Session {
     cookies_browser: String,
     pub status: Option<Status>,
     pub player_status: PlayerStatus,
+    /// The queue revision last written to the library (`meta`).
+    saved_queue: u64,
     /// "RAM 15 MB (+ yt-dlp …)", refreshed every [`MEMORY_SAMPLE`].
     pub memory: String,
     memory_at: Option<Instant>,
@@ -527,6 +551,15 @@ impl Session {
         let mut queue = Queue::default();
         queue.shuffle = meta("shuffle").as_deref() == Some("1");
         queue.repeat = Repeat::parse(meta("repeat").as_deref().unwrap_or_default());
+        // The last run's queue and song come back, paused where they were
+        // (nothing loads until play is pressed: startup never waits on
+        // yt-dlp).
+        let restored = meta("queue").is_some_and(|json| queue.restore(&json));
+        let resume_at = meta("position")
+            .filter(|_| restored && queue.current().is_some())
+            .and_then(|s| s.parse::<f64>().ok())
+            .filter(|secs| *secs > 0.0)
+            .map(Duration::from_secs_f64);
         player.set_crossfade(deps.crossfade);
         let cookies_browser = deps.cookies_from_browser.clone();
         let lang = Lang::from_code(&deps.language);
@@ -568,6 +601,7 @@ impl Session {
             status: None,
             memory: String::new(),
             memory_at: None,
+            saved_queue: 0,
             memory_usage: sysmem::Usage::default(),
             generation: 0,
             loads: 0,
@@ -585,7 +619,7 @@ impl Session {
             cast_alive: None,
             cast_devices: Arc::from([]),
             cast_scanning: false,
-            resume_at: None,
+            resume_at,
             offline: false,
             probing: false,
             waiting_for_network: false,
@@ -636,6 +670,7 @@ impl Session {
             updating: self.updating,
             offline: self.offline,
             video: self.clip(),
+            cover: self.cover(),
         }
     }
 
@@ -646,7 +681,9 @@ impl Session {
         }
         self.fetch_download_lyrics();
         // Either sign-in can sync: the session through InnerTube, the OAuth
-        // client through the Data API.
+        // client through the Data API. The session costs no quota, so it
+        // syncs on every start (the user's request, 2026-10-26); the Data
+        // API alone only fills an empty library.
         let can_sync = self.signed_in() || self.deps.youtube.signed_in();
         match (can_sync, library_empty) {
             (true, true) => self.start_sync(),
@@ -656,26 +693,49 @@ impl Session {
                 "Offline library (not signed in) — sign in to sync",
                 "Офлайн-бібліотека (вхід не виконано) — увійди, щоб синхронізувати"
             )),
+            (true, false) if self.deps.youtube.signed_in() => self.start_sync(),
             (true, false) => {}
         }
     }
 
-    /// Persists volume and modes (the shown playlist is [`LibraryView::save`]).
+    /// Persists volume, modes, the queue and where the song is (the shown
+    /// playlist is [`LibraryView::save`]).
     ///
     /// [`LibraryView::save`]: crate::library_view::LibraryView::save
-    pub fn save_state(&self) {
+    pub fn save_state(&mut self) {
         let repeat = self.queue.repeat.as_str();
         let volume = format!("{:.2}", self.player.status().volume);
         let shuffle = if self.queue.shuffle { "1" } else { "0" };
+        // A song that was restored and never played keeps its saved place.
+        let position = match self.player_status.state {
+            PlayState::Idle => self.resume_at.unwrap_or_default(),
+            _ => self.player_status.position,
+        };
+        let position = format!("{:.1}", position.as_secs_f64());
         let pairs = [
             ("volume", volume.as_str()),
             ("shuffle", shuffle),
             ("repeat", repeat),
+            ("position", position.as_str()),
         ];
         for (key, value) in pairs {
             if let Err(err) = self.deps.library.set_meta(key, value) {
                 tracing::warn!(%err, key, "saving state");
             }
+        }
+        self.saved_queue = 0;
+        self.save_queue();
+    }
+
+    /// Writes the queue when it changed since the last write (a few hundred
+    /// KB of JSON for a big playlist, so only then).
+    fn save_queue(&mut self) {
+        if self.saved_queue == self.queue.revision() {
+            return;
+        }
+        self.saved_queue = self.queue.revision();
+        if let Err(err) = self.deps.library.set_meta("queue", &self.queue.to_json()) {
+            tracing::warn!(%err, "saving the queue");
         }
     }
 
@@ -725,6 +785,7 @@ impl Session {
             changed = true;
         }
         self.maybe_preload();
+        self.save_queue();
 
         if self.memory_at.is_none_or(|t| t.elapsed() >= MEMORY_SAMPLE) {
             self.memory_at = Some(Instant::now());
@@ -1074,6 +1135,7 @@ impl Session {
     pub fn play(&mut self, tracks: Arc<[Track]>, index: usize) {
         self.queue.set(tracks, index);
         self.failures = 0;
+        self.resume_at = None;
         self.play_current();
     }
 
@@ -1093,6 +1155,7 @@ impl Session {
     /// Jumps to the `n`-th upcoming track (0 = next), as listed by
     /// `queue.upcoming()`.
     pub fn skip_ahead(&mut self, n: usize) {
+        self.resume_at = None;
         let mut moved = false;
         for _ in 0..=n {
             if self.queue.advance().is_none() {
@@ -1106,6 +1169,15 @@ impl Session {
     }
 
     pub fn toggle_pause(&mut self) {
+        // Nothing loaded (a queue restored from the last run, or a song that
+        // failed): play means the current song, from its saved place.
+        if self.player_status.state == PlayState::Idle
+            && !self.loading
+            && self.queue.current().is_some()
+        {
+            self.play_current();
+            return;
+        }
         self.player.toggle_pause();
     }
 
@@ -1114,8 +1186,22 @@ impl Session {
     pub(super) fn clip(&self) -> Option<Clip> {
         let now = self.queue.current()?;
         match &self.video_pair {
-            Some((id, clip)) if *id == now.video_id => clip.clone(),
+            Some(pair) if pair.video_id == now.video_id => pair.clip.clone(),
             _ => None,
+        }
+    }
+
+    /// The playing song's album art, when the catalog has answered.
+    fn cover(&self) -> Cover {
+        let Some(now) = self.queue.current() else {
+            return Cover::Video;
+        };
+        match &self.video_pair {
+            Some(pair) if pair.video_id == now.video_id => match &pair.cover {
+                Some(url) => Cover::Album(url.clone()),
+                None => Cover::Video,
+            },
+            _ => Cover::Pending,
         }
     }
 
@@ -1211,6 +1297,7 @@ impl Session {
             self.queue.back().is_some()
         };
         if moved {
+            self.resume_at = None;
             self.play_current();
         } else if direction > 0
             && self.deps.autoplay

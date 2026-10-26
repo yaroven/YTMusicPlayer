@@ -115,6 +115,10 @@ struct Shown {
     tracks: Arc<[Track]>,
     items: Arc<[Item]>,
     shelves: Arc<[Shelf]>,
+    /// Downloads: the playlists downloaded whole, and which one is shown
+    /// (`None`: every downloaded song).
+    lists: Vec<Playlist>,
+    list: Option<usize>,
 }
 
 impl Shown {
@@ -129,6 +133,8 @@ impl Shown {
             tracks: Arc::from([]),
             items: Arc::from([]),
             shelves: Arc::from([]),
+            lists: Vec::new(),
+            list: None,
         }
     }
 }
@@ -467,10 +473,21 @@ impl LibraryView {
 
     /// Shows a loaded album / artist / playlist page.
     pub fn show_page(&mut self, page: &Page) {
+        // YouTube's playlist subtitle names the owner, not the length.
+        let subtitle = if page.kind == ItemKind::Playlist && !page.tracks.is_empty() {
+            let count = songs_count(self.lang, page.tracks.len());
+            if page.subtitle.is_empty() {
+                count
+            } else {
+                format!("{} • {count}", page.subtitle)
+            }
+        } else {
+            page.subtitle.clone()
+        };
         let shown = Shown {
             source: Source::Page(page.id.clone()),
             title: page.title.clone(),
-            subtitle: page.subtitle.clone(),
+            subtitle,
             thumbnail: page.thumbnail.clone(),
             kind: Some(page.kind),
             channel_id: page.channel_id.clone(),
@@ -556,20 +573,64 @@ impl LibraryView {
     }
 
     pub fn show_downloads(&mut self) -> Result<()> {
-        let downloads = self.library.downloads()?;
-        let bytes: u64 = downloads.iter().map(|d| d.bytes).sum();
-        let tracks: Arc<[Track]> = downloads.into_iter().map(|d| d.track).collect();
-        self.navigate(Shown {
+        let mut shown = Shown {
             source: Source::Downloads,
             title: tr!(self.lang, "Downloads", "Завантаження").into(),
-            subtitle: format!(
-                "{} · {:.0} MB",
-                songs_count(self.lang, tracks.len()),
-                bytes as f64 / 1e6
-            ),
-            tracks,
+            lists: self.library.downloaded_playlists()?,
             ..Shown::empty()
-        });
+        };
+        self.fill_downloads(&mut shown)?;
+        self.navigate(shown);
+        Ok(())
+    }
+
+    /// The Downloads screen's songs: every downloaded song in download
+    /// order, or the chosen playlist (downloaded whole) in its own order.
+    fn fill_downloads(&self, shown: &mut Shown) -> Result<()> {
+        if shown.list.is_some_and(|i| i >= shown.lists.len()) {
+            shown.list = None;
+        }
+        match shown.list.map(|i| &shown.lists[i]) {
+            Some(playlist) => {
+                shown.tracks = self.library.tracks(&playlist.id)?;
+                shown.subtitle = songs_count(self.lang, shown.tracks.len());
+            }
+            None => {
+                let downloads = self.library.downloads()?;
+                let bytes: u64 = downloads.iter().map(|d| d.bytes).sum();
+                shown.tracks = downloads.into_iter().map(|d| d.track).collect();
+                shown.subtitle = format!(
+                    "{} · {:.0} MB",
+                    songs_count(self.lang, shown.tracks.len()),
+                    bytes as f64 / 1e6
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Downloads: the playlists downloaded whole, offered as a choice.
+    pub fn download_lists(&self) -> &[Playlist] {
+        &self.shown.lists
+    }
+
+    /// Downloads: the chosen playlist's index, `None` for every song.
+    pub fn download_list(&self) -> Option<usize> {
+        self.shown.list
+    }
+
+    /// Downloads: shows the `list`-th downloaded playlist (`None`: every
+    /// downloaded song).
+    pub fn select_download_list(&mut self, list: Option<usize>) -> Result<()> {
+        if self.shown.source != Source::Downloads {
+            return Ok(());
+        }
+        let mut shown = std::mem::replace(&mut self.shown, Shown::empty());
+        shown.list = list.filter(|&i| i < shown.lists.len());
+        let filled = self.fill_downloads(&mut shown);
+        self.shown = shown;
+        filled?;
+        self.reset_rows();
         Ok(())
     }
 
@@ -773,12 +834,11 @@ impl LibraryView {
                 }
             }
             Source::Downloads => {
-                self.shown.tracks = self
-                    .library
-                    .downloads()?
-                    .into_iter()
-                    .map(|d| d.track)
-                    .collect();
+                let mut shown = std::mem::replace(&mut self.shown, Shown::empty());
+                shown.lists = self.library.downloaded_playlists()?;
+                let filled = self.fill_downloads(&mut shown);
+                self.shown = shown;
+                filled?;
             }
             Source::Saved(kind) => self.shown.items = self.library.saved(kind)?.into(),
             Source::History => {
@@ -907,6 +967,45 @@ mod tests {
             shelves: Vec::new(),
             channel_id: None,
         }
+    }
+
+    /// Downloads: every song in download order, or one of the playlists
+    /// downloaded whole in its own order.
+    #[test]
+    fn downloads_offer_the_playlists_downloaded_whole() {
+        let lib = library();
+        for id in ["bbbbbbbbbbb", "aaaaaaaaaaa"] {
+            lib.add_download(&crate::storage::Download {
+                track: track(id, id),
+                path: std::path::PathBuf::from(format!("/tmp/{id}.m4a")),
+                bytes: 1,
+            })
+            .unwrap();
+        }
+        let mut v = LibraryView::new(lib.clone()).unwrap();
+        v.show_downloads().unwrap();
+        assert_eq!(titles(&v), ["bbbbbbbbbbb", "aaaaaaaaaaa"], "download order");
+        assert_eq!(v.download_lists().len(), 1, "Liked music is on disk whole");
+        assert_eq!(v.download_lists()[0].id, LIKED_PLAYLIST_ID);
+        assert_eq!(v.download_list(), None);
+
+        v.select_download_list(Some(0)).unwrap();
+        assert_eq!(titles(&v), ["Alpha", "Beta"], "the playlist's order");
+        assert_eq!(v.subtitle(), "2 songs");
+
+        // A download removed: the playlist is no longer whole; the view
+        // falls back to every song.
+        lib.remove_download("aaaaaaaaaaa").unwrap();
+        v.apply(
+            &Changes {
+                downloads: true,
+                ..Changes::default()
+            },
+            SessionData::default(),
+        )
+        .unwrap();
+        assert!(v.download_lists().is_empty());
+        assert_eq!(titles(&v), ["bbbbbbbbbbb"]);
     }
 
     #[test]

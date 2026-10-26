@@ -74,6 +74,7 @@ fn session_view() -> SessionView {
         signing_in: false,
         youtube_signed_in: true,
         video: None,
+        cover: crate::session::Cover::Video,
         youtube_signing_in: false,
         client_id: String::new(),
         memory: String::new(),
@@ -167,6 +168,32 @@ fn artist_page_lists_five_songs_then_all_of_them() {
     h.ui.invoke_go_back();
     assert_eq!(h.ui.get_list_mode(), 2);
     assert_eq!(h.ui.get_tracks().row_count(), 5);
+}
+
+/// A shelf of a few cards must not cap the page's width: Slint copies a
+/// Flickable's max-width from its layout, so a row of fixed-size cards
+/// narrowed the whole column (a 7-album shelf left a 2560 px window half
+/// empty; a 2-card shelf squeezed the song titles to "Be…").
+#[test]
+fn a_short_shelf_does_not_narrow_the_page() {
+    let h = harness();
+    h.ui.window().set_size(slint::PhysicalSize::new(1600, 760));
+    let mut snap = snapshot(
+        session_view(),
+        Changes {
+            page: true,
+            ..Changes::default()
+        },
+    );
+    snap.page = Some(Arc::new(artist_page(12)));
+    h.absorb(snap);
+    i_slint_backend_testing::mock_elapsed_time(Duration::ZERO);
+    assert_eq!(h.ui.get_shelves().row_count(), 1, "one shelf with one card");
+    let width = h.ui.get_content_width();
+    assert!(
+        width > 1200.0,
+        "the page column fills the window beside the sidebar (got {width} px)"
+    );
 }
 
 #[test]
@@ -386,6 +413,47 @@ fn the_video_button_switches_to_the_clip() {
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     assert!(matches!(&cmds[..], [Cmd::WatchVideo]));
+}
+
+/// The Downloads screen: the heart shows on a downloaded song that is
+/// liked, and a playlist downloaded whole is offered as a chip that lists
+/// it in its own order.
+#[test]
+fn downloads_show_likes_and_whole_playlists() {
+    let h = harness();
+    let library = h.view.borrow().store.clone();
+    let liked = library
+        .tracks(crate::api::models::LIKED_PLAYLIST_ID)
+        .unwrap();
+    for t in liked.iter().rev() {
+        library
+            .add_download(&crate::storage::Download {
+                track: t.clone(),
+                path: std::path::PathBuf::from(format!("/tmp/{}.m4a", t.video_id)),
+                bytes: 1,
+            })
+            .unwrap();
+    }
+    h.ui.invoke_nav_to(3);
+    assert_eq!(h.ui.get_tracks_title(), "Downloads");
+    let first = h.ui.get_tracks().row_data(0).unwrap();
+    assert_eq!(first.title, "Smells Like Teen Spirit", "download order");
+    assert!(
+        first.liked && first.downloaded,
+        "the heart shows on a download"
+    );
+    assert_eq!(h.ui.get_download_lists().row_count(), 1);
+    assert_eq!(h.ui.get_download_list(), -1, "every song at first");
+
+    h.ui.invoke_select_download_list(0);
+    assert_eq!(h.ui.get_download_list(), 0);
+    assert_eq!(
+        h.ui.get_tracks().row_data(0).unwrap().title,
+        "Bohemian Rhapsody",
+        "the playlist's own order"
+    );
+    h.ui.invoke_select_download_list(-1);
+    assert_eq!(h.ui.get_tracks().row_count(), 3);
 }
 
 #[test]

@@ -486,13 +486,19 @@ private fun PageHeader(title: String, subtitle: String, thumbnail: String?, roun
     if (round) return ArtistHeader(title, subtitle, thumbnail, tracks, page)
     val library = App.instance.library
     val context = LocalContext.current
+    // A playlist says how many songs it has (YouTube's line doesn't).
+    val line = when {
+        page?.kind != ItemKind.Playlist || tracks.isEmpty() -> subtitle
+        subtitle.isEmpty() -> songsCount(tracks.size)
+        else -> stringResource(R.string.kind_count, subtitle, songsCount(tracks.size))
+    }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Artwork(thumbnail?.let { Art.Url(it) } ?: Art.None, 220.dp)
         Spacer(Modifier.height(20.dp))
         Text(title, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, lineHeight = 34.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        if (subtitle.isNotEmpty()) {
+        if (line.isNotEmpty()) {
             Spacer(Modifier.height(6.dp))
-            Text(subtitle, fontSize = 14.sp, color = YT.secondary, textAlign = TextAlign.Center)
+            Text(line, fontSize = 14.sp, color = YT.secondary, textAlign = TextAlign.Center)
         }
         Spacer(Modifier.height(20.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {

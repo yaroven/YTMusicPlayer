@@ -248,6 +248,12 @@ private fun IconArt(icon: androidx.compose.ui.graphics.vector.ImageVector, size:
     }
 }
 
+/** A small grey heading over a part of a list. */
+@Composable
+private fun SectionTitle(text: String) {
+    Text(text, Modifier.padding(horizontal = 16.dp, vertical = 8.dp), fontSize = 14.sp, color = YT.secondary)
+}
+
 /** A library entry: picture, title, "N songs". */
 @Composable
 private fun Entry(title: String, subtitle: String, art: @Composable () -> Unit, onClick: () -> Unit) {
@@ -525,6 +531,21 @@ fun TrackListScreen(list: LocalList) {
                         }
                     }
                 }
+            }
+            // Playlists that are on the phone whole, as YouTube Music lists them under Downloads.
+            val whole = if (list == LocalList.Downloads) {
+                library.playlists.filter { p -> p.tracks.isNotEmpty() && p.tracks.all { library.isDownloaded(it.videoId) } }
+            } else {
+                emptyList()
+            }
+            if (whole.isNotEmpty()) {
+                item { SectionTitle(stringResource(R.string.downloaded_playlists)) }
+                items(whole, key = { "playlist:" + it.id }) { p ->
+                    Entry(p.name, stringResource(R.string.kind_count, stringResource(R.string.playlist), songsCount(p.tracks.size)), {
+                        Artwork(p.tracks.firstOrNull()?.let { Art.Video(it.videoId) } ?: Art.None, 56.dp)
+                    }) { Router.open(Route.List(LocalList.Playlist(p.id))) }
+                }
+                item { SectionTitle(stringResource(R.string.songs)) }
             }
             itemsIndexed(tracks) { i, track ->
                 // Edits name the song's place in the list as stored, not as sorted.

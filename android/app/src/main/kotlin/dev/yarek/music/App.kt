@@ -52,6 +52,8 @@ class App : Application() {
         player = Player(this, library, resolver, catalog, network, settings)
         updater = Updater(this)
         updater.checkDaily()
+        // What the account has now: liked songs, playlists, saved pages.
+        library.syncInBackground()
     }
 
     companion object {

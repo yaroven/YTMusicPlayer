@@ -58,6 +58,7 @@
     <string name="history">Історія</string>
     <string name="downloads">Завантаження</string>
     <string name="playlist">Плейлист</string>
+    <string name="downloaded_playlists">Завантажені плейлисти</string>
     <string name="playlist_n">Плейлист %1$d</string>
     <string name="saved_pages">Альбоми, виконавці, плейлисти</string>
     <string name="remove_from_library">Прибрати з бібліотеки</string>

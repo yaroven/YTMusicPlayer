@@ -216,6 +216,50 @@ async fn natural_end_advances_repeat_one_replays_stale_ends_ignored() {
     assert_eq!(current(&s), "t1", "an old track's end changes nothing");
 }
 
+/// The last run's queue comes back with its song, paused where it was;
+/// play loads it from there, and the state goes back out on save.
+#[tokio::test]
+async fn the_last_queue_comes_back_paused_where_it_was() {
+    let library = Arc::new(Library::open_in_memory().unwrap());
+    let mut saved = crate::audio::queue::Queue::default();
+    saved.set(tracks("t", 3), 1);
+    library.set_meta("queue", &saved.to_json()).unwrap();
+    library.set_meta("position", "42.0").unwrap();
+    let (mut s, player, _) = session_with(Resolves::Hang, library.clone()).await;
+    assert_eq!(current(&s), "t1");
+    assert_eq!(s.view().state, PlayState::Idle, "nothing loads by itself");
+    assert_eq!(s.resume_at, Some(Duration::from_secs(42)));
+    assert!(
+        !player.calls().iter().any(|c| c.starts_with("load")),
+        "startup never waits on a resolve"
+    );
+
+    s.toggle_pause();
+    assert!(s.loading, "play from idle loads the restored song");
+    assert_eq!(
+        s.resume_at,
+        Some(Duration::from_secs(42)),
+        "kept for the load"
+    );
+
+    s.save_state();
+    assert_eq!(
+        library.get_meta("position").unwrap().as_deref(),
+        Some("42.0")
+    );
+    assert!(
+        library
+            .get_meta("queue")
+            .unwrap()
+            .unwrap()
+            .contains("t0000000001")
+    );
+
+    // Another choice forgets the saved place.
+    s.play(tracks("u", 2), 0);
+    assert_eq!(s.resume_at, None);
+}
+
 #[tokio::test]
 async fn restores_saved_volume_and_modes() {
     let library = Arc::new(Library::open_in_memory().unwrap());

@@ -7,6 +7,16 @@ import YTMKit
 actor Pairs {
     static let shared = Pairs()
     private var known: [String: (pair: MediaPair, complete: Bool)] = [:]
+    /// Album art found so far, readable without waiting on the actor (views).
+    nonisolated(unsafe) private static var covers: [String: String] = [:]
+    private static let lock = NSLock()
+
+    /// The song's square album art, when a lookup found one (no request).
+    nonisolated static func cover(_ videoId: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return covers[videoId]
+    }
 
     /// The id whose sound plays for `track`: its studio song (one request
     /// the first time); the track's own id when the catalog can't tell.
@@ -24,6 +34,12 @@ actor Pairs {
         else { return nil }
         if known.count >= 500 { known.removeAll() }
         known[track.videoId] = (pair, findClip)
+        if let cover = pair.cover {
+            Self.lock.lock()
+            if Self.covers.count >= 500 { Self.covers.removeAll() }
+            Self.covers[track.videoId] = cover
+            Self.lock.unlock()
+        }
         return pair
     }
 }

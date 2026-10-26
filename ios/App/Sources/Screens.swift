@@ -482,8 +482,11 @@ struct PageView: View {
                     .font(.system(size: 28, weight: .bold))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
-                if !subtitle.isEmpty {
-                    Text(subtitle)
+                // A playlist says how many songs it has, next to YouTube's line.
+                let songs = page?.kind == .playlist && !tracks.isEmpty ? String(localized: "\(tracks.count) songs") : ""
+                let shown = subtitle.isEmpty ? songs : songs.isEmpty ? subtitle : "\(subtitle) • \(songs)"
+                if !shown.isEmpty {
+                    Text(shown)
                         .font(.system(size: 14))
                         .foregroundStyle(YT.secondary)
                         .multilineTextAlignment(.center)
@@ -991,6 +994,37 @@ struct TrackListView: View {
             .frame(maxWidth: .infinity)
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
+            // Playlists whose every song is on the phone, as YouTube Music
+            // lists them under Downloads; then all the songs.
+            if list == .downloads {
+                let whole = library.playlists.filter { p in
+                    !p.tracks.isEmpty && p.tracks.allSatisfy { library.isDownloaded($0.videoId) }
+                }
+                if !whole.isEmpty {
+                    Text("Downloaded playlists")
+                        .font(.system(size: 20, weight: .bold))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    ForEach(whole) { playlist in
+                        NavigationLink { TrackListView(list: .playlist(playlist.id)) } label: {
+                            HStack(spacing: 16) {
+                                Artwork(source: playlist.tracks.first.map { .video($0.videoId) } ?? .none, size: 56)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(playlist.name).font(.system(size: 17)).lineLimit(1)
+                                    let songs = String(localized: "\(playlist.tracks.count) songs")
+                                    Text(String(localized: "Playlist • \(songs)"))
+                                        .font(.system(size: 14)).foregroundStyle(YT.secondary)
+                                }
+                            }
+                        }
+                        .listRowBackground(Color.clear)
+                    }
+                    Text("Songs")
+                        .font(.system(size: 20, weight: .bold))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+            }
             ForEach(Array(tracks.enumerated()), id: \.offset) { i, track in
                 TrackRow(track: track, list: tracks, index: i,
                          plays: sort == .mostPlayed ? library.plays[track.videoId, default: 0] : nil)

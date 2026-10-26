@@ -21,6 +21,9 @@ object Pairs {
     /** The audio id already found for [videoId], if any. */
     fun cachedAudioId(videoId: String): String = known[videoId]?.pair?.song ?: videoId
 
+    /** The album art already found for [videoId] (no request): preferred over the clip's frame. */
+    fun cover(videoId: String): String? = known[videoId]?.pair?.cover
+
     /** The song and its clip; [findClip] also looks for the clip of a song. */
     suspend fun pair(track: Track, findClip: Boolean): MediaPair? {
         known[track.videoId]?.let { if (it.complete || !findClip || it.pair.video != null) return it.pair }

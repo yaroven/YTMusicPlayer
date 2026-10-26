@@ -126,7 +126,7 @@ fun heroUrl(url: String, w: Int, h: Int): String {
 }
 
 /** googleusercontent thumbnails take their size in the URL (`=w226-h226…`). */
-private fun resized(url: String, px: Int): String {
+fun resized(url: String, px: Int): String {
     if (!url.contains("googleusercontent.com")) return url
     val cut = url.lastIndexOf("=w").takeIf { it >= 0 } ?: return url
     return url.substring(0, cut) + "=w$px-h$px-l90-rj"
@@ -141,8 +141,12 @@ private fun resized(url: String, px: Int): String {
 @Composable
 fun Artwork(art: Art, size: Dp, modifier: Modifier = Modifier, round: Boolean = false) {
     val first = when (art) {
-        // A downloaded song's own cover, also offline.
-        is Art.Video -> Covers.local(art.id)?.let { "file://${it.path}" } ?: "https://i.ytimg.com/vi/${art.id}/" +
+        // A downloaded song's own cover, also offline; then the album art
+        // when the song's lookup already found it (a square picture, not a
+        // frame of the clip); else YouTube's frame.
+        is Art.Video -> Covers.local(art.id)?.let { "file://${it.path}" }
+            ?: dev.yarek.music.Pairs.cover(art.id)?.let { resized(it, (size.value * 3).toInt()) }
+            ?: "https://i.ytimg.com/vi/${art.id}/" +
             (if (size > 240.dp) "maxresdefault" else if (size > 120.dp) "hqdefault" else "mqdefault") + ".jpg"
         is Art.Url -> resized(art.url, (size.value * 3).toInt())
         Art.None -> null

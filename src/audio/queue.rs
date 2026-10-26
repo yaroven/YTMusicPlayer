@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::api::models::Track;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -251,6 +253,58 @@ impl Queue {
     pub fn position(&self) -> Option<usize> {
         self.pos
     }
+
+    /// The queue as JSON, to come back after a restart (borrows the
+    /// tracks: nothing is copied but the text written).
+    pub fn to_json(&self) -> String {
+        let saved = Saved {
+            source: &self.source,
+            extra: &self.extra,
+            order: &self.order,
+            pos: self.pos,
+            queued_next: self.queued_next,
+        };
+        serde_json::to_string(&saved).unwrap_or_default()
+    }
+
+    /// Takes a queue saved by [`to_json`](Self::to_json); false (and
+    /// nothing changed) when it isn't one.
+    pub fn restore(&mut self, json: &str) -> bool {
+        let Ok(saved) = serde_json::from_str::<Restored>(json) else {
+            return false;
+        };
+        let total = (saved.source.len() + saved.extra.len()) as u32;
+        if saved.order.iter().any(|&i| i >= total)
+            || saved.pos.is_some_and(|p| p >= saved.order.len())
+        {
+            return false;
+        }
+        self.revision += 1;
+        self.source = saved.source.into();
+        self.extra = saved.extra;
+        self.order = saved.order;
+        self.pos = saved.pos;
+        self.queued_next = saved.queued_next.min(self.order.len());
+        true
+    }
+}
+
+#[derive(Serialize)]
+struct Saved<'a> {
+    source: &'a [Track],
+    extra: &'a [Track],
+    order: &'a [u32],
+    pos: Option<usize>,
+    queued_next: usize,
+}
+
+#[derive(Deserialize)]
+struct Restored {
+    source: Vec<Track>,
+    extra: Vec<Track>,
+    order: Vec<u32>,
+    pos: Option<usize>,
+    queued_next: usize,
 }
 
 #[cfg(test)]
@@ -283,6 +337,24 @@ mod tests {
         q.repeat = Repeat::All;
         assert_eq!(id(q.advance()), "a", "wraps with repeat all");
         assert_eq!(id(q.back()), "a", "clamps at the start");
+    }
+
+    #[test]
+    fn saved_and_restored() {
+        let mut q = Queue::default();
+        q.set(tracks(&["a", "b", "c"]), 1);
+        q.play_next(tracks(&["x"])[0].clone());
+        let json = q.to_json();
+
+        let mut back = Queue::default();
+        assert!(back.restore(&json));
+        assert_eq!(id(back.current()), "b");
+        assert_eq!(
+            back.upcoming().map(|t| &*t.video_id).collect::<Vec<_>>(),
+            ["x", "c"]
+        );
+        assert!(!back.restore("{\"order\": [9]}"), "nonsense is refused");
+        assert_eq!(id(back.current()), "b", "and changes nothing");
     }
 
     #[test]

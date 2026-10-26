@@ -33,6 +33,7 @@ slint::slint! {
         in property <string> artists: "Artists";
         in property <string> playlists: "Playlists";
         in property <string> songs: "Songs";
+        in property <string> all-songs: "All songs";
         in property <string> account: "Account";
         in property <string> sign-in: "Sign in";
         in property <string> sign-out: "Sign out";
@@ -714,6 +715,11 @@ slint::slint! {
         Text { text: root.shelf.title; color: Yt.text; font-size: 20px; font-weight: 700; }
         Flickable {
             height: root.card-size + 56px;
+            // The compiler copies a Flickable's max-width and preferred-width
+            // from its layout: a row of a few fixed-size cards capped the whole
+            // page column, which left a wide window mostly empty.
+            preferred-width: 0px;
+            max-width: 100000px;
             content-width: row.preferred-width;
             row := HorizontalLayout {
                 spacing: 16px;
@@ -1303,6 +1309,10 @@ slint::slint! {
         in property <[string]> search-suggestions;
         // 0 songs, 1 albums, 2 artists, 3 playlists (when showing results).
         in property <int> search-kind;
+        // Downloads: the playlists downloaded whole, and the chosen one
+        // (-1: every downloaded song).
+        in property <[string]> download-lists;
+        in property <int> download-list: -1;
         // Bumped to empty the search field.
         in property <int> clear-search;
 
@@ -1402,6 +1412,8 @@ slint::slint! {
         property <bool> narrow: root.win-width < 820px;
         property <bool> tiny: root.win-width < 620px;
         property <bool> wide-now: root.win-width >= 880px;
+        // The page column's width (tests: it must fill the window).
+        out property <length> content-width;
         // Bumped to move keyboard focus into the search field.
         property <int> focus-search;
         // Row the ⋮ menu is for (-1: the playing track) and where it opens.
@@ -1437,6 +1449,7 @@ slint::slint! {
         callback jump(int);
         callback search-online(string);
         callback search-category(int);
+        callback select-download-list(int);
         callback like-row(int);
         // row (-1: the playing track), action: "next", "queue", "radio",
         // "download", "dislike", "remove", "add".
@@ -1616,6 +1629,8 @@ slint::slint! {
 
                         // Content
                         VerticalLayout {
+                            init => { root.content-width = self.width; }
+                            changed width => { root.content-width = self.width; }
                             padding-left: root.tiny ? 12px : 28px;
                             padding-right: root.tiny ? 12px : 24px;
                             padding-top: 16px;
@@ -1777,6 +1792,26 @@ slint::slint! {
                                     text: label;
                                     selected: k == root.search-kind;
                                     clicked => { root.search-category(k); keys.focus(); }
+                                }
+                            }
+                            // Downloads: every song, or a playlist downloaded whole.
+                            if root.nav == 3 && root.download-lists.length > 0: Flickable {
+                                height: 34px;
+                                preferred-width: 0px;
+                                max-width: 100000px;
+                                content-width: download-chips.preferred-width;
+                                download-chips := HorizontalLayout {
+                                    spacing: 8px;
+                                    Chip {
+                                        text: L.all-songs;
+                                        selected: root.download-list < 0;
+                                        clicked => { root.select-download-list(-1); keys.focus(); }
+                                    }
+                                    for name[i] in root.download-lists: Chip {
+                                        text: name;
+                                        selected: i == root.download-list;
+                                        clicked => { root.select-download-list(i); keys.focus(); }
+                                    }
                                 }
                             }
                             // Playlist picker when there is no sidebar.
@@ -2096,9 +2131,13 @@ slint::slint! {
                         padding-left: 8px;
                         padding-right: 12px;
                         spacing: 4px;
-                        // Left: transport + time
-                        HorizontalLayout {
+                        // Left: transport + time. Both sides take the wider
+                        // one's width, so the song block is centred in the
+                        // window, not in what the sides leave.
+                        property <length> side: max(transport.preferred-width, modes.preferred-width);
+                        transport := HorizontalLayout {
                             alignment: start;
+                            width: root.compact ? self.preferred-width : side;
                             IconButton { icon: "prev"; active: true; y: (parent.height - self.height) / 2; clicked => { root.prev(); keys.focus(); } }
                             IconButton {
                                 icon: root.loading ? "busy" : root.playing ? "pause" : "play";
@@ -2163,8 +2202,9 @@ slint::slint! {
                             }
                         }
                         // Right: volume, modes, sleep, expand
-                        HorizontalLayout {
+                        modes := HorizontalLayout {
                             alignment: end;
+                            width: root.compact ? self.preferred-width : side;
                             if !root.compact: Icon { name: "volume"; color: Yt.secondary; width: 22px; height: 22px; y: (parent.height - self.height) / 2; }
                             if !root.compact: ThinSlider {
                                 value: root.volume;

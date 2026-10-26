@@ -198,6 +198,11 @@ class Library(private val context: Context, private val catalog: Catalog, privat
     /** True before the first sync of a signed-in account. */
     val needsFirstSync: Boolean get() = signedIn && liked.isEmpty() && playlists.none { it.remoteId != null }
 
+    /** Syncs when signed in, without waiting (the app's start). */
+    fun syncInBackground() {
+        if (signedIn) scope.launch { sync() }
+    }
+
     /**
      * Replaces the account's part of the library with what YouTube Music
      * has. Anything made on the phone while signed out is kept.
@@ -494,8 +499,9 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         val file = File(downloadsDir, name)
         val bytes = withContext(Dispatchers.IO) { fetch(stream.url, stream.contentLength, file) }
         val exported = if (App.instance.settings.exportDownloads) withContext(Dispatchers.IO) { export(track, file) } else null
-        downloads = listOf(Downloaded(track, name, bytes, stream.duration, stream.loudnessDb, exported)) +
-            downloads.filter { it.track.videoId != track.videoId }
+        // At the end: a downloaded playlist keeps its order.
+        downloads = downloads.filter { it.track.videoId != track.videoId } +
+            Downloaded(track, name, bytes, stream.duration, stream.loudnessDb, exported)
         save()
         Covers.fetch(track)
         keepLyrics(track, stream.duration)

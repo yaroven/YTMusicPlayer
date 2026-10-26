@@ -67,6 +67,8 @@ struct Artwork: View {
         case let .video(id):
             // A downloaded song's own cover, also offline.
             if let local = Covers.local(id) { return local }
+            // The album's square art, when a lookup found it (any size).
+            if let cover = Pairs.cover(id).flatMap(URL.init(string:)) { return resized(cover, Int(size * 3)) }
             let name = size > 240 ? "maxresdefault" : size > 120 ? "hqdefault" : "mqdefault"
             return URL(string: "https://i.ytimg.com/vi/\(id)/\(name).jpg")
         case let .url(url): return resized(url, Int(size * 3))
@@ -136,10 +138,13 @@ enum Covers {
         return saved.contains(videoId) ? file(videoId) : nil
     }
 
-    /// Fetches and keeps the song's cover (maxresdefault, else hqdefault).
+    /// Fetches and keeps the song's cover: the album's own art first, else
+    /// the clip's frame (maxresdefault, else hqdefault).
     static func fetch(_ track: Track) async {
         guard local(track.videoId) == nil else { return }
-        for url in [track.largeThumbnailURL, track.fallbackThumbnailURL].compactMap({ $0 }) {
+        let album = await Pairs.shared.pair(track, findClip: false)?.cover
+            .flatMap(URL.init(string:)).map { resized($0, 1200) }
+        for url in [album, track.largeThumbnailURL, track.fallbackThumbnailURL].compactMap({ $0 }) {
             guard let (data, response) = try? await URLSession.shared.data(from: url),
                   (response as? HTTPURLResponse)?.statusCode == 200,
                   let jpeg = squareJPEG(data, side: 544) else { continue }

@@ -12,6 +12,17 @@ public struct MediaPair: Hashable, Sendable {
     /// offset. Guessed from the lengths (a longer clip has an intro), so it
     /// can be a few seconds off when the extra is an outro instead.
     public var offset: TimeInterval
+    /// The song's square album art (googleusercontent), when YouTube's queue
+    /// entry carries one; a clip's own picture (i.ytimg.com) is not kept.
+    public var cover: String? = nil
+}
+
+/// The largest of the `thumbnails` under `value`, when it is square album
+/// art (googleusercontent; i.ytimg.com frames are a clip's picture).
+func albumArt(_ value: Any) -> String? {
+    guard let thumbs = findFirst(value, "thumbnails") as? [JSON],
+          let url = thumbs.last?["url"] as? String, url.contains("googleusercontent.com") else { return nil }
+    return url
 }
 
 /// YouTube Music's search filter for videos (clips).
@@ -32,7 +43,8 @@ extension Catalog {
             ?? (findFirst((data as? JSON)?["currentVideoEndpoint"] ?? [:], "musicVideoType") as? String) ?? ""
         let length = (entry?["lengthText"]).flatMap { parseDuration(text($0)) }.map(Double.init)
         let isSong = kind == "MUSIC_VIDEO_TYPE_ATV" || kind == "MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK"
-        if isSong && !findClip { return MediaPair(song: videoId, video: nil, offset: 0) }
+        let cover = entry.flatMap { albumArt($0) }
+        if isSong && !findClip { return MediaPair(song: videoId, video: nil, offset: 0, cover: cover) }
         let lead = leadArtist(artist)
         let query = "\(lead) \(songTitle(title, artist: lead))"
         let params = isSong ? searchVideosParams : SearchKind.songs.params
@@ -50,12 +62,13 @@ extension Catalog {
             return isSong ? theirs >= mine - 3 && theirs <= mine + 180 : theirs <= mine + 3 && theirs >= mine * 0.6
         }?.0
         guard let other else {
-            return MediaPair(song: videoId, video: isSong ? nil : videoId, offset: 0)
+            return MediaPair(song: videoId, video: isSong ? nil : videoId, offset: 0, cover: cover)
         }
         let theirs = other.durationSecs.map(Double.init)
         return MediaPair(song: isSong ? videoId : other.videoId,
                          video: isSong ? other.videoId : videoId,
-                         offset: clipOffset(song: isSong ? length : theirs, video: isSong ? theirs : length))
+                         offset: clipOffset(song: isSong ? length : theirs, video: isSong ? theirs : length),
+                         cover: cover)
     }
 }
 

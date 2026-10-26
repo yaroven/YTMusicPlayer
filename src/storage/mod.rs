@@ -87,6 +87,30 @@ impl Library {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Playlists with songs, every one of them downloaded: they play
+    /// offline as a whole (same order as [`playlists`](Self::playlists)).
+    pub fn downloaded_playlists(&self) -> Result<Vec<Playlist>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, item_count, etag FROM playlists p
+             WHERE EXISTS (SELECT 1 FROM playlist_tracks pt WHERE pt.playlist_id = p.id)
+               AND NOT EXISTS (
+                 SELECT 1 FROM playlist_tracks pt
+                 LEFT JOIN downloads d ON d.video_id = pt.video_id
+                 WHERE pt.playlist_id = p.id AND d.video_id IS NULL)
+             ORDER BY id != ?1, position",
+        )?;
+        let rows = stmt.query_map([LIKED_PLAYLIST_ID], |r| {
+            Ok(Playlist {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                item_count: r.get(2)?,
+                etag: r.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     /// Tracks in playlist order, as one shared allocation for view and queue.
     pub fn tracks(&self, playlist_id: &str) -> Result<Arc<[Track]>> {
         let conn = self.conn();
@@ -434,12 +458,13 @@ impl Library {
         Ok(())
     }
 
-    /// Downloaded tracks, newest first.
+    /// Downloaded tracks in download order, so a downloaded playlist keeps
+    /// its order (newest first looked shuffled; user's report 2026-10-26).
     pub fn downloads(&self) -> Result<Vec<Download>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT video_id, title, artist, duration_secs, path, bytes, explicit FROM downloads
-             ORDER BY downloaded_at DESC",
+             ORDER BY downloaded_at, rowid",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(Download {
@@ -877,6 +902,53 @@ mod tests {
         assert!(lib.is_saved("MPREb_a").unwrap());
         lib.unsave("MPREb_a").unwrap();
         assert!(!lib.is_saved("MPREb_a").unwrap());
+    }
+
+    /// Downloads list in download order; a playlist counts as downloaded
+    /// when every one of its songs is (and it has some).
+    #[test]
+    fn downloads_in_order_and_playlists_downloaded_whole() {
+        let lib = Library::open_in_memory().unwrap();
+        let playlist = |id: &str| Playlist {
+            id: id.into(),
+            title: id.into(),
+            item_count: 0,
+            etag: None,
+        };
+        lib.replace_library(&[
+            (
+                playlist("PLfull"),
+                vec![track("aaaaaaaaaaa", None), track("bbbbbbbbbbb", None)].into(),
+            ),
+            (
+                playlist("PLhalf"),
+                vec![track("aaaaaaaaaaa", None), track("ccccccccccc", None)].into(),
+            ),
+            (playlist("PLnone"), vec![].into()),
+        ])
+        .unwrap();
+        for id in ["bbbbbbbbbbb", "aaaaaaaaaaa"] {
+            lib.add_download(&Download {
+                track: track(id, None),
+                path: PathBuf::from(format!("/tmp/{id}.m4a")),
+                bytes: 1,
+            })
+            .unwrap();
+        }
+        let order: Vec<_> = lib
+            .downloads()
+            .unwrap()
+            .into_iter()
+            .map(|d| d.track.video_id.to_string())
+            .collect();
+        assert_eq!(order, ["bbbbbbbbbbb", "aaaaaaaaaaa"], "download order");
+        let whole: Vec<_> = lib
+            .downloaded_playlists()
+            .unwrap()
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(whole, ["PLfull"]);
     }
 
     #[test]

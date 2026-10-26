@@ -193,8 +193,15 @@ impl Session {
                 }
             }
             Background::VideoPair { video_id, pair } => {
-                let clip = pair.and_then(|p| Some((Arc::<str>::from(p.video?), p.offset)));
-                self.video_pair = Some((video_id, clip));
+                let clip = pair
+                    .as_ref()
+                    .and_then(|p| Some((Arc::<str>::from(p.video.as_deref()?), p.offset)));
+                let cover = pair.and_then(|p| p.cover);
+                self.video_pair = Some(super::Pair {
+                    video_id,
+                    clip,
+                    cover,
+                });
             }
             Background::Lyrics { video_id, result } => {
                 if self.queue.current().is_some_and(|t| t.video_id == video_id) {
@@ -550,7 +557,7 @@ impl Session {
         if self
             .video_pair
             .as_ref()
-            .is_some_and(|(id, _)| *id == track.video_id)
+            .is_some_and(|p| p.video_id == track.video_id)
         {
             return;
         }

@@ -123,7 +123,14 @@ struct NowPlayingView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .gesture(DragGesture(minimumDistance: 20).onEnded { if $0.translation.height < 0 { sheet = .queue } })
+        // Simultaneous: the player is a sheet, whose own pan would otherwise
+        // take every vertical drag before this one.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 20).onEnded { drag in
+                let (dx, dy) = (drag.translation.width, drag.translation.height)
+                if dy < -24, abs(dy) > abs(dx) { sheet = .queue }
+            }
+        )
     }
 
     /// Seconds the clip runs ahead of the song.
@@ -140,6 +147,10 @@ struct NowPlayingView: View {
                 Image(systemName: "chevron.down").font(.system(size: 20, weight: .semibold)).frame(width: 40, height: 40)
             }
             .buttonStyle(.plain)
+            #if os(iOS)
+            // Balances the AirPlay button on the right, so the switch is centred.
+            Color.clear.frame(width: 40, height: 40)
+            #endif
             Spacer()
             // "Video" works only for songs with a clip (dimmed otherwise).
             MediaSwitch(video: $video, hasVideo: pair?.video != nil || video)
@@ -614,9 +625,17 @@ private struct QueuePane: View {
     @State private var name = ""
 
     var body: some View {
-        List {
+        // Keys follow the songs (the nth copy of a song keeps its key), so a
+        // removed row goes away instead of every row below it changing text.
+        var seen: [String: Int] = [:]
+        let entries: [(key: String, index: Int, track: Track)] = player.upNext.enumerated().map { i, track in
+            seen[track.videoId, default: 0] += 1
+            return (key: "\(track.videoId)#\(seen[track.videoId]!)", index: i, track: track)
+        }
+        return List {
             Section {
-                ForEach(Array(player.upNext.enumerated()), id: \.offset) { i, track in
+                ForEach(entries, id: \.key) { entry in
+                    let (i, track) = (entry.index, entry.track)
                     Button { player.jump(to: player.index + 1 + i) } label: {
                         HStack(spacing: 12) {
                             Artwork(source: .video(track.videoId), size: 40)

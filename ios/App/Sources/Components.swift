@@ -48,6 +48,9 @@ struct RootView: View {
                 .tabItem { Label("Library", systemImage: router.tab == .library ? "bookmark.fill" : "bookmark") }
                 .tag(AppTab.library)
         }
+        // Every launch brings the account's library up to date (no quota:
+        // the same calls as the site); `sync` skips when already running.
+        .task { await library.sync() }
         .sheet(isPresented: $player.showNowPlaying) {
             NowPlayingView()
                 .presentationDragIndicator(.hidden)

@@ -123,6 +123,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.yarek.music.App
+import dev.yarek.music.Covers
 import dev.yarek.music.R
 import dev.yarek.music.RepeatMode
 import dev.yarek.music.formatTime
@@ -248,17 +249,29 @@ fun NowPlaying() {
             }
             Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 32.dp)) {
                 val clip = pair?.video
-                if (video && clip != null) VideoPane(clip, videoStart + offset) { videoAt = it } else Cover(track)
+                if (video && clip != null) VideoPane(clip, videoStart + offset) { videoAt = it } else Cover(track, pair?.cover)
             }
             Header(track)
             Actions(track) { lyricsOpen = true }
             Scrubber()
             Controls()
             // "Your queue": the sheet with the queue and related music.
+            // A swipe up on it opens the sheet too (consumed: the player's
+            // own vertical drag, which closes it, must not see this one).
+            var lift by remember { mutableFloatStateOf(0f) }
             Box(
                 Modifier.fillMaxWidth().height(48.dp)
                     .clickable { sheet = Pane.Queue }
-                    .pointerInput(Unit) { detectVerticalDragGestures { _, drag -> if (drag < -8) sheet = Pane.Queue } },
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragEnd = { lift = 0f },
+                            onDragCancel = { lift = 0f },
+                        ) { change, amount ->
+                            change.consume()
+                            lift += amount
+                            if (lift < -24f && sheet == null) sheet = Pane.Queue
+                        }
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(stringResource(R.string.your_queue).uppercase(), fontSize = 14.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp)
@@ -389,8 +402,9 @@ private fun MediaSwitch(video: Boolean, hasVideo: Boolean, onChange: (Boolean) -
     }
 }
 
+/** The big cover: the album art once the song's lookup found it, else the clip's frame. */
 @Composable
-private fun Cover(track: Track) {
+private fun Cover(track: Track, cover: String?) {
     val player = App.instance.player
     val scale by animateFloatAsState(if (player.isPlaying) 1f else 0.86f, spring(dampingRatio = 0.7f), label = "cover")
     val scope = rememberCoroutineScope()
@@ -435,7 +449,7 @@ private fun Cover(track: Track) {
                 .scale(scale)
                 .clickable { player.togglePlay() },
         ) {
-            Artwork(Art.Video(track.videoId), side)
+            Artwork(if (cover != null && Covers.local(track.videoId) == null) Art.Url(cover) else Art.Video(track.videoId), side)
         }
     }
 }
@@ -771,11 +785,13 @@ private fun QueuePane() {
         val keys = upNext.map { t -> "${t.videoId}#${seen.merge(t.videoId, 1, Int::plus)}" }
         itemsIndexed(upNext, key = { i, _ -> keys[i] }) { i, track ->
             val index by rememberUpdatedState(i)
-            val dismiss = rememberSwipeToDismissBoxState(confirmValueChange = {
-                if (it != SwipeToDismissBoxValue.Settled) player.removeUpcoming(index)
-                it != SwipeToDismissBoxValue.Settled
-            })
-            SwipeToDismissBox(dismiss, backgroundContent = {}) {
+            // The song goes once the row has slid away (removing it during
+            // the swipe made the rows below flicker as they moved up).
+            val dismiss = rememberSwipeToDismissBoxState(confirmValueChange = { it != SwipeToDismissBoxValue.Settled })
+            LaunchedEffect(dismiss.currentValue) {
+                if (dismiss.currentValue != SwipeToDismissBoxValue.Settled) player.removeUpcoming(index)
+            }
+            SwipeToDismissBox(dismiss, backgroundContent = {}, modifier = Modifier.animateItem()) {
                 var drag by remember { mutableFloatStateOf(0f) }
                 var at by remember { mutableIntStateOf(index) }
                 QueueRow(

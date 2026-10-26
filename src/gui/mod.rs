@@ -46,7 +46,7 @@ use crate::{
     i18n::Lang,
     library_view::{LibraryView, SessionData, Source},
     lyrics::Lyrics,
-    session::{Changes, Deps, SearchResults, Session, SessionView, Sleep},
+    session::{Changes, Cover, Deps, SearchResults, Session, SessionView, Sleep},
     storage::Library,
     tr, trf,
 };
@@ -149,7 +149,9 @@ enum Cmd {
     /// browser's sign-in.
     YouTubeSignIn(Option<String>),
     YouTubeSignOut,
-    FetchArt(Arc<str>, ArtSize),
+    /// Art for a video id (or, for cards, an image URL) at `edge` px; the
+    /// big cover's album art URL when the catalog has one.
+    FetchArt(Arc<str>, ArtSize, u32, Option<Arc<str>>),
     /// Save state and stop.
     Quit,
 }
@@ -283,7 +285,9 @@ impl ArtCache {
             return Some(image.clone());
         }
         if self.requested.insert(key.clone()) {
-            let _ = self.tx.send(Cmd::FetchArt(key.clone(), size));
+            let _ = self
+                .tx
+                .send(Cmd::FetchArt(key.clone(), size, size.pixels(), None));
         }
         None
     }
@@ -837,6 +841,8 @@ struct View {
     art: Rc<RefCell<ArtCache>>,
     /// The playing track (from the last snapshot).
     now: Option<Track>,
+    /// The playing song's album art, as far as the core knows.
+    cover: Cover,
 }
 
 impl View {
@@ -891,6 +897,13 @@ impl View {
             Some(SearchKind::Playlists) => 3,
             _ => 0,
         });
+        let lists: Vec<SharedString> = lib
+            .download_lists()
+            .iter()
+            .map(|p| crate::library_view::playlist_title(self.lang, p).into())
+            .collect();
+        ui.set_download_lists(ModelRc::new(VecModel::from(lists)));
+        ui.set_download_list(lib.download_list().map_or(-1, |i| i as i32));
         ui.set_tracks_title(lib.title().into());
         ui.set_tracks_subtitle(lib.subtitle().into());
         ui.set_can_back(lib.can_go_back());
@@ -998,7 +1011,17 @@ impl View {
                 ui.set_now_tint(Color::from_rgb_u8(0x30, 0x30, 0x30));
                 // Drop the old cover right away: only one large image lives.
                 art.large = None;
-                let _ = art.tx.send(Cmd::FetchArt(id, ArtSize::Large));
+                // The album art (sharp at any size) beats the clip's frame,
+                // so the cover waits for the catalog's answer; as big as
+                // this window's pixels need.
+                let cover = match &self.cover {
+                    Cover::Pending => return,
+                    Cover::Video => None,
+                    Cover::Album(url) => Some(url.clone()),
+                };
+                let size = ui.window().size();
+                let edge = art::large_edge(size.width, size.height);
+                let _ = art.tx.send(Cmd::FetchArt(id, ArtSize::Large, edge, cover));
             }
         }
     }
@@ -1308,6 +1331,9 @@ impl View {
         self.tracks.set_playing(now_id.clone());
         self.queue.set_playing(now_id);
         self.now = snap.view.now.clone();
+        // The catalog answered about the song's album art: fetch the cover.
+        let cover_changed = snap.view.cover != self.cover;
+        self.cover = snap.view.cover.clone();
         if changed {
             let tip = self.now.as_ref().map_or_else(
                 || "Yarek Music".to_owned(),
@@ -1358,7 +1384,7 @@ impl View {
         if changed || snap.changes.playlist.is_some() || snap.changes.liked.is_some() {
             self.render_liked(ui);
         }
-        if changed {
+        if changed || cover_changed {
             self.show_now_art(ui);
         }
     }
@@ -1393,6 +1419,7 @@ fn apply_language(ui: &MainWindow, lang: Lang) {
     l.set_artists(t.artists.into());
     l.set_playlists(t.playlists.into());
     l.set_songs(t.songs.into());
+    l.set_all_songs(t.all_songs.into());
     l.set_account(t.account.into());
     l.set_sign_in(t.sign_in.into());
     l.set_sign_out(t.sign_out.into());
@@ -1681,6 +1708,7 @@ fn new_view(
         pending_add: None,
         art,
         now: None,
+        cover: Cover::Pending,
     }))
 }
 
@@ -2021,6 +2049,14 @@ fn wire_callbacks(
         if let (Some(query), Some(kind)) = (query, kind) {
             send(Cmd::Search(query, kind), tx);
         }
+    });
+    on!(on_select_download_list, [tx, view, ui], |i| {
+        let list = usize::try_from(i).ok();
+        let mut v = view.borrow_mut();
+        if let Err(err) = v.library.borrow_mut().select_download_list(list) {
+            tracing::warn!(%err, "downloaded playlist");
+        }
+        v.sync_list(ui);
     });
     on!(on_like_row, [tx, view, ui], |row| {
         if let Some(track) = usize::try_from(row)
@@ -2484,9 +2520,9 @@ async fn core_loop(
                         session.save_state();
                         break;
                     }
-                    Some(Cmd::FetchArt(id, size)) => {
+                    Some(Cmd::FetchArt(id, size, edge, cover)) => {
                         dirty = false;
-                        fetch_art(&http, &fetches, id, size);
+                        fetch_art(&http, &fetches, id, size, edge, cover);
                     }
                     Some(cmd) => apply(&mut session, cmd),
                 }
@@ -2529,11 +2565,18 @@ fn queue_update(session: &Session, revision: &mut Option<u64>) -> Option<Arc<[Tr
 }
 
 /// Downloads and decodes art off the UI thread, then hands it over.
-fn fetch_art(http: &reqwest::Client, permits: &Arc<Semaphore>, id: Arc<str>, size: ArtSize) {
+fn fetch_art(
+    http: &reqwest::Client,
+    permits: &Arc<Semaphore>,
+    id: Arc<str>,
+    size: ArtSize,
+    edge: u32,
+    cover: Option<Arc<str>>,
+) {
     let (http, permits) = (http.clone(), permits.clone());
     tokio::spawn(async move {
         let _permit = permits.acquire_owned().await;
-        match art::fetch(&http, &id, size).await {
+        match art::fetch(&http, &id, size, edge, cover.as_deref()).await {
             Ok(art) => {
                 let _ = slint::invoke_from_event_loop(move || {
                     let ui = current_ui();

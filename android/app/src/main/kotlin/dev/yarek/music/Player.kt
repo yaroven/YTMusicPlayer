@@ -431,7 +431,12 @@ class Player(
                 MediaMetadata.Builder()
                     .setTitle(track.title)
                     .setArtist(track.artist)
-                    .setArtworkUri(Covers.local(track.videoId)?.let(Uri::fromFile) ?: Uri.parse(track.largeThumbnailUrl))
+                    // The kept cover, else the album art the song's lookup found, else the clip's frame.
+                    .setArtworkUri(
+                        Covers.local(track.videoId)?.let(Uri::fromFile)
+                            ?: Pairs.cover(track.videoId)?.let { Uri.parse(dev.yarek.music.ui.resized(it, 544)) }
+                            ?: Uri.parse(track.largeThumbnailUrl),
+                    )
                     .build(),
             )
         val downloaded = library.download(track.videoId)

@@ -258,6 +258,7 @@ impl Catalog {
         let length = entry
             .and_then(|r| parse_duration(&text(r.get("lengthText"))))
             .map(f64::from);
+        let cover = entry.and_then(|r| album_art(r.get("thumbnail")?));
         let lead = lead_artist(artist);
         let query = format!("{lead} {}", song_title(title, &lead));
         let is_song = matches!(
@@ -267,6 +268,7 @@ impl Catalog {
         if is_song && !find_clip {
             return Ok(MediaPair {
                 song: video_id.to_owned(),
+                cover,
                 video: None,
                 offset: 0.0,
             });
@@ -300,6 +302,7 @@ impl Catalog {
             // song (then its own sound).
             return Ok(MediaPair {
                 song: video_id.to_owned(),
+                cover,
                 video: (!is_song).then(|| video_id.to_owned()),
                 offset: 0.0,
             });
@@ -315,6 +318,7 @@ impl Catalog {
             } else {
                 other.video_id.to_string()
             },
+            cover,
             video: Some(if is_song {
                 other.video_id.to_string()
             } else {
@@ -824,6 +828,20 @@ fn thumbnail(v: &Value) -> Option<Arc<str>> {
     pick.get("url").and_then(Value::as_str).map(Arc::from)
 }
 
+/// The largest thumbnail below `v` when it's album art: a
+/// googleusercontent picture (square, resizable through its URL), not a
+/// video frame from i.ytimg.com.
+fn album_art(v: &Value) -> Option<Arc<str>> {
+    let thumbs = find_first(v, "thumbnails")?.as_array()?;
+    let url = thumbs
+        .iter()
+        .max_by_key(|t| t.get("width").and_then(Value::as_u64).unwrap_or(0))?
+        .get("url")?
+        .as_str()?;
+    url.contains("googleusercontent.com/")
+        .then(|| Arc::from(url))
+}
+
 /// YouTube Music's "E" badge anywhere below `v`.
 fn explicit_badge(v: &Value) -> bool {
     find_all(v, "iconType")
@@ -1042,6 +1060,10 @@ pub struct MediaPair {
     /// What plays as sound: the studio track (the clip's own sound only
     /// when no studio track was found).
     pub song: String,
+    /// The square album art YouTube Music shows for the song (a
+    /// googleusercontent picture, any size on request), when it has one;
+    /// clips only have their 16:9 frame on i.ytimg.com.
+    pub cover: Option<Arc<str>>,
     /// The clip "Video" shows, when there is one.
     pub video: Option<String>,
     /// Seconds the clip runs ahead of the song: clip time = song time +
@@ -1648,6 +1670,23 @@ mod tests {
             &*shelves[0].items[1].id,
             "FEmusic_moods_and_genres_category#ggMPOg1u"
         );
+    }
+
+    /// A song's queue entry carries its album art (googleusercontent,
+    /// square); a clip's entry only has its frame, which isn't one.
+    #[test]
+    fn album_art_is_the_square_googleusercontent_picture() {
+        let entry = json!({ "thumbnail": { "thumbnails": [
+            { "url": "https://lh3.googleusercontent.com/a=w60-h60-l90-rj", "width": 60 },
+            { "url": "https://lh3.googleusercontent.com/a=w544-h544-l90-rj", "width": 544 },
+            { "url": "https://lh3.googleusercontent.com/a=w120-h120-l90-rj", "width": 120 } ] } });
+        assert_eq!(
+            album_art(&entry["thumbnail"]).as_deref(),
+            Some("https://lh3.googleusercontent.com/a=w544-h544-l90-rj")
+        );
+        let clip = json!({ "thumbnails": [
+            { "url": "https://i.ytimg.com/vi/x/hqdefault.jpg", "width": 480 } ] });
+        assert_eq!(album_art(&clip), None);
     }
 
     #[test]
