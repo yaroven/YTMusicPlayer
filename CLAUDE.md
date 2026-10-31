@@ -305,6 +305,15 @@ Domain terms are defined in `CONTEXT.md`.
   (zbus) on Linux to avoid GTK/libappindicator. Measured 2026-10-02: +1 MB
   (GUI idle 47 → 48 MB after 20 s; at <15 s the window's first frames are
   still allocated, ~70 MB — sample after 20 s).
+  **Mini player** (user's pick 2026-10-31, mockup "B"): a left click on the
+  icon opens `MiniPlayer` (`gui::mini`, a frameless 280x420 always-on-top
+  Slint window: big cover, song, like, open window, seek, ⏮ ⏯ ⏭) under the
+  icon (above it on a bottom taskbar, from `TrayIconEvent::Click`'s rect;
+  Linux: ksni's `activate` x/y, none on Wayland); the menu moved to the
+  right click. Destroyed on focus loss / Esc / a second click (a click
+  within 300 ms of losing focus doesn't reopen it). Shares the one large
+  cover; with the main window closed it fetches it at 640 px and drops it
+  when closed. `gui::tests::mini_png` renders it.
 - **Measured footprint 2026-10-02** (M1, release, TUI, 2000 tracks): idle
   10 MB, playing 16 MB, peak 18–19 MB — same as v0.5.0. Binary +1.7 MB.
 

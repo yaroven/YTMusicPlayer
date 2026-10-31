@@ -2867,4 +2867,163 @@ slint::slint! {
         }
     }
 
+
+    // The tray's mini player: a frameless window under the menu bar icon
+    // (above it on a bottom taskbar) with the cover, the song and its
+    // controls. Built when the icon is clicked, destroyed when it loses focus.
+    export component MiniPlayer inherits Window {
+        title: "Yarek Music";
+        no-frame: true;
+        always-on-top: true;
+        width: 280px;
+        height: 420px;
+        background: Yt.bar;
+        default-font-size: 14px;
+        in property <bool> has-track;
+        in property <string> song;
+        in property <string> artist;
+        in property <string> initial;
+        in property <float> hue;
+        in property <image> art;
+        in property <bool> has-art;
+        in property <bool> playing;
+        in property <bool> liked;
+        in property <float> progress;
+        in property <string> position-text;
+        in property <string> duration-text;
+        callback toggle-play();
+        callback next();
+        callback prev();
+        callback like();
+        callback open-app();
+        callback seek(float);
+        callback dismiss();
+
+        FocusScope {
+            key-pressed(event) => {
+                if (event.text == Key.Escape) { root.dismiss(); return accept; }
+                if (event.text == " ") { root.toggle-play(); return accept; }
+                reject
+            }
+        }
+        Rectangle {
+            border-width: 1px;
+            border-color: Yt.divider;
+        }
+        VerticalLayout {
+            padding: 16px;
+            spacing: 0px;
+            Rectangle {
+                width: 248px;
+                height: 248px;
+                border-radius: 10px;
+                clip: true;
+                Cover {
+                    size: 248px;
+                    border-radius: 10px;
+                    art: root.art;
+                    has-art: root.has-art;
+                    initial: root.initial;
+                    hue: root.hue;
+                }
+            }
+            HorizontalLayout {
+                padding-top: 12px;
+                spacing: 4px;
+                VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: root.has-track ? root.song : L.nothing-playing;
+                        color: Yt.text;
+                        font-size: 15px;
+                        font-weight: 600;
+                        overflow: elide;
+                    }
+                    Text { text: root.artist; color: Yt.secondary; font-size: 13px; overflow: elide; }
+                }
+                IconButton {
+                    icon: root.liked ? "heart" : "heart-outline";
+                    active: root.liked;
+                    size: 36px;
+                    icon-size: 20px;
+                    clicked => { root.like(); }
+                }
+                IconButton {
+                    icon: "open";
+                    size: 36px;
+                    icon-size: 20px;
+                    clicked => { root.open-app(); }
+                }
+            }
+            // Progress: a white line with its dot, click or drag to seek.
+            bar := Rectangle {
+                height: 20px;
+                Rectangle {
+                    y: (parent.height - self.height) / 2;
+                    height: 4px;
+                    border-radius: 2px;
+                    background: #ffffff33;
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * clamp(root.progress, 0, 1);
+                        border-radius: 2px;
+                        background: Yt.text;
+                    }
+                }
+                Rectangle {
+                    width: 12px;
+                    height: 12px;
+                    border-radius: 6px;
+                    background: Yt.text;
+                    x: (parent.width - self.width) * clamp(root.progress, 0, 1);
+                    y: (parent.height - self.height) / 2;
+                }
+                TouchArea {
+                    enabled: root.has-track;
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.up) {
+                            root.seek(clamp(self.mouse-x / bar.width, 0, 1));
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                Text { text: root.position-text; color: Yt.secondary; font-size: 11px; }
+                Text { text: root.duration-text; color: Yt.secondary; font-size: 11px; horizontal-alignment: right; }
+            }
+            HorizontalLayout {
+                padding-top: 6px;
+                spacing: 24px;
+                alignment: center;
+                IconButton {
+                    icon: "prev";
+                    active: true;
+                    y: (parent.height - self.height) / 2;
+                    clicked => { root.prev(); }
+                }
+                Rectangle {
+                    width: 48px;
+                    height: 48px;
+                    border-radius: 24px;
+                    background: play-touch.has-hover ? #d9d9d9 : Yt.text;
+                    play-touch := TouchArea { clicked => { root.toggle-play(); } }
+                    Icon {
+                        name: root.playing ? "pause" : "play";
+                        color: #030303;
+                        width: 28px;
+                        height: 28px;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                }
+                IconButton {
+                    icon: "next";
+                    active: true;
+                    y: (parent.height - self.height) / 2;
+                    clicked => { root.next(); }
+                }
+            }
+        }
+    }
+
 }

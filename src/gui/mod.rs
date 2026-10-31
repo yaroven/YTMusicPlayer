@@ -13,6 +13,7 @@
 mod art;
 #[cfg(target_os = "macos")]
 mod macos;
+mod mini;
 mod tray;
 mod ui;
 #[cfg(any(target_os = "macos", windows))]
@@ -1034,13 +1035,20 @@ impl View {
         size: ArtSize,
         art: art::Art,
     ) {
+        let is_now = self.now.as_ref().is_some_and(|t| t.video_id == key);
         let Some(ui) = ui else {
-            // The window closed meanwhile: nothing shows it.
-            self.art.borrow_mut().requested.remove(&key);
+            // No window: the tray's mini player may want the cover.
+            if let (ArtSize::Large, true, Some(mini)) = (size, is_now, mini::current()) {
+                let image = art.pixels.image();
+                self.art.borrow_mut().large = Some((key, image, art.tint, Image::default()));
+                self.show_mini_art(&mini);
+            } else {
+                // The window closed meanwhile: nothing shows it.
+                self.art.borrow_mut().requested.remove(&key);
+            }
             return;
         };
         let image = art.pixels.image();
-        let is_now = self.now.as_ref().is_some_and(|t| t.video_id == key);
         match size {
             ArtSize::Thumb => {
                 self.art
@@ -1070,6 +1078,9 @@ impl View {
         }
         if is_now {
             self.show_now_art(ui);
+            if let Some(mini) = mini::current() {
+                self.show_mini_art(&mini);
+            }
         }
     }
 
@@ -1352,6 +1363,18 @@ impl View {
         }
         let signed_in = snap.view.signed_in || snap.view.youtube_signed_in;
         self.last = Some(snap.view);
+        if let Some(mini) = mini::current() {
+            self.render_mini(&mini);
+            if changed || cover_changed {
+                if ui.is_some() {
+                    // The window's cover request serves both; until it
+                    // arrives the mini player shows the initial.
+                    mini.set_has_art(false);
+                } else {
+                    self.show_mini_art(&mini);
+                }
+            }
+        }
 
         let Some(ui) = ui else {
             return;
@@ -1761,6 +1784,7 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Resu
                 tray::Action::Prev => {
                     let _ = tx.send(Cmd::Prev);
                 }
+                tray::Action::Mini(anchor) => mini::toggle(anchor),
                 tray::Action::Show => raise(),
                 tray::Action::Quit => {
                     let _ = slint::quit_event_loop();

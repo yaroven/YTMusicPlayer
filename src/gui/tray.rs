@@ -1,4 +1,6 @@
-//! Menu bar / system tray icon: play-pause, next, previous, show, quit.
+//! Menu bar / system tray icon. A left click opens the mini player under it
+//! ([`Action::Mini`]); the menu (right click) has play-pause, next,
+//! previous, show, quit.
 //! macOS and Windows use `tray-icon` (native, main thread); Linux uses
 //! `ksni` (StatusNotifierItem over D-Bus, on the core runtime).
 //!
@@ -9,8 +11,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Where the icon is on screen: x, y, width, height in physical pixels.
+pub type Anchor = (f64, f64, f64, f64);
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Action {
+    /// Open (or close) the mini player next to the icon, when it's known.
+    Mini(Option<Anchor>),
     TogglePause,
     Next,
     Prev,
@@ -68,7 +75,7 @@ pub use sni::Tray;
 #[cfg(not(target_os = "linux"))]
 mod native {
     use tray_icon::{
-        Icon, TrayIcon, TrayIconBuilder,
+        Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
         menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
     };
 
@@ -95,14 +102,33 @@ mod native {
                 ids.push((item.id().clone(), *action));
                 menu.append(&item)?;
             }
+            let on_menu = handler.clone();
             MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
                 if let Some((_, action)) = ids.iter().find(|(id, _)| *id == event.id) {
-                    handler(*action);
+                    on_menu(*action);
+                }
+            }));
+            TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    rect,
+                    ..
+                } = event
+                {
+                    let anchor = (
+                        rect.position.x,
+                        rect.position.y,
+                        f64::from(rect.size.width),
+                        f64::from(rect.size.height),
+                    );
+                    handler(Action::Mini(Some(anchor)));
                 }
             }));
             let (rgba, w, h) = icon_rgba()?;
             let icon = TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
+                .with_menu_on_left_click(false)
                 .with_tooltip("Yarek Music")
                 .with_icon(Icon::from_rgba(rgba, w, h)?)
                 .build()?;
@@ -151,8 +177,10 @@ mod sni {
                 ..Default::default()
             }
         }
-        fn activate(&mut self, _x: i32, _y: i32) {
-            (self.handler)(Action::Show);
+        fn activate(&mut self, x: i32, y: i32) {
+            // Some hosts (and Wayland) don't say where the click was.
+            let anchor = (x != 0 || y != 0).then(|| (f64::from(x), f64::from(y), 0.0, 0.0));
+            (self.handler)(Action::Mini(anchor));
         }
         fn menu(&self) -> Vec<MenuItem<Self>> {
             let mut items = Vec::new();

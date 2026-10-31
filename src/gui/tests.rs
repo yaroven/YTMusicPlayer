@@ -956,3 +956,155 @@ fn another_song_closes_the_clip() {
         "the audio carries on"
     );
 }
+
+fn playing(title: &str) -> SessionView {
+    let mut view = session_view();
+    view.now = Some(track(title));
+    view.state = PlayState::Playing;
+    view.position = Duration::from_secs(108);
+    view.duration = Some(Duration::from_secs(218));
+    view
+}
+
+#[test]
+fn the_tray_mini_player_shows_the_song_and_controls_it() {
+    let mut h = harness();
+    h.absorb(snapshot(playing("Enemy"), Changes::default()));
+    mini::toggle(None);
+    let m = mini::current().expect("opened by the icon");
+    assert_eq!(m.get_song(), "Enemy");
+    assert_eq!(m.get_artist(), "Someone");
+    assert!(m.get_playing());
+    assert_eq!(m.get_position_text(), "1:48");
+    assert_eq!(m.get_duration_text(), "3:38");
+    assert!((m.get_progress() - 108.0 / 218.0).abs() < 1e-3);
+
+    m.invoke_toggle_play();
+    m.invoke_next();
+    m.invoke_prev();
+    m.invoke_seek(0.5);
+    m.invoke_like();
+    let cmds = h.commands();
+    assert!(matches!(cmds[0], Cmd::TogglePause));
+    assert!(matches!(cmds[1], Cmd::Next));
+    assert!(matches!(cmds[2], Cmd::Prev));
+    assert!(matches!(cmds[3], Cmd::SeekRatio(r) if (r - 0.5).abs() < 1e-6));
+    assert!(matches!(&cmds[4], Cmd::Like(t) if &*t.title == "Enemy"));
+
+    // The next song shows up in it while it's open.
+    let mut view = playing("Scars");
+    view.state = PlayState::Paused;
+    h.absorb(snapshot(view, Changes::default()));
+    assert_eq!(m.get_song(), "Scars");
+    assert!(!m.get_playing());
+
+    // A second click closes it, and its window goes.
+    mini::toggle(None);
+    assert!(mini::current().is_none());
+}
+
+#[test]
+fn the_mini_player_fetches_the_cover_with_the_window_closed() {
+    let mut h = harness();
+    close_window();
+    let mut view = playing("Enemy");
+    view.cover = crate::session::Cover::Album("https://example.com/a.jpg".into());
+    h.view
+        .borrow_mut()
+        .absorb(snapshot(view, Changes::default()), None);
+    while h.rx.try_recv().is_ok() {}
+    mini::toggle(None);
+    let mut asked = false;
+    while let Ok(cmd) = h.rx.try_recv() {
+        asked |= matches!(cmd, Cmd::FetchArt(_, ArtSize::Large, _, Some(_)));
+    }
+    assert!(asked, "the album cover is requested for the mini player");
+    mini::close();
+    assert!(h.view.borrow().art.borrow().large.is_none());
+}
+
+/// Renders the mini player into `target/mini.png` (2x), like `screens_png`:
+/// `cargo test -- --ignored --exact gui::tests::mini_png`.
+#[test]
+#[ignore = "writes target/mini.png; needs its own process (a different Slint platform)"]
+fn mini_png() {
+    use slint::platform::software_renderer::{
+        MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType,
+    };
+
+    struct Headless(Rc<MinimalSoftwareWindow>, std::time::Instant);
+    impl slint::platform::Platform for Headless {
+        fn create_window_adapter(
+            &self,
+        ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
+            Ok(self.0.clone())
+        }
+        fn duration_since_start(&self) -> Duration {
+            self.1.elapsed()
+        }
+    }
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    slint::platform::set_platform(Box::new(Headless(
+        window.clone(),
+        std::time::Instant::now(),
+    )))
+    .unwrap();
+    let (w, h) = (560u32, 840u32);
+    window.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged { scale_factor: 2.0 });
+    window.set_size(slint::PhysicalSize::new(w, h));
+
+    let library = seeded_library();
+    let library_view = Rc::new(RefCell::new(LibraryView::new(library.clone()).unwrap()));
+    let (tx, _rx) = unbounded_channel();
+    let prefs = Prefs {
+        cookies: String::new(),
+        normalize: true,
+        notifications: false,
+        tray: true,
+        crossfade: 0.0,
+    };
+    let view = new_view(library, library_view, prefs, tx);
+    VIEW.with(|cell| *cell.borrow_mut() = Some(view.clone()));
+    let snap = playing("Enemy");
+    let id = snap.now.as_ref().unwrap().video_id.clone();
+    view.borrow_mut()
+        .absorb(snapshot(snap, Changes::default()), None);
+    // A made-up cover: warm light behind dark figures.
+    let edge = 496u32;
+    let cover = image::RgbImage::from_fn(edge, edge, |x, y| {
+        let (fx, fy) = (x as f32 / edge as f32 - 0.5, y as f32 / edge as f32 - 0.55);
+        let glow = (1.0 - (fx * fx + fy * fy).sqrt() * 2.2).clamp(0.0, 1.0);
+        image::Rgb([
+            (40.0 + 215.0 * glow) as u8,
+            (12.0 + 160.0 * glow * glow) as u8,
+            (8.0 + 40.0 * glow * glow * glow) as u8,
+        ])
+    });
+    let image = Image::from_rgb8(slint::SharedPixelBuffer::clone_from_slice(
+        cover.as_raw(),
+        edge,
+        edge,
+    ));
+    view.borrow().art.borrow_mut().large = Some((id, image, (0, 0, 0), Image::default()));
+    mini::toggle(None);
+
+    let mut pixels = vec![PremultipliedRgbaColor::default(); (w * h) as usize];
+    for _ in 0..12 {
+        slint::platform::update_timers_and_animations();
+        std::thread::sleep(Duration::from_millis(25));
+        window.request_redraw();
+        window.draw_if_needed(|renderer| {
+            renderer.render(&mut pixels, w as usize);
+        });
+    }
+    let raw: Vec<u8> = pixels
+        .iter()
+        .flat_map(|p| [p.red, p.green, p.blue])
+        .collect();
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/mini.png");
+    image::RgbImage::from_raw(w, h, raw)
+        .unwrap()
+        .save(&out)
+        .unwrap();
+    println!("wrote {}", out.display());
+}
