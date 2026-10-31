@@ -11,6 +11,7 @@ struct NowPlayingView: View {
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
     @Environment(Router.self) private var router
+    @Environment(\.scenePhase) private var scenePhase
     @State private var sheet: Pane?
     /// The clip instead of the cover; where it started and where it got.
     @State private var video = false
@@ -88,6 +89,11 @@ struct NowPlayingView: View {
         }
         .onDisappear {
             if video { video = false; player.resumeAfterVideo(at: songTime(videoAt)) }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Locked / in the background the song carries on as sound, so
+            // the lock screen's buttons drive it (WebKit's video can't play there).
+            if phase == .background, video { video = false }
         }
         .background {
             ZStack {

@@ -109,7 +109,14 @@ import YTMKit
           String(format: "%.1f s", Date().timeIntervalSince(start)))
     player.seek(to: 900)
     await wait("long song plays after a seek to 15:00", 15) { player.isPlaying && player.position > 901 }
-    player.togglePlay()
+    // The lock screen's ⏸ / ▶: each does what it says, twice in a row too.
+    player.pause()
+    player.pause()
+    await wait("lock screen pause", 5) { !player.isPlaying }
+    player.resume()
+    player.resume()
+    await wait("lock screen play", 10) { player.isPlaying && player.position > 902 }
+    player.pause()
 }
 try await run()
 exit(0)

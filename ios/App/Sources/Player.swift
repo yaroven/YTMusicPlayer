@@ -1,5 +1,8 @@
 import AVFoundation
 import MediaPlayer
+#if canImport(UIKit)
+import UIKit
+#endif
 import YTMKit
 
 enum RepeatMode: String, CaseIterable {
@@ -218,6 +221,31 @@ final class Player {
         }
     }
 
+    /// Plays if it doesn't (lock screen ▶).
+    func resume() {
+        settleFade()
+        if resolving {
+            if !playWhenReady { togglePlay() }
+        } else if loaded == nil {
+            load(resumeAt: position)
+        } else if av.rate == 0 {
+            activateAudioSession()
+            av.play()
+        }
+    }
+
+    /// Pauses if it plays (lock screen ⏸).
+    func pause() {
+        settleFade()
+        if resolving {
+            playWhenReady = false
+            isPlaying = false
+            updateNowPlaying()
+        } else {
+            av.pause()
+        }
+    }
+
     func next() {
         settleFade()
         guard let n = nextIndex() else { return }
@@ -278,8 +306,8 @@ final class Player {
     func resumeAfterVideo(at seconds: TimeInterval?) {
         guard loaded != nil else { return load(resumeAt: seconds ?? position) }
         if let seconds { seek(to: seconds) }
-        activateAudioSession()
         av.play()
+        reclaimNowPlaying()
     }
 
     /// Dislikes the song (YouTube learns from it) and moves on if it plays.
@@ -742,8 +770,11 @@ final class Player {
             let info = note.userInfo ?? [:]
             let type = (info[AVAudioSessionInterruptionTypeKey] as? UInt).flatMap(AVAudioSession.InterruptionType.init)
             let options = AVAudioSession.InterruptionOptions(rawValue: info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
-            guard type == .ended, options.contains(.shouldResume) else { return }
-            MainActor.assumeIsolated { self?.av.play() }
+            guard type == .ended else { return }
+            MainActor.assumeIsolated {
+                self?.reclaimNowPlaying()
+                if options.contains(.shouldResume) { self?.av.play() }
+            }
         }
         #endif
     }
@@ -756,12 +787,15 @@ final class Player {
 
     private func setUpRemoteCommands() {
         let commands = MPRemoteCommandCenter.shared()
+        // Play / pause say what they mean: `isPlaying` can lag behind the
+        // player (a stall, a clip that just closed), and a toggle then did
+        // nothing from the lock screen.
         commands.playCommand.addTarget { [weak self] _ in
-            MainActor.assumeIsolated { if self?.isPlaying == false { self?.togglePlay() } }
+            MainActor.assumeIsolated { self?.resume() }
             return .success
         }
         commands.pauseCommand.addTarget { [weak self] _ in
-            MainActor.assumeIsolated { self?.av.pause() }
+            MainActor.assumeIsolated { self?.pause() }
             return .success
         }
         commands.togglePlayPauseCommand.addTarget { [weak self] _ in
@@ -782,6 +816,28 @@ final class Player {
             MainActor.assumeIsolated { self?.seek(to: at) }
             return .success
         }
+        #if os(iOS)
+        UIApplication.shared.beginReceivingRemoteControlEvents()
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil,
+                                               queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reclaimNowPlaying() }
+        }
+        #endif
+        reclaimNowPlaying()
+    }
+
+    /// Makes the lock screen / Control Center ours again. The clip's web
+    /// view plays through WebKit, which takes over Now Playing and leaves
+    /// the system's buttons disabled for the app when its video goes.
+    func reclaimNowPlaying() {
+        let commands = MPRemoteCommandCenter.shared()
+        for command in [commands.playCommand, commands.pauseCommand, commands.togglePlayPauseCommand,
+                        commands.nextTrackCommand, commands.previousTrackCommand,
+                        commands.changePlaybackPositionCommand] {
+            command.isEnabled = true
+        }
+        if current != nil { activateAudioSession() }
+        updateNowPlaying()
     }
 
     private func updateNowPlaying() {
@@ -796,6 +852,8 @@ final class Player {
             MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: position,
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
         ]
         if let artwork, artwork.videoId == track.videoId {
             info[MPMediaItemPropertyArtwork] = artwork.value

@@ -120,7 +120,12 @@ private struct VideoWebView: UIViewRepresentable {
 
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
         view.configuration.userContentController.removeScriptMessageHandler(forName: "ipc")
+        // Stop WebKit's media at once, or its Now Playing outlives the view
+        // and the lock screen's buttons stop reaching the player.
+        view.pauseAllMediaPlayback(completionHandler: nil)
+        view.setAllMediaPlaybackSuspended(true, completionHandler: nil)
         view.stopLoading()
+        view.loadHTMLString("", baseURL: nil)
     }
 
     final class Coordinator: NSObject, WKScriptMessageHandler {
