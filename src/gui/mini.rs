@@ -35,6 +35,7 @@ pub(super) fn current() -> Option<MiniPlayer> {
 
 /// The tray icon was clicked: open the mini player, or close it.
 pub(super) fn toggle(anchor: Option<Anchor>) {
+    tracing::debug!(?anchor, "mini player: toggle");
     if MINI.with(|cell| cell.borrow().is_some()) {
         return close();
     }
@@ -54,6 +55,7 @@ pub(super) fn close() {
     let Some(mini) = MINI.with(|cell| cell.borrow_mut().take()) else {
         return;
     };
+    tracing::debug!("mini player: close");
     CLOSED_AT.with(|at| at.set(Some(Instant::now())));
     let _ = mini.hide();
     // Nothing shows the large cover any more: let it go.
@@ -87,10 +89,17 @@ fn open(anchor: Option<Anchor>) -> Result<()> {
     }
     {
         use slint::winit_030::{WinitWindowAccessor, winit::event::WindowEvent};
-        mini.window().on_winit_window_event(|_, event| {
-            if let WindowEvent::Focused(false) = event {
-                // Not from inside the event handler that is destroying it.
-                let _ = slint::invoke_from_event_loop(close);
+        // macOS reports `Focused(false)` while the window is being shown,
+        // before it gets the focus: only a loss after a gain closes it.
+        let focused = Cell::new(false);
+        mini.window().on_winit_window_event(move |_, event| {
+            match event {
+                WindowEvent::Focused(true) => focused.set(true),
+                WindowEvent::Focused(false) if focused.get() => {
+                    // Not from inside the event handler that is destroying it.
+                    let _ = slint::invoke_from_event_loop(close);
+                }
+                _ => {}
             }
             slint::winit_030::EventResult::Propagate
         });
