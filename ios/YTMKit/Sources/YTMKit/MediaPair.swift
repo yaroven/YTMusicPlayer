@@ -25,6 +25,13 @@ func albumArt(_ value: Any) -> String? {
     return url
 }
 
+/// A googleusercontent picture at the queue entry's size (544 px): search
+/// rows ask for 120 px.
+func largeArt(_ url: String) -> String {
+    guard let cut = url.range(of: "=w", options: .backwards) else { return url }
+    return String(url[..<cut.lowerBound]) + "=w544-h544-l90-rj"
+}
+
 /// YouTube Music's search filter for videos (clips).
 let searchVideosParams = "EgWKAQIQAWoMEA4QChADEAQQCRAF"
 
@@ -48,27 +55,30 @@ extension Catalog {
         let lead = leadArtist(artist)
         let query = "\(lead) \(songTitle(title, artist: lead))"
         let params = isSong ? searchVideosParams : SearchKind.songs.params
-        let rows: [(Track, String?)] = ((try? await call("search", ["query": query, "params": params])).map { data in
-            findAll(data, "musicResponsiveListItemRenderer").compactMap { row -> (Track, String?)? in
+        let rows: [(Track, String?, String?)] = ((try? await call("search", ["query": query, "params": params])).map { data in
+            findAll(data, "musicResponsiveListItemRenderer").compactMap { row -> (Track, String?, String?)? in
                 guard let r = row as? JSON, let track = listItem(r)?.track else { return nil }
-                return (track, findFirst(r, "musicVideoType") as? String)
+                return (track, findFirst(r, "musicVideoType") as? String, r["thumbnail"].flatMap { albumArt($0) })
             }
         }) ?? []
-        let other = rows.first { track, type in
+        let found = rows.first { track, type, _ in
             guard track.videoId != videoId, !isSong || type == "MUSIC_VIDEO_TYPE_OMV",
                   sameRecording(title, artist, track.title, track.artist) else { return false }
             guard let mine = length, let theirs = track.durationSecs.map(Double.init) else { return true }
             // A clip runs as long as its song or longer, not much shorter.
             return isSong ? theirs >= mine - 3 && theirs <= mine + 180 : theirs <= mine + 3 && theirs >= mine * 0.6
-        }?.0
-        guard let other else {
+        }
+        guard let found else {
             return MediaPair(song: videoId, video: isSong ? nil : videoId, offset: 0, cover: cover)
         }
+        let (other, _, otherCover) = found
         let theirs = other.durationSecs.map(Double.init)
+        // A clip's queue entry has only its frame: the studio song's row
+        // carries the album art.
         return MediaPair(song: isSong ? videoId : other.videoId,
                          video: isSong ? other.videoId : videoId,
                          offset: clipOffset(song: isSong ? length : theirs, video: isSong ? theirs : length),
-                         cover: cover)
+                         cover: isSong ? cover : (otherCover.map(largeArt) ?? cover))
     }
 }
 

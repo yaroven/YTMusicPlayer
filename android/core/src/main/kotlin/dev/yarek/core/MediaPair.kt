@@ -48,10 +48,10 @@ suspend fun Catalog.mediaPair(videoId: String, title: String, artist: String, fi
         val found = call("search", json("query" to query, "params" to if (isSong) SEARCH_VIDEOS else SearchKind.Songs.params))
         findAll(found, "musicResponsiveListItemRenderer").filterIsInstance<org.json.JSONObject>().mapNotNull { r ->
             val track = listItem(r)?.track ?: return@mapNotNull null
-            track to (findFirst(r, "musicVideoType") as? String)
+            Triple(track, findFirst(r, "musicVideoType") as? String, albumArt(r.opt("thumbnail")))
         }
     }.getOrDefault(emptyList())
-    val other = rows.firstOrNull { (t, type) ->
+    val found = rows.firstOrNull { (t, type, _) ->
         if (t.videoId == videoId || (isSong && type != "MUSIC_VIDEO_TYPE_OMV")) return@firstOrNull false
         if (!sameRecording(title, artist, t.title, t.artist)) return@firstOrNull false
         val theirs = t.durationSecs?.toDouble()
@@ -61,13 +61,15 @@ suspend fun Catalog.mediaPair(videoId: String, title: String, artist: String, fi
             isSong -> theirs >= length - 3 && theirs <= length + 180
             else -> theirs <= length + 3 && theirs >= length * 0.6
         }
-    }?.first ?: return MediaPair(videoId, if (isSong) null else videoId, 0.0, cover)
+    } ?: return MediaPair(videoId, if (isSong) null else videoId, 0.0, cover)
+    val other = found.first
     val theirs = other.durationSecs?.toDouble()
     return MediaPair(
         song = if (isSong) videoId else other.videoId,
         video = if (isSong) other.videoId else videoId,
         offset = clipOffset(if (isSong) length else theirs, if (isSong) theirs else length),
-        cover = cover,
+        // A clip's queue entry has only its frame: the studio song's row carries the album art.
+        cover = if (isSong) cover else found.third?.let(::largeArt) ?: cover,
     )
 }
 
@@ -76,6 +78,12 @@ internal fun albumArt(value: Any?): String? {
     val thumbs = (findFirst(value, "thumbnails") as? org.json.JSONArray)?.objects() ?: return null
     val url = thumbs.maxByOrNull { it.optInt("width") }?.str("url") ?: return null
     return url.takeIf { it.contains("googleusercontent.com") }
+}
+
+/** A googleusercontent picture at the queue entry's size (544 px): search rows ask for 120 px. */
+internal fun largeArt(url: String): String {
+    val cut = url.lastIndexOf("=w").takeIf { it >= 0 } ?: return url
+    return url.substring(0, cut) + "=w544-h544-l90-rj"
 }
 
 /** A longer clip is taken to have an intro of the difference (up to 45 s; beyond that more likely scenes after the song). */

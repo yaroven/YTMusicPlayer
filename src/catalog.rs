@@ -283,7 +283,7 @@ impl Catalog {
             .await
             .map(|data| search_rows(&data))
             .unwrap_or_default();
-        let other = found.into_iter().find(|(t, kind)| {
+        let other = found.into_iter().find(|(t, kind, _)| {
             t.video_id.as_ref() != video_id
                 && (!is_song || kind.as_deref() == Some("MUSIC_VIDEO_TYPE_OMV"))
                 && same_recording(title, artist, &t.title, &t.artist)
@@ -297,7 +297,7 @@ impl Catalog {
                     _ => true,
                 }
         });
-        let Some((other, _)) = other else {
+        let Some((other, _, other_cover)) = other else {
             // Nothing better: a song without a clip, or a clip without its
             // song (then its own sound).
             return Ok(MediaPair {
@@ -318,7 +318,13 @@ impl Catalog {
             } else {
                 other.video_id.to_string()
             },
-            cover,
+            // A clip's queue entry has only its frame: the studio song's
+            // row carries the album art (user's report 2026-11-23).
+            cover: if is_song {
+                cover
+            } else {
+                other_cover.map(|c| large_art(&c)).or(cover)
+            },
             video: Some(if is_song {
                 other.video_id.to_string()
             } else {
@@ -842,6 +848,15 @@ fn album_art(v: &Value) -> Option<Arc<str>> {
         .then(|| Arc::from(url))
 }
 
+/// A googleusercontent picture at the queue entry's size (544 px): search
+/// rows ask for 120 px, too small for the big cover.
+fn large_art(url: &str) -> Arc<str> {
+    match url.rfind("=w") {
+        Some(cut) => format!("{}=w544-h544-l90-rj", &url[..cut]).into(),
+        None => url.into(),
+    }
+}
+
 /// YouTube Music's "E" badge anywhere below `v`.
 fn explicit_badge(v: &Value) -> bool {
     find_all(v, "iconType")
@@ -1081,8 +1096,9 @@ fn clip_offset(song: Option<f64>, video: Option<f64>) -> f64 {
     }
 }
 
-/// Search rows that play (songs, clips), with the kind of video each is.
-fn search_rows(data: &Value) -> Vec<(Track, Option<String>)> {
+/// Search rows that play (songs, clips), with the kind of video each is
+/// and its album art (songs have one).
+fn search_rows(data: &Value) -> Vec<(Track, Option<String>, Option<Arc<str>>)> {
     find_all(data, "musicResponsiveListItemRenderer")
         .into_iter()
         .filter_map(|r| {
@@ -1090,7 +1106,7 @@ fn search_rows(data: &Value) -> Vec<(Track, Option<String>)> {
             let kind = find_first(r, "musicVideoType")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
-            Some((track, kind))
+            Some((track, kind, r.get("thumbnail").and_then(album_art)))
         })
         .collect()
 }
@@ -1483,6 +1499,21 @@ mod tests {
         println!("{clip:?}");
         assert_ne!(clip.song, "fJ9rUzIMcZQ", "the clip plays the studio track");
         assert_eq!(clip.video.as_deref(), Some("fJ9rUzIMcZQ"));
+        // A clip's own queue entry has only its frame: the album art comes
+        // from the studio song (user's report 2026-11-23).
+        let fence = catalog
+            .media_pair("NixNsandZ34", "Fence", "Sevendust", false)
+            .await
+            .unwrap();
+        println!("{fence:?}");
+        assert_ne!(fence.song, "NixNsandZ34");
+        assert!(
+            fence
+                .cover
+                .as_deref()
+                .is_some_and(|c| c.contains("googleusercontent")),
+            "the album's cover, not the clip's frame"
+        );
     }
 
     use super::*;
@@ -1687,6 +1718,10 @@ mod tests {
         let clip = json!({ "thumbnails": [
             { "url": "https://i.ytimg.com/vi/x/hqdefault.jpg", "width": 480 } ] });
         assert_eq!(album_art(&clip), None);
+        assert_eq!(
+            &*large_art("https://yt3.googleusercontent.com/a=w120-h120-l90-rj"),
+            "https://yt3.googleusercontent.com/a=w544-h544-l90-rj"
+        );
     }
 
     #[test]
