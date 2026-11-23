@@ -30,6 +30,7 @@ fn harness() -> Harness {
         notifications: false,
         tray: true,
         crossfade: 0.0,
+        language: "auto".into(),
     };
     let view = new_view(library, library_view, prefs, tx);
     VIEW.with(|cell| *cell.borrow_mut() = Some(view.clone()));
@@ -682,6 +683,7 @@ fn screens_png() {
         notifications: false,
         tray: true,
         crossfade: 0.0,
+        language: "auto".into(),
     };
     let view = new_view(library, library_view, prefs, tx);
     VIEW.with(|cell| *cell.borrow_mut() = Some(view.clone()));
@@ -930,6 +932,12 @@ fn screens_png() {
     ui.invoke_open_card(1);
     settle(30);
     save("downloads-list");
+
+    // --- Settings: the language follows the system, or is chosen --------------
+    ui.invoke_set_language("uk".into());
+    ui.set_settings_open(true);
+    settle(30);
+    save("settings");
 }
 
 /// The language switch changes the window at once and tells the core to
@@ -939,10 +947,20 @@ fn the_window_can_speak_ukrainian() {
     let mut h = harness();
     assert_eq!(h.ui.global::<L>().get_home(), "Home");
 
+    assert_eq!(
+        h.ui.get_lang_choice(),
+        "auto",
+        "the system's language at first"
+    );
     h.ui.invoke_set_language("uk".into());
     assert_eq!(h.ui.global::<L>().get_home(), "Головна");
     assert_eq!(h.ui.get_lang(), "uk");
+    assert_eq!(h.ui.get_lang_choice(), "uk");
     assert!(matches!(&h.commands()[..], [Cmd::SetLanguage(code)] if code == "uk"));
+    // Back to the system's language: saved as "auto", not as what it is now.
+    h.ui.invoke_set_language("auto".into());
+    assert_eq!(h.ui.get_lang_choice(), "auto");
+    assert!(matches!(&h.commands()[..], [Cmd::SetLanguage(code)] if code == "auto"));
 
     let mut view = session_view();
     view.lang = crate::i18n::Lang::En;
@@ -1103,6 +1121,7 @@ fn mini_png() {
         notifications: false,
         tray: true,
         crossfade: 0.0,
+        language: "auto".into(),
     };
     let view = new_view(library, library_view, prefs, tx);
     VIEW.with(|cell| *cell.borrow_mut() = Some(view.clone()));

@@ -91,7 +91,7 @@
     <string name="crossfade_off">Перехід: вимкнено (без пауз)</string>
     <string name="crossfade_seconds">Перехід: %1$d с</string>
     <string name="language">Мова</string>
-    <string name="language_system">Як у системі</string>
+    <string name="language_system">Мова пристрою</string>
     <string name="about">Про програму</string>
     <string name="version">Версія</string>
     <string name="source_code">Код програми</string>

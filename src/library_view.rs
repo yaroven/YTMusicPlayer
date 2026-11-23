@@ -728,6 +728,7 @@ impl LibraryView {
         };
         let downloads = self.library.downloads()?;
         if id == ALL_DOWNLOADS {
+            shown.title = tr!(self.lang, "All downloaded songs", "Усі завантажені пісні").into();
             let bytes: u64 = downloads.iter().map(|d| d.bytes).sum();
             shown.tracks = downloads.into_iter().map(|d| d.track).collect();
             shown.subtitle = format!(
@@ -736,6 +737,10 @@ impl LibraryView {
                 bytes as f64 / 1e6
             );
         } else {
+            // A playlist under its current name, in the current language.
+            if let Some(p) = self.playlists.iter().find(|p| p.id == *id) {
+                shown.title = playlist_title(self.lang, p).to_owned();
+            }
             let on_disk = downloads.into_iter().map(|d| d.track.video_id).collect();
             shown.tracks = self.library.offline_tracks(id)?;
             shown.subtitle = offline_progress(self.lang, &shown.tracks, &on_disk);

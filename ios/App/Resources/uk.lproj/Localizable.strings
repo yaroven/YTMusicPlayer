@@ -73,7 +73,6 @@
 "Albums" = "Альбоми";
 "Artists" = "Виконавці";
 "Language" = "Мова";
-"English or Ukrainian: Settings → Yarek Music → Language." = "Англійська або українська: Параметри → Yarek Music → Мова.";
 "Sign-in runs on iPhone" = "Вхід працює на iPhone";
 "Video id or link" = "ID відео або посилання";
 "The default video is age-restricted. Send a screenshot of the result to the developer." = "Відео за замовчуванням — 18+. Надішли знімок результату розробникові.";
@@ -192,3 +191,5 @@
 "This song is in %@, which is kept downloaded: remove that list's download instead" = "Ця пісня є в «%@», що зберігається завантаженим: приберіть завантаження всього списку";
 "YouTube Music didn't say which song this is" = "YouTube Music не сказав, яка це пісня";
 "Download songs from their menu to play them without the internet." = "Завантаж пісні з їхнього меню, щоб слухати без інтернету.";
+"Device language" = "Мова пристрою";
+"The new language shows after the app restarts." = "Нова мова з'явиться після перезапуску застосунку.";

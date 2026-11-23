@@ -794,6 +794,8 @@ struct Prefs {
     notifications: bool,
     tray: bool,
     crossfade: f32,
+    /// The language setting: "auto" (the system's), "en" or "uk".
+    language: String,
 }
 
 /// UI-thread state; outlives the window, which exists only while it's
@@ -1098,6 +1100,7 @@ impl View {
         ui.set_set_notifications(self.prefs.notifications);
         ui.set_set_tray(self.prefs.tray);
         ui.set_set_crossfade(self.prefs.crossfade);
+        ui.set_lang_choice(self.prefs.language.as_str().into());
         ui.set_set_cookies(cookies_label(&self.prefs.cookies).into());
         ui.set_yt_window(cfg!(any(target_os = "macos", windows)));
         ui.set_queue_source(self.queue_source.borrow().clone());
@@ -1418,6 +1421,16 @@ fn downloaded_client_name() -> String {
         .unwrap_or_default()
 }
 
+/// The language setting as the window offers it: "en", "uk", or "auto"
+/// for anything else (the system's language).
+fn language_choice(setting: &str) -> &'static str {
+    match setting.trim().to_ascii_lowercase().as_str() {
+        "en" | "english" => "en",
+        "uk" | "ua" | "ukrainian" => "uk",
+        _ => "auto",
+    }
+}
+
 /// Puts the chosen language's labels into the window.
 fn apply_language(ui: &MainWindow, lang: Lang) {
     let t = lang.text();
@@ -1520,6 +1533,7 @@ fn apply_language(ui: &MainWindow, lang: Lang) {
     l.set_no_cast(t.no_cast.into());
     l.set_settings(t.settings.into());
     l.set_language(t.language.into());
+    l.set_language_system(t.language_system.into());
     l.set_version_prefix(t.version_prefix.into());
     l.set_is_available_suffix(t.is_available_suffix.into());
     l.set_up_to_date(t.up_to_date.into());
@@ -1749,6 +1763,7 @@ pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Resu
             notifications: settings.notifications,
             tray: settings.tray,
             crossfade: settings.crossfade,
+            language: language_choice(&settings.language).into(),
         },
         cmd_tx.clone(),
     );
@@ -2252,8 +2267,10 @@ fn wire_callbacks(
     });
     on!(on_set_language, [tx, view, ui], |code| {
         let lang = Lang::from_code(&code);
+        ui.set_lang_choice(code.clone());
         {
             let mut v = view.borrow_mut();
+            v.prefs.language = code.to_string();
             v.lang = lang;
             v.library.borrow_mut().set_language(lang);
         }

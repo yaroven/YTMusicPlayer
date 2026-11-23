@@ -1193,6 +1193,27 @@ struct TrackListView: View {
     }
 }
 
+/// The app's language: "" for the device's, or "en" / "uk" whatever the
+/// device speaks. iOS reads `AppleLanguages` from the app's own defaults at
+/// launch — the same key its per-app Settings page (Settings → Yarek Music →
+/// Language) writes, so both stay in step.
+enum AppLanguage {
+    static var current: String {
+        guard let id = Bundle.main.bundleIdentifier,
+              let chosen = UserDefaults.standard.persistentDomain(forName: id)?["AppleLanguages"] as? [String],
+              let first = chosen.first else { return "" }
+        return first.hasPrefix("uk") ? "uk" : first.hasPrefix("en") ? "en" : ""
+    }
+
+    static func set(_ code: String) {
+        if code.isEmpty {
+            UserDefaults.standard.removeObject(forKey: "AppleLanguages")
+        } else {
+            UserDefaults.standard.set([code], forKey: "AppleLanguages")
+        }
+    }
+}
+
 /// The avatar's sheet: the Google account, playback, language, about.
 struct SettingsSheet: View {
     @Environment(Library.self) private var library
@@ -1201,6 +1222,9 @@ struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var signingIn = false
     @State private var confirmSignOut = false
+    @State private var language = AppLanguage.current
+    /// The language the app runs in now (a change shows after a restart).
+    @State private var startLanguage = AppLanguage.current
 
     var body: some View {
         @Bindable var player = player
@@ -1263,16 +1287,20 @@ struct SettingsSheet: View {
                         Slider(value: $player.crossfade, in: 0...12, step: 1)
                     }
                 }
-                #if os(iOS)
                 Section {
-                    // iOS keeps each app's language in its own Settings page.
-                    Link(destination: URL(string: UIApplication.openSettingsURLString)!) {
+                    Picker(selection: $language) {
+                        Text("Device language").tag("")
+                        Text(verbatim: "English").tag("en")
+                        Text(verbatim: "Українська").tag("uk")
+                    } label: {
                         Label("Language", systemImage: "globe")
                     }
+                    .onChange(of: language) { AppLanguage.set(language) }
                 } footer: {
-                    Text("English or Ukrainian: Settings → Yarek Music → Language.")
+                    if language != startLanguage {
+                        Text("The new language shows after the app restarts.")
+                    }
                 }
-                #endif
                 Section {
                     LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-")
                     let updater = Updater.shared

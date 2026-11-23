@@ -93,7 +93,7 @@
     <string name="crossfade_off">Crossfade: off (gapless)</string>
     <string name="crossfade_seconds">Crossfade: %1$d s</string>
     <string name="language">Language</string>
-    <string name="language_system">System</string>
+    <string name="language_system">Device language</string>
     <string name="about">About</string>
     <string name="version">Version</string>
     <string name="source_code">Source code</string>

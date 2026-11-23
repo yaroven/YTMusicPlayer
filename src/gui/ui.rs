@@ -113,6 +113,7 @@ slint::slint! {
         in property <string> no-cast: "No Chromecasts found";
         in property <string> settings: "Settings";
         in property <string> language: "Language";
+        in property <string> language-system: "System language";
         in property <string> version-prefix: "Version ";
         in property <string> is-available-suffix: " is available";
         in property <string> up-to-date: "Up to date (checked at start)";
@@ -1367,6 +1368,8 @@ slint::slint! {
         in property <bool> watching;
         // The UI language ("en" / "uk").
         in property <string> lang;
+        // The language setting: "auto" (the system's), "en" or "uk".
+        in property <string> lang-choice: "auto";
         callback set-language(string);
         // Showing the video instead of the cover.
         in-out property <bool> video-on;
@@ -2498,13 +2501,18 @@ slint::slint! {
                     horizontal-stretch: 1;
                 }
                 Chip {
+                    text: L.language-system;
+                    selected: root.lang-choice != "en" && root.lang-choice != "uk";
+                    clicked => { root.set-language("auto"); }
+                }
+                Chip {
                     text: "English";
-                    selected: root.lang != "uk";
+                    selected: root.lang-choice == "en";
                     clicked => { root.set-language("en"); }
                 }
                 Chip {
                     text: "Українська";
-                    selected: root.lang == "uk";
+                    selected: root.lang-choice == "uk";
                     clicked => { root.set-language("uk"); }
                 }
             }

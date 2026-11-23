@@ -536,6 +536,7 @@ Domain terms are defined in `CONTEXT.md`.
   and the `tr!` / `trf!` macros for everything else, including every status
   message. The language comes from `language` in `config.toml` (`auto`
   follows macOS's `AppleLanguages`, else `LANG`), is switched in Settings
+  ("System language" / English / Українська; the first saves `auto`)
   without a restart, and travels to the frontends on the `SessionView`.
   Ukrainian plurals ("4 пісні") go through `i18n::songs_uk`. Anything the
   user can read needs both languages; the CLI and the log stay English (they
@@ -563,7 +564,10 @@ Domain terms are defined in `CONTEXT.md`.
   Safari UA so YouTube doesn't switch to m.youtube.com), Ukrainian
   (`App/Resources/uk.lproj/Localizable.strings`, keys = the English texts;
   `CFBundleLocalizations: [en, uk]`, so iOS's per-app language setting
-  picks it; Library → Language opens that page). **Crossfade**: with a
+  picks it; the settings sheet's picker — Device language / English /
+  Українська, user's request 2026-11-23 — writes the same `AppleLanguages`
+  key in the app's defaults, shown after a restart). Android: the same
+  three in Settings (`Lang`, per-app locales on 13+). **Crossfade**: with a
   fade set, the next song isn't queued in `av`: `startFadeIfDue` plays it
   in its own `AVQueuePlayer` `crossfade` s before the end and ramps both
   volumes every 50 ms, then `finishFade` makes it `av` (observers move
