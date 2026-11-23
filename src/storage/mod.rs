@@ -16,7 +16,7 @@ use crate::{
     catalog::{Item, ItemKind},
 };
 
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 /// Plays kept in the history (older ones are dropped).
 const HISTORY_CAP: i64 = 500;
 
@@ -26,6 +26,18 @@ pub struct SyncedPlaylist {
     pub playlist: Playlist,
     pub tracks: Arc<[Track]>,
     pub item_ids: Vec<String>,
+}
+
+/// A list kept offline: downloaded whole, and every song added to it later
+/// downloaded too. One of the user's playlists (its songs come from the
+/// library, so syncs and edits reach it) or a page — an album, someone
+/// else's playlist — whose songs are kept as they were when it was chosen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OfflineList {
+    /// Playlist id (library) or browse id (page).
+    pub id: String,
+    pub title: String,
+    pub thumbnail: Option<String>,
 }
 
 /// A downloaded track and where its audio is.
@@ -75,30 +87,6 @@ impl Library {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT id, title, item_count, etag FROM playlists ORDER BY id != ?1, position",
-        )?;
-        let rows = stmt.query_map([LIKED_PLAYLIST_ID], |r| {
-            Ok(Playlist {
-                id: r.get(0)?,
-                title: r.get(1)?,
-                item_count: r.get(2)?,
-                etag: r.get(3)?,
-            })
-        })?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
-
-    /// Playlists with songs, every one of them downloaded: they play
-    /// offline as a whole (same order as [`playlists`](Self::playlists)).
-    pub fn downloaded_playlists(&self) -> Result<Vec<Playlist>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, title, item_count, etag FROM playlists p
-             WHERE EXISTS (SELECT 1 FROM playlist_tracks pt WHERE pt.playlist_id = p.id)
-               AND NOT EXISTS (
-                 SELECT 1 FROM playlist_tracks pt
-                 LEFT JOIN downloads d ON d.video_id = pt.video_id
-                 WHERE pt.playlist_id = p.id AND d.video_id IS NULL)
-             ORDER BY id != ?1, position",
         )?;
         let rows = stmt.query_map([LIKED_PLAYLIST_ID], |r| {
             Ok(Playlist {
@@ -265,10 +253,135 @@ impl Library {
         Ok(())
     }
 
+    /// Deletes a playlist (and stops keeping it offline).
     pub fn delete_playlist(&self, id: &str) -> Result<()> {
-        self.conn()
-            .execute("DELETE FROM playlists WHERE id = ?1", [id])?;
+        let conn = self.conn();
+        conn.execute("DELETE FROM playlists WHERE id = ?1", [id])?;
+        conn.execute("DELETE FROM offline_lists WHERE id = ?1", [id])?;
         Ok(())
+    }
+
+    /// Whether `id` names one of the user's playlists.
+    pub fn has_playlist(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .conn()
+            .query_row("SELECT 1 FROM playlists WHERE id = ?1", [id], |_| Ok(()))
+            .optional()?
+            .is_some())
+    }
+
+    // --- lists kept offline --------------------------------------------------------
+
+    /// Keeps `list` offline (from now on, at the end of the others). A page
+    /// passes its `tracks`, kept as they are; a library playlist passes
+    /// `None` and is read from the library.
+    pub fn keep_offline(&self, list: &OfflineList, tracks: Option<&[Track]>) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO offline_lists (id, title, thumbnail, added_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET title = excluded.title,
+               thumbnail = COALESCE(excluded.thumbnail, offline_lists.thumbnail)",
+            params![
+                list.id,
+                list.title,
+                list.thumbnail,
+                chrono::Utc::now().timestamp()
+            ],
+        )?;
+        if let Some(tracks) = tracks {
+            tx.execute("DELETE FROM offline_tracks WHERE list_id = ?1", [&list.id])?;
+            let mut insert = tx.prepare(
+                "INSERT INTO offline_tracks
+                   (list_id, position, video_id, title, artist, duration_secs, explicit)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            for (i, t) in tracks.iter().enumerate() {
+                insert.execute(params![
+                    list.id,
+                    i as i64,
+                    &*t.video_id,
+                    &*t.title,
+                    &*t.artist,
+                    t.duration_secs,
+                    t.explicit
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Stops keeping `id` offline (its downloads stay; the caller decides).
+    pub fn forget_offline(&self, id: &str) -> Result<()> {
+        self.conn()
+            .execute("DELETE FROM offline_lists WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn is_kept_offline(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT 1 FROM offline_lists WHERE id = ?1",
+                [id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// The lists kept offline, in the order they were chosen; a library
+    /// playlist under its current name.
+    pub fn offline_lists(&self) -> Result<Vec<OfflineList>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT o.id, COALESCE(p.title, o.title), o.thumbnail
+             FROM offline_lists o LEFT JOIN playlists p ON p.id = o.id
+             ORDER BY o.added_at, o.rowid",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(OfflineList {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                thumbnail: r.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The songs of a kept list in its own order: the library playlist's
+    /// as they are now, else the page's as they were kept.
+    pub fn offline_tracks(&self, id: &str) -> Result<Arc<[Track]>> {
+        if self.has_playlist(id)? {
+            return self.tracks(id);
+        }
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT video_id, title, artist, duration_secs, explicit FROM offline_tracks
+             WHERE list_id = ?1 ORDER BY position",
+        )?;
+        let rows = stmt.query_map([id], track_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Songs of the kept lists that aren't downloaded yet: list by list
+    /// (in the order they were chosen), each in its own order, once each.
+    pub fn offline_missing(&self) -> Result<Vec<Track>> {
+        let mut seen: std::collections::HashSet<Arc<str>> = self
+            .downloads()?
+            .into_iter()
+            .map(|d| d.track.video_id)
+            .collect();
+        let mut missing = Vec::new();
+        for list in self.offline_lists()? {
+            for t in self.offline_tracks(&list.id)?.iter() {
+                if seen.insert(t.video_id.clone()) {
+                    missing.push(t.clone());
+                }
+            }
+        }
+        Ok(missing)
     }
 
     // --- history -------------------------------------------------------------------
@@ -476,6 +589,28 @@ impl Library {
                 bytes: r.get::<_, i64>(5)? as u64,
             })
         })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Records which video's sound a download holds (the studio song's, for
+    /// a clip).
+    pub fn set_download_audio(&self, video_id: &str, audio_id: &str) -> Result<()> {
+        self.conn().execute(
+            "UPDATE downloads SET audio_id = ?2 WHERE video_id = ?1",
+            [video_id, audio_id],
+        )?;
+        Ok(())
+    }
+
+    /// Downloads made before the player recorded whose sound they hold: a
+    /// clip's may have its own sound instead of the studio song's.
+    pub fn downloads_without_audio(&self) -> Result<Vec<Track>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT video_id, title, artist, duration_secs, explicit FROM downloads
+             WHERE audio_id IS NULL ORDER BY downloaded_at, rowid",
+        )?;
+        let rows = stmt.query_map([], track_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -729,6 +864,32 @@ fn migrate(conn: &Connection) -> Result<()> {
              COMMIT;",
         )?;
     }
+    if version < 6 {
+        // Lists kept offline (playlists downloaded whole so far become
+        // ones), and whose sound each download holds (unknown before).
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE downloads ADD COLUMN audio_id TEXT;
+             CREATE TABLE offline_lists (
+               id TEXT PRIMARY KEY, title TEXT NOT NULL, thumbnail TEXT,
+               added_at INTEGER NOT NULL);
+             CREATE TABLE offline_tracks (
+               list_id TEXT NOT NULL REFERENCES offline_lists(id) ON DELETE CASCADE,
+               position INTEGER NOT NULL, video_id TEXT NOT NULL,
+               title TEXT NOT NULL, artist TEXT NOT NULL, duration_secs INTEGER,
+               explicit INTEGER NOT NULL DEFAULT 0,
+               PRIMARY KEY (list_id, position));
+             INSERT INTO offline_lists (id, title, added_at)
+               SELECT id, title, 0 FROM playlists p
+               WHERE EXISTS (SELECT 1 FROM playlist_tracks pt WHERE pt.playlist_id = p.id)
+                 AND NOT EXISTS (
+                   SELECT 1 FROM playlist_tracks pt
+                   LEFT JOIN downloads d ON d.video_id = pt.video_id
+                   WHERE pt.playlist_id = p.id AND d.video_id IS NULL)
+               ORDER BY id != '__liked__', position;
+             COMMIT;",
+        )?;
+    }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
 }
@@ -904,29 +1065,11 @@ mod tests {
         assert!(!lib.is_saved("MPREb_a").unwrap());
     }
 
-    /// Downloads list in download order; a playlist counts as downloaded
-    /// when every one of its songs is (and it has some).
+    /// Downloads list in download order; which sound each holds is
+    /// recorded.
     #[test]
-    fn downloads_in_order_and_playlists_downloaded_whole() {
+    fn downloads_in_order_and_their_sound() {
         let lib = Library::open_in_memory().unwrap();
-        let playlist = |id: &str| Playlist {
-            id: id.into(),
-            title: id.into(),
-            item_count: 0,
-            etag: None,
-        };
-        lib.replace_library(&[
-            (
-                playlist("PLfull"),
-                vec![track("aaaaaaaaaaa", None), track("bbbbbbbbbbb", None)].into(),
-            ),
-            (
-                playlist("PLhalf"),
-                vec![track("aaaaaaaaaaa", None), track("ccccccccccc", None)].into(),
-            ),
-            (playlist("PLnone"), vec![].into()),
-        ])
-        .unwrap();
         for id in ["bbbbbbbbbbb", "aaaaaaaaaaa"] {
             lib.add_download(&Download {
                 track: track(id, None),
@@ -942,13 +1085,97 @@ mod tests {
             .map(|d| d.track.video_id.to_string())
             .collect();
         assert_eq!(order, ["bbbbbbbbbbb", "aaaaaaaaaaa"], "download order");
-        let whole: Vec<_> = lib
-            .downloaded_playlists()
+        assert_eq!(lib.downloads_without_audio().unwrap().len(), 2);
+        lib.set_download_audio("aaaaaaaaaaa", "aaaaaaaaaaa")
+            .unwrap();
+        assert_eq!(lib.downloads_without_audio().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn lists_kept_offline() {
+        let lib = Library::open_in_memory().unwrap();
+        let ids = |tracks: &[Track]| -> Vec<String> {
+            tracks.iter().map(|t| t.video_id.to_string()).collect()
+        };
+        lib.replace_library(&[(
+            Playlist {
+                id: "PL1".into(),
+                title: "Road trip".into(),
+                item_count: 2,
+                etag: None,
+            },
+            vec![track("bbbbbbbbbbb", None), track("aaaaaaaaaaa", None)].into(),
+        )])
+        .unwrap();
+        let list = |id: &str| OfflineList {
+            id: id.into(),
+            title: "old name".into(),
+            thumbnail: None,
+        };
+        lib.keep_offline(&list("PL1"), None).unwrap();
+        // A page keeps its songs as they were.
+        let album = [track("ccccccccccc", None), track("aaaaaaaaaaa", None)];
+        lib.keep_offline(&list("MPREb_x"), Some(&album)).unwrap();
+        assert!(lib.is_kept_offline("PL1").unwrap());
+        let lists = lib.offline_lists().unwrap();
+        assert_eq!(lists[0].title, "Road trip", "a playlist under its own name");
+        assert_eq!(lists[1].id, "MPREb_x");
+        assert_eq!(
+            ids(&lib.offline_tracks("MPREb_x").unwrap()),
+            ["ccccccccccc", "aaaaaaaaaaa"]
+        );
+        // Every missing song once, list by list, each in its own order.
+        assert_eq!(
+            ids(&lib.offline_missing().unwrap()),
+            ["bbbbbbbbbbb", "aaaaaaaaaaa", "ccccccccccc"]
+        );
+        // A song added to the playlist is missing too, downloads aren't.
+        lib.add_track("PL1", &track("ddddddddddd", None), false)
+            .unwrap();
+        lib.add_download(&Download {
+            track: track("aaaaaaaaaaa", None),
+            path: PathBuf::from("/tmp/a.m4a"),
+            bytes: 1,
+        })
+        .unwrap();
+        assert_eq!(
+            ids(&lib.offline_missing().unwrap()),
+            ["bbbbbbbbbbb", "ddddddddddd", "ccccccccccc"]
+        );
+        lib.forget_offline("MPREb_x").unwrap();
+        lib.delete_playlist("PL1").unwrap();
+        assert!(lib.offline_lists().unwrap().is_empty());
+    }
+
+    #[test]
+    fn playlists_downloaded_whole_become_kept_offline() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE playlists (id TEXT PRIMARY KEY, title TEXT NOT NULL,
+               item_count INTEGER NOT NULL, position INTEGER NOT NULL, etag TEXT);
+             CREATE TABLE playlist_tracks (playlist_id TEXT NOT NULL, position INTEGER NOT NULL,
+               video_id TEXT NOT NULL, item_id TEXT);
+             CREATE TABLE downloads (video_id TEXT PRIMARY KEY, title TEXT NOT NULL,
+               artist TEXT NOT NULL, duration_secs INTEGER, path TEXT NOT NULL,
+               bytes INTEGER NOT NULL, downloaded_at INTEGER NOT NULL,
+               explicit INTEGER NOT NULL DEFAULT 0);
+             INSERT INTO playlists VALUES ('PLhalf', 'Half', 2, 0, NULL), ('PLfull', 'Full', 1, 1, NULL);
+             INSERT INTO playlist_tracks VALUES ('PLhalf', 0, 'a', NULL), ('PLhalf', 1, 'b', NULL),
+               ('PLfull', 0, 'a', NULL);
+             INSERT INTO downloads VALUES ('a', 'a', 'A', NULL, '/a', 1, 0, 0);
+             PRAGMA user_version = 5;",
+        )
+        .unwrap();
+        let lib = Library::init(conn).unwrap();
+        let kept: Vec<_> = lib
+            .offline_lists()
             .unwrap()
             .into_iter()
-            .map(|p| p.id)
+            .map(|l| l.id)
             .collect();
-        assert_eq!(whole, ["PLfull"]);
+        assert_eq!(kept, ["PLfull"]);
+        assert_eq!(lib.downloads_without_audio().unwrap().len(), 1);
     }
 
     #[test]

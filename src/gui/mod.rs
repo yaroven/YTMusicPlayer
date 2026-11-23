@@ -48,7 +48,7 @@ use crate::{
     library_view::{LibraryView, SessionData, Source},
     lyrics::Lyrics,
     session::{Changes, Cover, Deps, SearchResults, Session, SessionView, Sleep},
-    storage::Library,
+    storage::{Library, OfflineList},
     tr, trf,
 };
 use art::ArtSize;
@@ -94,6 +94,9 @@ enum Cmd {
     ToggleSaved(Item, Option<String>),
     Download(Vec<Track>),
     RemoveDownload(Arc<str>),
+    KeepOffline(OfflineList, Option<Arc<[Track]>>),
+    /// Id and title of the list.
+    UnkeepOffline(String, String),
     SaveQueue(String),
     MoveInPlaylist(Playlist, usize, usize),
     RemoveFromHistory(Arc<str>),
@@ -872,7 +875,7 @@ impl View {
         ui.set_nav(match source {
             Source::Home => 1,
             Source::History => 2,
-            Source::Downloads => 3,
+            Source::Downloads | Source::Offline(_) => 3,
             Source::Saved(ItemKind::Artist) => 5,
             Source::Saved(_) => 4,
             Source::Search => 6,
@@ -898,13 +901,8 @@ impl View {
             Some(SearchKind::Playlists) => 3,
             _ => 0,
         });
-        let lists: Vec<SharedString> = lib
-            .download_lists()
-            .iter()
-            .map(|p| crate::library_view::playlist_title(self.lang, p).into())
-            .collect();
-        ui.set_download_lists(ModelRc::new(VecModel::from(lists)));
-        ui.set_download_list(lib.download_list().map_or(-1, |i| i as i32));
+        ui.set_can_keep_offline(lib.offline_target().is_some());
+        ui.set_kept_offline(lib.is_kept_offline());
         ui.set_tracks_title(lib.title().into());
         ui.set_tracks_subtitle(lib.subtitle().into());
         ui.set_can_back(lib.can_go_back());
@@ -2074,14 +2072,6 @@ fn wire_callbacks(
             send(Cmd::Search(query, kind), tx);
         }
     });
-    on!(on_select_download_list, [tx, view, ui], |i| {
-        let list = usize::try_from(i).ok();
-        let mut v = view.borrow_mut();
-        if let Err(err) = v.library.borrow_mut().select_download_list(list) {
-            tracing::warn!(%err, "downloaded playlist");
-        }
-        v.sync_list(ui);
-    });
     on!(on_like_row, [tx, view, ui], |row| {
         if let Some(track) = usize::try_from(row)
             .ok()
@@ -2113,7 +2103,7 @@ fn wire_callbacks(
             "remove" => {
                 let lib = v.library.borrow();
                 match (lib.source(), lib.shown_playlist()) {
-                    (Source::Downloads, _) => Cmd::RemoveDownload(track.video_id),
+                    (Source::Offline(_), _) => Cmd::RemoveDownload(track.video_id),
                     (Source::History, _) => Cmd::RemoveFromHistory(track.video_id),
                     (_, Some(p)) if row >= 0 => Cmd::RemoveFrom(p.clone(), track),
                     _ => return,
@@ -2151,6 +2141,11 @@ fn wire_callbacks(
                      tx: &UnboundedSender<Cmd>,
                      item: Option<Item>| {
         let Some(item) = item else { return };
+        // Downloads' cards open their songs from disk.
+        if *view.borrow().library.borrow().source() == Source::Downloads {
+            navigate(ui, view, &|lib, _| lib.open_downloaded(&item).map(|_| ()));
+            return;
+        }
         let Some(cmd) = View::open_item(&item) else {
             return;
         };
@@ -2333,11 +2328,22 @@ fn wire_callbacks(
         Cmd::RemoveAllDownloads,
         tx
     ));
-    on!(on_download_all, [tx, view, ui], || {
-        let tracks = view.borrow().library.borrow().all_tracks();
-        if let Some(tracks) = tracks {
-            send(Cmd::Download(tracks.to_vec()), tx);
-        }
+    // The header's download button: keep the shown list offline, or let
+    // it go.
+    on!(on_toggle_offline, [tx, view, ui], || {
+        let v = view.borrow();
+        let lib = v.library.borrow();
+        let Some((list, tracks)) = lib.offline_target() else {
+            return;
+        };
+        let cmd = if lib.is_kept_offline() {
+            Cmd::UnkeepOffline(list.id, list.title)
+        } else {
+            Cmd::KeepOffline(list, tracks)
+        };
+        // The button turns at once; the songs follow.
+        ui.set_kept_offline(!lib.is_kept_offline());
+        send(cmd, tx);
     });
     on!(on_new_playlist, [tx, view, ui], |name| {
         let name = name.trim();
@@ -2643,6 +2649,8 @@ fn apply(session: &mut Session, cmd: Cmd) {
         Cmd::ToggleSaved(item, channel) => session.toggle_saved(item, channel),
         Cmd::Download(tracks) => session.download(tracks),
         Cmd::RemoveDownload(id) => session.remove_download(id),
+        Cmd::KeepOffline(list, tracks) => session.keep_offline(list, tracks),
+        Cmd::UnkeepOffline(id, title) => session.unkeep_offline(&id, title),
         Cmd::SaveQueue(title) => session.save_queue_as_playlist(&title),
         Cmd::MoveInPlaylist(playlist, from, to) => session.move_in_playlist(playlist, from, to),
         Cmd::RemoveFromHistory(id) => session.remove_from_history(id),

@@ -321,6 +321,17 @@ enum Background {
     },
     /// Every downloaded track was deleted (or it failed).
     DownloadsCleared(Result<usize>),
+    /// A list was kept offline or let go (`n` downloads deleted with it).
+    OfflineChanged {
+        title: String,
+        kept: bool,
+        result: Result<usize>,
+    },
+    /// Older downloads were checked for a clip's own sound; `replaced` got
+    /// the studio song's instead.
+    DownloadsChecked {
+        replaced: usize,
+    },
     /// The queue was saved as a new playlist.
     QueueSaved {
         title: String,
@@ -433,10 +444,17 @@ pub struct Session {
     pub lang: Lang,
     /// The clip is open in the video window.
     pub watching: bool,
-    /// Tracks being downloaded.
+    /// Tracks being downloaded or waiting for it.
     pub downloading: HashSet<Arc<str>>,
-    /// The task working through them, so it can be stopped.
+    /// The ones waiting, in order (one yt-dlp at a time).
+    download_queue: std::collections::VecDeque<Track>,
+    /// The download running now, so it can be stopped.
     download_task: Option<tokio::task::JoinHandle<()>>,
+    /// Older downloads were checked for a clip's own sound this run.
+    downloads_checked: bool,
+    /// The user stopped downloading: kept lists don't fill up until they
+    /// download something again.
+    downloads_stopped: bool,
     /// Waiting for the user to finish signing in in the browser.
     pub signing_in: bool,
     login_generation: u64,
@@ -593,7 +611,10 @@ impl Session {
             lang,
             watching: false,
             downloading: HashSet::new(),
+            download_queue: Default::default(),
             download_task: None,
+            downloads_checked: false,
+            downloads_stopped: false,
             signing_in: false,
             login_generation: 0,
             youtube_signing_in: false,
@@ -843,11 +864,16 @@ impl Session {
             Background::Opened { .. } => {} // superseded by a newer selection
             Background::Online(true) => {
                 self.probing = false;
-                if std::mem::take(&mut self.offline) {
+                let was_offline = std::mem::take(&mut self.offline);
+                if was_offline {
                     self.set_info(tr!(self.lang, "Back online", "Інтернет знову є"));
                 }
                 if std::mem::take(&mut self.waiting_for_network) {
                     self.play_current();
+                }
+                if was_offline {
+                    // Downloads stopped for the connection go on.
+                    self.fill_offline();
                 }
                 if std::mem::take(&mut self.retry_home) {
                     self.load_home(true);
@@ -909,6 +935,8 @@ impl Session {
             | Background::VideoClosed { .. }
             | Background::DownloadsStopped { .. }
             | Background::DownloadsCleared(_)
+            | Background::OfflineChanged { .. }
+            | Background::DownloadsChecked { .. }
             | Background::QueueSaved { .. }
             | Background::Moved { .. }
             | Background::HistoryEdited(_)

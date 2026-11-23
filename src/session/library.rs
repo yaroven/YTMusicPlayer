@@ -14,6 +14,8 @@ use crate::{
         models::{LIKED_PLAYLIST_ID, Playlist, Track},
     },
     catalog::{Catalog, Item, ItemKind},
+    net,
+    storage::OfflineList,
     sync::{sync_library, sync_with_session},
     tr, trf,
 };
@@ -120,6 +122,14 @@ impl Writer {
 
 impl Session {
     pub(super) fn library_event(&mut self, event: Background, changes: &mut Changes) {
+        self.apply_library_event(event, changes);
+        // A kept list may have gained songs (a sync, an edit, a like).
+        if changes.library || changes.playlist.is_some() {
+            self.fill_offline();
+        }
+    }
+
+    fn apply_library_event(&mut self, event: Background, changes: &mut Changes) {
         let lib = self.deps.library.clone();
         match event {
             Background::Synced(result) => {
@@ -299,20 +309,68 @@ impl Session {
             }
             Background::Downloaded { track, result } => {
                 self.downloading.remove(&track.video_id);
+                self.download_task = None;
                 changes.downloads = true;
                 match result {
-                    Ok(d) => self.set_info(trf!(
-                        self.lang,
-                        "Downloaded {} ({:.1} MB)",
-                        "Завантажено {} ({:.1} МБ)",
-                        track.title,
-                        d.bytes as f64 / 1e6
-                    )),
+                    Ok(d) => {
+                        let left = self.download_queue.len();
+                        let progress = match left {
+                            0 => String::new(),
+                            n => trf!(self.lang, ", {n} to go", ", ще {n}"),
+                        };
+                        self.set_info(trf!(
+                            self.lang,
+                            "Downloaded {} ({:.1} MB){progress}",
+                            "Завантажено {} ({:.1} МБ){progress}",
+                            track.title,
+                            d.bytes as f64 / 1e6
+                        ));
+                    }
+                    Err(err) if self.network_failed(&err) => {
+                        // The rest would fail the same way: they go on when
+                        // the connection is back (`fill_offline`).
+                        let reason = net::describe(self.lang, &err);
+                        for t in self.download_queue.drain(..) {
+                            self.downloading.remove(&t.video_id);
+                        }
+                        self.set_error(trf!(
+                            self.lang,
+                            "{reason} — downloads continue when it's back",
+                            "{reason} — завантаження продовжаться, щойно він з'явиться"
+                        ));
+                    }
                     Err(err) => self.set_error(trf!(
                         self.lang,
                         "Download failed: {err:#}",
                         "Завантаження не вдалось: {err:#}"
                     )),
+                }
+                self.start_next_download();
+            }
+            Background::OfflineChanged {
+                title,
+                kept,
+                result,
+            } => {
+                changes.downloads = true;
+                match result {
+                    Ok(_) if kept => self.fill_offline(),
+                    Ok(deleted) => self.set_info(trf!(
+                        self.lang,
+                        "{title} is no longer kept offline ({deleted} downloads deleted)",
+                        "«{title}» більше не зберігається офлайн (видалено завантажень: {deleted})"
+                    )),
+                    Err(err) => self.set_error(format!("{err:#}")),
+                }
+            }
+            Background::DownloadsChecked { replaced } => {
+                changes.downloads = true;
+                if replaced > 0 {
+                    self.set_info(trf!(
+                        self.lang,
+                        "{replaced} downloaded clip(s) now have the studio song's sound",
+                        "Завантажені кліпи тепер зі звуком студійної пісні: {replaced}"
+                    ));
                 }
             }
             Background::VideoClosed { video_id, result } => {
@@ -848,16 +906,49 @@ impl Session {
             .is_some()
     }
 
-    /// Saves tracks for offline play (one yt-dlp at a time, in order).
+    /// Saves tracks for offline play, after the ones already waiting.
     pub fn download(&mut self, tracks: Vec<Track>) {
-        let limit = self.deps.download_limit;
+        self.downloads_stopped = false;
+        let queued = self.queue_downloads(tracks);
+        if queued > 0 {
+            self.set_info(trf!(
+                self.lang,
+                "Downloading {queued} track(s)…",
+                "Завантажую треків: {queued}…"
+            ));
+        }
+    }
+
+    /// Adds the tracks not on disk or queued yet to the download queue and
+    /// starts it; returns how many were added.
+    fn queue_downloads(&mut self, tracks: Vec<Track>) -> usize {
+        let before = self.download_queue.len();
+        for t in tracks {
+            if !self.is_downloaded(&t.video_id) && self.downloading.insert(t.video_id.clone()) {
+                self.download_queue.push_back(t);
+            }
+        }
+        let queued = self.download_queue.len() - before;
+        self.start_next_download();
+        queued
+    }
+
+    /// Starts the next waiting download, unless one runs (one yt-dlp at a
+    /// time) or the limit is reached.
+    fn start_next_download(&mut self) {
+        if self.download_task.is_some() || self.download_queue.is_empty() {
+            return;
+        }
         let used: u64 = self
             .deps
             .library
             .downloads()
             .map(|d| d.iter().map(|d| d.bytes).sum())
             .unwrap_or(0);
-        if limit.is_some_and(|l| used >= l) {
+        if self.deps.download_limit.is_some_and(|l| used >= l) {
+            for t in self.download_queue.drain(..) {
+                self.downloading.remove(&t.video_id);
+            }
             self.set_error(tr!(
                 self.lang,
                 "Download limit reached (download_limit_mb in config)",
@@ -865,21 +956,9 @@ impl Session {
             ));
             return;
         }
-        let todo: Vec<Track> = tracks
-            .into_iter()
-            .filter(|t| {
-                !self.is_downloaded(&t.video_id) && self.downloading.insert(t.video_id.clone())
-            })
-            .collect();
-        if todo.is_empty() {
+        let Some(track) = self.download_queue.pop_front() else {
             return;
-        }
-        self.set_info(trf!(
-            self.lang,
-            "Downloading {} track(s)…",
-            "Завантажую треків: {}…",
-            todo.len()
-        ));
+        };
         let (source, tx) = (self.deps.source.clone(), self.tx.clone());
         let (http, catalog, cache) = (
             self.deps.http.clone(),
@@ -887,21 +966,174 @@ impl Session {
             self.deps.lyrics_cache.clone(),
         );
         let mut downloaded = self.downloaded_ids();
-        // One task for the batch, so stopping it stops the rest as well.
         self.download_task = Some(tokio::spawn(async move {
-            for track in todo {
-                let result = source.download(&track).await;
-                if result.is_ok() {
-                    // Its lyrics go with it, for offline play.
-                    downloaded.insert(track.video_id.to_string());
-                    keep_lyrics(&http, &catalog, &cache, &track, &downloaded).await;
-                }
-                let _ = tx.send(Background::Downloaded { track, result });
+            let result = source.download(&track).await;
+            if result.is_ok() {
+                // Its lyrics go with it, for offline play.
+                downloaded.insert(track.video_id.to_string());
+                keep_lyrics(&http, &catalog, &cache, &track, &downloaded).await;
             }
+            let _ = tx.send(Background::Downloaded { track, result });
         }));
     }
 
+    /// Queues the songs of the lists kept offline that aren't on disk yet
+    /// (in the lists' own order). Cheap when nothing is missing: called
+    /// after every sync and playlist edit.
+    pub fn fill_offline(&mut self) {
+        if self.downloads_stopped {
+            return;
+        }
+        let missing = match self.deps.library.offline_missing() {
+            Ok(missing) => missing,
+            Err(err) => {
+                tracing::warn!(%err, "songs to keep offline");
+                return;
+            }
+        };
+        let queued = self.queue_downloads(missing);
+        if queued > 0 {
+            self.set_info(trf!(
+                self.lang,
+                "Downloading {queued} song(s) for offline…",
+                "Завантажую для офлайну пісень: {queued}…"
+            ));
+        }
+        self.check_old_downloads();
+    }
+
+    /// Keeps a list offline: downloads it whole, in its order, and every
+    /// song added to it later ([`LibraryView::offline_target`] tells what
+    /// the shown list is). `tracks`: a page's songs, kept as they are.
+    ///
+    /// [`LibraryView::offline_target`]: crate::library_view::LibraryView::offline_target
+    pub fn keep_offline(&mut self, list: OfflineList, tracks: Option<Arc<[Track]>>) {
+        self.downloads_stopped = false;
+        let result = self
+            .deps
+            .library
+            .keep_offline(&list, tracks.as_deref())
+            .map(|()| 0);
+        let _ = self.tx.send(Background::OfflineChanged {
+            title: list.title,
+            kept: true,
+            result,
+        });
+    }
+
+    /// Stops keeping a list offline and deletes its downloads, except the
+    /// songs another kept list has too.
+    pub fn unkeep_offline(&mut self, id: &str, title: String) {
+        let lib = self.deps.library.clone();
+        let songs = lib.offline_tracks(id).unwrap_or_else(|_| Arc::from([]));
+        if let Err(err) = lib.forget_offline(id) {
+            self.set_error(format!("{err:#}"));
+            return;
+        }
+        let mut others: HashSet<Arc<str>> = HashSet::new();
+        for list in lib.offline_lists().unwrap_or_default() {
+            if let Ok(tracks) = lib.offline_tracks(&list.id) {
+                others.extend(tracks.iter().map(|t| t.video_id.clone()));
+            }
+        }
+        let gone: Vec<Arc<str>> = songs
+            .iter()
+            .map(|t| t.video_id.clone())
+            .filter(|id| !others.contains(id))
+            .collect();
+        // Not downloaded yet: not any more.
+        self.download_queue.retain(|t| !gone.contains(&t.video_id));
+        for id in &gone {
+            if !self.download_queue.iter().any(|t| t.video_id == *id) {
+                self.downloading.remove(id);
+            }
+            self.deps.lyrics_cache.remove(id);
+        }
+        let on_disk: Vec<Arc<str>> = gone
+            .into_iter()
+            .filter(|id| self.is_downloaded(id))
+            .collect();
+        let (source, tx) = (self.deps.source.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            let mut deleted = 0;
+            let mut result = Ok(());
+            for id in on_disk {
+                match source.remove_download(&id).await {
+                    Ok(()) => deleted += 1,
+                    Err(err) => result = Err(err),
+                }
+            }
+            let _ = tx.send(Background::OfflineChanged {
+                title,
+                kept: false,
+                result: result.map(|()| deleted),
+            });
+        });
+    }
+
+    /// Once a run: downloads from before the player recorded whose sound
+    /// they hold are looked up, and a clip that kept its own sound gets
+    /// the studio song's (one catalog request per old download, once).
+    fn check_old_downloads(&mut self) {
+        if std::mem::replace(&mut self.downloads_checked, true) {
+            return;
+        }
+        let Ok(old) = self.deps.library.downloads_without_audio() else {
+            return;
+        };
+        if old.is_empty() {
+            return;
+        }
+        let (source, tx) = (self.deps.source.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            let mut replaced = 0;
+            for track in old {
+                match source.recheck_download(&track).await {
+                    Ok(true) => replaced += 1,
+                    Ok(false) => {}
+                    Err(err) => {
+                        tracing::debug!(%err, video_id = %track.video_id, "checking a download's sound");
+                        if net::is_network(&err) {
+                            break;
+                        }
+                    }
+                }
+            }
+            let _ = tx.send(Background::DownloadsChecked { replaced });
+        });
+    }
+
+    /// Deletes one downloaded song — unless a list kept offline has it,
+    /// which would only download it again: then that list is the thing to
+    /// let go.
     pub fn remove_download(&mut self, video_id: Arc<str>) {
+        let lib = &self.deps.library;
+        let kept_in = lib
+            .offline_lists()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|l| {
+                lib.offline_tracks(&l.id)
+                    .is_ok_and(|tracks| tracks.iter().any(|t| t.video_id == video_id))
+            });
+        if let Some(list) = kept_in {
+            let title = crate::library_view::playlist_title(
+                self.lang,
+                &Playlist {
+                    id: list.id,
+                    title: list.title,
+                    item_count: 0,
+                    etag: None,
+                },
+            )
+            .to_owned();
+            self.set_error(trf!(
+                self.lang,
+                "“{title}” is kept offline with this song: remove that list's download instead",
+                "Ця пісня є в «{title}», що зберігається офлайн: приберіть завантаження всього списку"
+            ));
+            return;
+        }
         self.deps.lyrics_cache.remove(&video_id);
         let (source, tx) = (self.deps.source.clone(), self.tx.clone());
         tokio::spawn(async move {
@@ -919,6 +1151,10 @@ impl Session {
         if let Some(task) = self.download_task.take() {
             task.abort();
         }
+        self.download_queue.clear();
+        // Kept lists wait too, until something is downloaded again (or the
+        // next start).
+        self.downloads_stopped = true;
         let stopped = self.downloading.len();
         self.downloading.clear();
         let (source, tx) = (self.deps.source.clone(), self.tx.clone());
@@ -933,6 +1169,12 @@ impl Session {
     /// Deletes every downloaded song (stopping downloads that still run).
     pub fn remove_all_downloads(&mut self) {
         self.cancel_downloads();
+        // Kept lists would only download it all again.
+        for list in self.deps.library.offline_lists().unwrap_or_default() {
+            if let Err(err) = self.deps.library.forget_offline(&list.id) {
+                tracing::warn!(%err, "forgetting a list kept offline");
+            }
+        }
         for id in self.downloaded_ids() {
             self.deps.lyrics_cache.remove(&id);
         }

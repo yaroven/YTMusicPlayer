@@ -24,9 +24,12 @@ use crate::{
     catalog::{Item, ItemKind, Page, SearchKind, Shelf},
     i18n::Lang,
     session::{Changes, SearchResults},
-    storage::Library,
+    storage::{Library, OfflineList},
     tr,
 };
+
+/// The Downloads screen's first card: every downloaded song.
+pub const ALL_DOWNLOADS: &str = "*downloads";
 
 /// How the shown songs are ordered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -77,6 +80,30 @@ fn songs_count(lang: Lang, n: usize) -> String {
     }
 }
 
+/// A video's small 16:9 picture (lists without art of their own).
+fn video_thumb(video_id: &str) -> Arc<str> {
+    format!("https://i.ytimg.com/vi/{video_id}/mqdefault.jpg").into()
+}
+
+/// "12 songs" when all are on disk, else "5 of 12 songs downloaded".
+fn offline_progress(
+    lang: Lang,
+    tracks: &[Track],
+    on_disk: &std::collections::HashSet<Arc<str>>,
+) -> String {
+    let done = tracks
+        .iter()
+        .filter(|t| on_disk.contains(&t.video_id))
+        .count();
+    if done == tracks.len() {
+        return songs_count(lang, done);
+    }
+    match lang {
+        Lang::En => format!("{done} of {} songs downloaded", tracks.len()),
+        Lang::Uk => format!("Завантажено {done} з {}", tracks.len()),
+    }
+}
+
 /// Meta key of the playlist shown last (restored on start).
 const LAST_PLAYLIST: &str = "playlist";
 /// How many screens Back remembers.
@@ -94,7 +121,11 @@ pub enum Source {
     /// Explore: charts, new releases, moods and genres.
     Explore,
     History,
+    /// The lists kept offline (and every downloaded song).
     Downloads,
+    /// One list kept offline, by id ([`ALL_DOWNLOADS`]: every downloaded
+    /// song).
+    Offline(String),
     /// Saved albums or followed artists.
     Saved(ItemKind),
     /// Nothing (no playlists yet).
@@ -115,10 +146,6 @@ struct Shown {
     tracks: Arc<[Track]>,
     items: Arc<[Item]>,
     shelves: Arc<[Shelf]>,
-    /// Downloads: the playlists downloaded whole, and which one is shown
-    /// (`None`: every downloaded song).
-    lists: Vec<Playlist>,
-    list: Option<usize>,
 }
 
 impl Shown {
@@ -133,8 +160,6 @@ impl Shown {
             tracks: Arc::from([]),
             items: Arc::from([]),
             shelves: Arc::from([]),
-            lists: Vec::new(),
-            list: None,
         }
     }
 }
@@ -397,6 +422,43 @@ impl LibraryView {
             .unwrap_or(false)
     }
 
+    /// What keeping the shown list offline keeps, with the songs to keep
+    /// as they are (a page's) or `None` (a library playlist's, read from
+    /// the library so later additions are downloaded too). Artist pages,
+    /// search and history aren't lists one keeps.
+    pub fn offline_target(&self) -> Option<(OfflineList, Option<Arc<[Track]>>)> {
+        let list = |id: &str| OfflineList {
+            id: id.to_owned(),
+            title: self.shown.title.clone(),
+            thumbnail: self.shown.thumbnail.clone(),
+        };
+        match &self.shown.source {
+            Source::Playlist(id) => Some((list(id), None)),
+            Source::Offline(id) if id != ALL_DOWNLOADS => Some((list(id), None)),
+            Source::Page(id) if self.shown.kind != Some(ItemKind::Artist) => {
+                // One of the user's own playlists, opened as a page.
+                let own = match id.strip_prefix("VL") {
+                    Some("LM") => Some(LIKED_PLAYLIST_ID),
+                    Some(rest) => Some(rest),
+                    None => None,
+                }
+                .filter(|own| self.playlists.iter().any(|p| p.id == *own));
+                match own {
+                    Some(own) => Some((list(own), None)),
+                    None if self.shown.tracks.is_empty() => None,
+                    None => Some((list(id), Some(self.shown.tracks.clone()))),
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether the shown list is kept offline.
+    pub fn is_kept_offline(&self) -> bool {
+        self.offline_target()
+            .is_some_and(|(list, _)| self.library.is_kept_offline(&list.id).unwrap_or(false))
+    }
+
     pub fn is_downloaded(&self, video_id: &str) -> bool {
         self.library
             .download_path(video_id)
@@ -572,11 +634,12 @@ impl LibraryView {
         Ok(())
     }
 
+    /// The Downloads screen: a card for every downloaded song, then the
+    /// lists kept offline.
     pub fn show_downloads(&mut self) -> Result<()> {
         let mut shown = Shown {
             source: Source::Downloads,
             title: tr!(self.lang, "Downloads", "Завантаження").into(),
-            lists: self.library.downloaded_playlists()?,
             ..Shown::empty()
         };
         self.fill_downloads(&mut shown)?;
@@ -584,53 +647,99 @@ impl LibraryView {
         Ok(())
     }
 
-    /// The Downloads screen's songs: every downloaded song in download
-    /// order, or the chosen playlist (downloaded whole) in its own order.
     fn fill_downloads(&self, shown: &mut Shown) -> Result<()> {
-        if shown.list.is_some_and(|i| i >= shown.lists.len()) {
-            shown.list = None;
+        let downloads = self.library.downloads()?;
+        let bytes: u64 = downloads.iter().map(|d| d.bytes).sum();
+        let lists = self.library.offline_lists()?;
+        let on_disk: std::collections::HashSet<Arc<str>> =
+            downloads.iter().map(|d| d.track.video_id.clone()).collect();
+        let mut items = Vec::with_capacity(lists.len() + 1);
+        items.push(Item {
+            kind: ItemKind::Playlist,
+            id: ALL_DOWNLOADS.into(),
+            title: tr!(self.lang, "All downloaded songs", "Усі завантажені пісні").into(),
+            subtitle: format!(
+                "{} · {:.0} MB",
+                songs_count(self.lang, downloads.len()),
+                bytes as f64 / 1e6
+            )
+            .into(),
+            thumbnail: downloads.first().map(|d| video_thumb(&d.track.video_id)),
+            track: None,
+            explicit: false,
+        });
+        for list in lists {
+            let tracks = self.library.offline_tracks(&list.id)?;
+            let kind = if list.id.starts_with("MPREb_") {
+                ItemKind::Album
+            } else {
+                ItemKind::Playlist
+            };
+            let title = if list.id == LIKED_PLAYLIST_ID {
+                tr!(self.lang, "Liked music", "Вподобані").into()
+            } else {
+                list.title.as_str().into()
+            };
+            items.push(Item {
+                kind,
+                id: list.id.as_str().into(),
+                title,
+                subtitle: offline_progress(self.lang, &tracks, &on_disk).into(),
+                thumbnail: list
+                    .thumbnail
+                    .as_deref()
+                    .map(Into::into)
+                    .or_else(|| tracks.first().map(|t| video_thumb(&t.video_id))),
+                track: None,
+                explicit: false,
+            });
         }
-        match shown.list.map(|i| &shown.lists[i]) {
-            Some(playlist) => {
-                shown.tracks = self.library.tracks(&playlist.id)?;
-                shown.subtitle = songs_count(self.lang, shown.tracks.len());
-            }
-            None => {
-                let downloads = self.library.downloads()?;
-                let bytes: u64 = downloads.iter().map(|d| d.bytes).sum();
-                shown.tracks = downloads.into_iter().map(|d| d.track).collect();
-                shown.subtitle = format!(
-                    "{} · {:.0} MB",
-                    songs_count(self.lang, shown.tracks.len()),
-                    bytes as f64 / 1e6
-                );
-            }
-        }
+        shown.subtitle = format!(
+            "{} · {:.0} MB",
+            songs_count(self.lang, downloads.len()),
+            bytes as f64 / 1e6
+        );
+        shown.items = items.into();
         Ok(())
     }
 
-    /// Downloads: the playlists downloaded whole, offered as a choice.
-    pub fn download_lists(&self) -> &[Playlist] {
-        &self.shown.lists
-    }
-
-    /// Downloads: the chosen playlist's index, `None` for every song.
-    pub fn download_list(&self) -> Option<usize> {
-        self.shown.list
-    }
-
-    /// Downloads: shows the `list`-th downloaded playlist (`None`: every
-    /// downloaded song).
-    pub fn select_download_list(&mut self, list: Option<usize>) -> Result<()> {
+    /// Downloads: opens the card `item` (a kept list, or every downloaded
+    /// song) — from disk, no page to fetch. False when something else is
+    /// shown: the card is the catalog's.
+    pub fn open_downloaded(&mut self, item: &Item) -> Result<bool> {
         if self.shown.source != Source::Downloads {
-            return Ok(());
+            return Ok(false);
         }
-        let mut shown = std::mem::replace(&mut self.shown, Shown::empty());
-        shown.list = list.filter(|&i| i < shown.lists.len());
-        let filled = self.fill_downloads(&mut shown);
-        self.shown = shown;
-        filled?;
-        self.reset_rows();
+        let mut shown = Shown {
+            source: Source::Offline(item.id.to_string()),
+            title: item.title.to_string(),
+            thumbnail: item.thumbnail.as_deref().map(str::to_owned),
+            ..Shown::empty()
+        };
+        self.fill_offline(&mut shown)?;
+        self.navigate(shown);
+        Ok(true)
+    }
+
+    /// A kept list's songs (every downloaded song for [`ALL_DOWNLOADS`]).
+    fn fill_offline(&self, shown: &mut Shown) -> Result<()> {
+        let Source::Offline(id) = &shown.source else {
+            return Ok(());
+        };
+        let downloads = self.library.downloads()?;
+        if id == ALL_DOWNLOADS {
+            let bytes: u64 = downloads.iter().map(|d| d.bytes).sum();
+            shown.tracks = downloads.into_iter().map(|d| d.track).collect();
+            shown.subtitle = format!(
+                "{} · {:.0} MB",
+                songs_count(self.lang, shown.tracks.len()),
+                bytes as f64 / 1e6
+            );
+        } else {
+            let on_disk = downloads.into_iter().map(|d| d.track.video_id).collect();
+            shown.tracks = self.library.offline_tracks(id)?;
+            shown.subtitle = offline_progress(self.lang, &shown.tracks, &on_disk);
+        }
         Ok(())
     }
 
@@ -746,7 +855,10 @@ impl LibraryView {
         }
         let refresh = match &self.shown.source {
             Source::Saved(_) => changes.saved,
-            Source::Downloads => changes.downloads,
+            Source::Downloads => changes.downloads || changes.library || changes.playlist.is_some(),
+            Source::Offline(id) => {
+                changes.downloads || changes.library || changes.playlist.as_ref() == Some(id)
+            }
             Source::History => changes.history,
             _ => false,
         };
@@ -833,10 +945,12 @@ impl LibraryView {
                     self.shown.title = playlist_title(self.lang, p).to_owned();
                 }
             }
-            Source::Downloads => {
+            Source::Downloads | Source::Offline(_) => {
                 let mut shown = std::mem::replace(&mut self.shown, Shown::empty());
-                shown.lists = self.library.downloaded_playlists()?;
-                let filled = self.fill_downloads(&mut shown);
+                let filled = match shown.source {
+                    Source::Downloads => self.fill_downloads(&mut shown),
+                    _ => self.fill_offline(&mut shown),
+                };
                 self.shown = shown;
                 filled?;
             }
@@ -969,10 +1083,10 @@ mod tests {
         }
     }
 
-    /// Downloads: every song in download order, or one of the playlists
-    /// downloaded whole in its own order.
+    /// Downloads: a card for every downloaded song, then the kept lists;
+    /// a card opens its songs from disk, in the list's own order.
     #[test]
-    fn downloads_offer_the_playlists_downloaded_whole() {
+    fn downloads_show_the_lists_kept_offline() {
         let lib = library();
         for id in ["bbbbbbbbbbb", "aaaaaaaaaaa"] {
             lib.add_download(&crate::storage::Download {
@@ -983,29 +1097,45 @@ mod tests {
             .unwrap();
         }
         let mut v = LibraryView::new(lib.clone()).unwrap();
+        // The shown playlist is what "Download" keeps.
+        v.select_playlist(Some(1)).unwrap();
+        let (list, tracks) = v.offline_target().unwrap();
+        assert_eq!((list.id.as_str(), tracks), ("PLtrip", None));
+        assert!(!v.is_kept_offline());
+        lib.keep_offline(&list, None).unwrap();
+        assert!(v.is_kept_offline());
+
         v.show_downloads().unwrap();
+        let cards: Vec<_> = v.items().iter().map(|i| i.title.to_string()).collect();
+        assert_eq!(cards, ["All downloaded songs", "Road trip"]);
+        assert_eq!(&*v.items()[1].subtitle, "0 of 3 songs downloaded");
+
+        let all = v.items()[0].clone();
+        assert!(v.open_downloaded(&all).unwrap());
         assert_eq!(titles(&v), ["bbbbbbbbbbb", "aaaaaaaaaaa"], "download order");
-        assert_eq!(v.download_lists().len(), 1, "Liked music is on disk whole");
-        assert_eq!(v.download_lists()[0].id, LIKED_PLAYLIST_ID);
-        assert_eq!(v.download_list(), None);
+        assert!(v.back());
+        let trip = v.items()[1].clone();
+        assert!(v.open_downloaded(&trip).unwrap());
+        assert_eq!(titles(&v), ["Gamma", "Delta", "Echo"], "the list's order");
+        assert!(v.is_kept_offline(), "kept: the same button lets it go");
 
-        v.select_download_list(Some(0)).unwrap();
-        assert_eq!(titles(&v), ["Alpha", "Beta"], "the playlist's order");
-        assert_eq!(v.subtitle(), "2 songs");
-
-        // A download removed: the playlist is no longer whole; the view
-        // falls back to every song.
-        lib.remove_download("aaaaaaaaaaa").unwrap();
+        // A song added to the playlist shows up in its kept copy.
+        lib.add_track("PLtrip", &track("fffffffffff", "Foxtrot"), false)
+            .unwrap();
         v.apply(
             &Changes {
-                downloads: true,
+                playlist: Some("PLtrip".into()),
                 ..Changes::default()
             },
             SessionData::default(),
         )
         .unwrap();
-        assert!(v.download_lists().is_empty());
-        assert_eq!(titles(&v), ["bbbbbbbbbbb"]);
+        assert_eq!(titles(&v).len(), 4);
+        v.select_playlist(Some(0)).unwrap();
+        assert!(
+            !v.open_downloaded(&trip).unwrap(),
+            "elsewhere a card is the catalog's"
+        );
     }
 
     #[test]

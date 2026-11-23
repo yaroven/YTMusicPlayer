@@ -1311,8 +1311,9 @@ slint::slint! {
         in property <int> search-kind;
         // Downloads: the playlists downloaded whole, and the chosen one
         // (-1: every downloaded song).
-        in property <[string]> download-lists;
-        in property <int> download-list: -1;
+        // The shown list can be kept offline / is.
+        in property <bool> can-keep-offline;
+        in-out property <bool> kept-offline;
         // Bumped to empty the search field.
         in property <int> clear-search;
 
@@ -1449,7 +1450,6 @@ slint::slint! {
         callback jump(int);
         callback search-online(string);
         callback search-category(int);
-        callback select-download-list(int);
         callback like-row(int);
         // row (-1: the playing track), action: "next", "queue", "radio",
         // "download", "dislike", "remove", "add".
@@ -1464,7 +1464,7 @@ slint::slint! {
         callback nav-to(int);
         callback go-back();
         callback toggle-saved();
-        callback download-all();
+        callback toggle-offline();
         callback watch-video();
         callback stop-downloads();
         callback remove-all-downloads();
@@ -1766,17 +1766,18 @@ slint::slint! {
                                     y: (parent.height - self.height) / 2;
                                     clicked => { root.stop-downloads(); keys.focus(); }
                                 }
-                                if root.nav == 3 && root.tracks.length > 0 && !root.tiny: Pill {
+                                if root.nav == 3 && root.list-mode == 1 && !root.tiny: Pill {
                                     text: L.delete-all;
                                     icon: "delete";
                                     compact: root.compact;
                                     y: (parent.height - self.height) / 2;
                                     clicked => { root.downloads-dialog = true; }
                                 }
-                                if root.list-mode != 1 && root.tracks.length > 0 && !root.tiny && root.nav != 3: IconButton {
-                                    icon: "download";
+                                if root.can-keep-offline && !root.tiny: IconButton {
+                                    icon: root.kept-offline ? "downloaded" : "download";
+                                    active: root.kept-offline;
                                     y: (parent.height - self.height) / 2;
-                                    clicked => { root.download-all(); }
+                                    clicked => { root.toggle-offline(); }
                                 }
                                 if root.own-playlist: IconButton {
                                     icon: "more";
@@ -1792,26 +1793,6 @@ slint::slint! {
                                     text: label;
                                     selected: k == root.search-kind;
                                     clicked => { root.search-category(k); keys.focus(); }
-                                }
-                            }
-                            // Downloads: every song, or a playlist downloaded whole.
-                            if root.nav == 3 && root.download-lists.length > 0: Flickable {
-                                height: 34px;
-                                preferred-width: 0px;
-                                max-width: 100000px;
-                                content-width: download-chips.preferred-width;
-                                download-chips := HorizontalLayout {
-                                    spacing: 8px;
-                                    Chip {
-                                        text: L.all-songs;
-                                        selected: root.download-list < 0;
-                                        clicked => { root.select-download-list(-1); keys.focus(); }
-                                    }
-                                    for name[i] in root.download-lists: Chip {
-                                        text: name;
-                                        selected: i == root.download-list;
-                                        clicked => { root.select-download-list(i); keys.focus(); }
-                                    }
                                 }
                             }
                             // Playlist picker when there is no sidebar.

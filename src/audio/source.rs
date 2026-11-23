@@ -419,8 +419,10 @@ impl TrackSource {
         };
         tokio::fs::create_dir_all(dir).await?;
         let path = dir.join(format!("{}.m4a", track.video_id));
-        // The studio song's sound, also for a clip (as it plays).
-        let audio = self.audio_id(track).await;
+        // The studio song's sound, also for a clip (as it plays) — and a
+        // clip whose song can't be told now waits for a later try rather
+        // than keeping its own sound.
+        let audio = self.song_id(track).await?;
         self.extractor.download(&audio, &path).await?;
         let bytes = tokio::fs::metadata(&path).await?.len();
         let download = Download {
@@ -429,7 +431,52 @@ impl TrackSource {
             bytes,
         };
         store.add_download(&download)?;
+        store.set_download_audio(&track.video_id, &audio)?;
         Ok(download)
+    }
+
+    /// The studio song of `track` (itself for a song), or an error when the
+    /// catalog can't be asked right now.
+    async fn song_id(&self, track: &Track) -> Result<Arc<str>> {
+        if self.options.catalog.is_none() {
+            return Ok(track.video_id.clone());
+        }
+        match self.pair(track, false).await {
+            Some(pair) => Ok(pair.song.into()),
+            None => bail!("couldn't ask YouTube Music which song this is"),
+        }
+    }
+
+    /// A download from before the player recorded whose sound it holds:
+    /// a clip downloaded with its own sound gets the studio song's (to a
+    /// new file first, so the old one plays until then). True when it was
+    /// replaced.
+    pub async fn recheck_download(&self, track: &Track) -> Result<bool> {
+        let (Some(dir), Some(store)) = (&self.options.downloads, &self.options.store) else {
+            return Ok(false);
+        };
+        let Some(path) = store.download_path(&track.video_id)? else {
+            return Ok(false);
+        };
+        let audio = self.song_id(track).await?;
+        if audio != track.video_id {
+            let fresh = dir.join(format!("{}.song.m4a", track.video_id));
+            let _ = tokio::fs::remove_file(&fresh).await;
+            if let Err(err) = self.extractor.download(&audio, &fresh).await {
+                let _ = tokio::fs::remove_file(&fresh).await;
+                return Err(err.into());
+            }
+            tokio::fs::rename(&fresh, &path).await?;
+            let bytes = tokio::fs::metadata(&path).await?.len();
+            store.add_download(&Download {
+                track: track.clone(),
+                path,
+                bytes,
+            })?;
+            tracing::info!(clip = %track.video_id, song = %audio, "download now has the studio song's sound");
+        }
+        store.set_download_audio(&track.video_id, &audio)?;
+        Ok(audio != track.video_id)
     }
 
     /// Deletes a downloaded track's file and record.

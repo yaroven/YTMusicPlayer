@@ -386,6 +386,68 @@ async fn downloads_stop_and_can_be_deleted() {
     assert!(status.text.starts_with("Deleted 0"), "{}", status.text);
 }
 
+/// A kept list downloads one song at a time in its own order, songs added
+/// to it later join in, and letting it go says so; a kept song can't be
+/// deleted on its own (it would only come back).
+#[tokio::test]
+async fn kept_lists_download_in_order_and_follow_their_playlist() {
+    let library = Arc::new(Library::open_in_memory().unwrap());
+    let songs = tracks("k", 3);
+    library
+        .replace_library(&[(
+            Playlist {
+                id: "PLkeep".into(),
+                title: "Keep".into(),
+                item_count: 3,
+                etag: None,
+            },
+            songs.clone(),
+        )])
+        .unwrap();
+    let (mut s, _, _) = session_with(Resolves::Fail, library.clone()).await;
+    let list = crate::storage::OfflineList {
+        id: "PLkeep".into(),
+        title: "Keep".into(),
+        thumbnail: None,
+    };
+    s.keep_offline(list, None);
+    s.next_event().await;
+    assert_eq!(s.downloading.len(), 3, "the whole list is queued");
+    let waiting: Vec<_> = s
+        .download_queue
+        .iter()
+        .map(|t| t.title.to_string())
+        .collect();
+    assert_eq!(waiting, ["k1", "k2"], "k0 runs, the rest wait in order");
+
+    s.remove_download(songs[0].video_id.clone());
+    assert!(s.status.as_ref().unwrap().text.contains("kept offline"));
+
+    // Downloads aren't available in tests: each fails, the next starts.
+    settle(&mut s).await;
+    assert!(s.downloading.is_empty());
+
+    // A song added to the playlist is downloaded too (an edit, a sync).
+    let added = tracks("n", 1)[0].clone();
+    library.add_track("PLkeep", &added, false).unwrap();
+    s.fill_offline();
+    assert!(s.downloading.contains(&added.video_id));
+    s.cancel_downloads();
+    s.fill_offline();
+    assert!(s.downloading.is_empty(), "stopped: kept lists wait");
+    settle(&mut s).await;
+
+    s.unkeep_offline("PLkeep", "Keep".into());
+    settle(&mut s).await;
+    let status = s.status.as_ref().unwrap();
+    assert!(
+        status.text.contains("no longer kept offline"),
+        "{}",
+        status.text
+    );
+    assert!(library.offline_lists().unwrap().is_empty());
+}
+
 /// Watching the clip of nothing says so instead of opening a window.
 #[tokio::test]
 async fn watching_needs_a_playing_song() {

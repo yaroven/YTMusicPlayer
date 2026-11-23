@@ -57,7 +57,10 @@ pub enum MenuEntry {
     NewPlaylist,
     Rename,
     Delete,
-    DownloadAll,
+    /// Download the shown list and keep it offline (songs added later too).
+    KeepOffline,
+    /// Stop keeping it offline (its downloads are deleted).
+    LetGoOffline,
     StopDownloads,
     RemoveAllDownloads,
     SaveQueue,
@@ -74,7 +77,16 @@ impl MenuEntry {
             Self::NewPlaylist => tr!(lang, "New playlist…", "Новий плейлист…"),
             Self::Rename => tr!(lang, "Rename this playlist…", "Перейменувати плейлист…"),
             Self::Delete => tr!(lang, "Delete this playlist", "Видалити цей плейлист"),
-            Self::DownloadAll => tr!(lang, "Download all for offline", "Завантажити все офлайн"),
+            Self::KeepOffline => tr!(
+                lang,
+                "Download and keep offline",
+                "Завантажити й тримати офлайн"
+            ),
+            Self::LetGoOffline => tr!(
+                lang,
+                "Remove download of this list",
+                "Прибрати завантаження цього списку"
+            ),
             Self::StopDownloads => tr!(lang, "Stop downloading", "Зупинити завантаження"),
             Self::RemoveAllDownloads => tr!(
                 lang,
@@ -337,8 +349,14 @@ impl App {
             }
             None => {
                 let item = item.clone();
-                self.library.show_preview(&item);
-                self.session.open_page(&item.id);
+                match self.library.open_downloaded(&item) {
+                    Ok(true) => self.cards = false,
+                    Ok(false) => {
+                        self.library.show_preview(&item);
+                        self.session.open_page(&item.id);
+                    }
+                    Err(err) => tracing::warn!(%err, "opening a downloaded list"),
+                }
             }
         }
     }
@@ -490,21 +508,6 @@ impl App {
             }
             Action::FindOnline => self.mode = Mode::Find(String::new()),
             Action::CategoryPrev | Action::CategoryNext => {
-                // Downloads: step through "all songs" and the playlists
-                // downloaded whole.
-                let lists = self.library.download_lists().len();
-                if lists > 0 {
-                    let i = self.library.download_list().map_or(0, |i| i + 1);
-                    let next = if action == Action::CategoryNext {
-                        (i + 1) % (lists + 1)
-                    } else {
-                        (i + lists) % (lists + 1)
-                    };
-                    if let Err(err) = self.library.select_download_list(next.checked_sub(1)) {
-                        tracing::warn!(%err, "downloaded playlist");
-                    }
-                    return;
-                }
                 let (Some(query), Some(kind)) = (
                     self.library.search_query().map(str::to_owned),
                     self.library.search_kind(),
@@ -665,13 +668,20 @@ impl App {
                 {
                     entries.extend([MenuEntry::Rename, MenuEntry::Delete]);
                 }
-                if self.library.total() > 0 {
-                    entries.push(MenuEntry::DownloadAll);
+                if self.library.offline_target().is_some() {
+                    entries.push(if self.library.is_kept_offline() {
+                        MenuEntry::LetGoOffline
+                    } else {
+                        MenuEntry::KeepOffline
+                    });
                 }
                 if !self.session.downloading.is_empty() {
                     entries.push(MenuEntry::StopDownloads);
                 }
-                if *self.library.source() == Source::Downloads && self.library.total() > 0 {
+                if matches!(
+                    self.library.source(),
+                    Source::Downloads | Source::Offline(_)
+                ) {
                     entries.push(MenuEntry::RemoveAllDownloads);
                 }
                 if self.session.queue.current().is_some() {
@@ -772,7 +782,7 @@ impl App {
         };
         if let Some(playlist) = self.library.shown_playlist().cloned() {
             self.session.remove_from_playlist(playlist, track);
-        } else if *self.library.source() == Source::Downloads {
+        } else if matches!(self.library.source(), Source::Offline(_)) {
             self.session.remove_download(track.video_id);
         } else if *self.library.source() == Source::History {
             self.session.remove_from_history(track.video_id);
@@ -1028,9 +1038,14 @@ impl App {
                 }
             }
             (MenuEntry::Delete, Some(playlist)) => self.session.delete_playlist(playlist),
-            (MenuEntry::DownloadAll, _) => {
-                if let Some(tracks) = self.library.all_tracks() {
-                    self.session.download(tracks.to_vec());
+            (MenuEntry::KeepOffline, _) => {
+                if let Some((list, tracks)) = self.library.offline_target() {
+                    self.session.keep_offline(list, tracks);
+                }
+            }
+            (MenuEntry::LetGoOffline, _) => {
+                if let Some((list, _)) = self.library.offline_target() {
+                    self.session.unkeep_offline(&list.id, list.title);
                 }
             }
             (MenuEntry::StopDownloads, _) => self.session.cancel_downloads(),

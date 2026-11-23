@@ -415,16 +415,25 @@ fn the_video_button_switches_to_the_clip() {
     assert!(matches!(&cmds[..], [Cmd::WatchVideo]));
 }
 
-/// The Downloads screen: the heart shows on a downloaded song that is
-/// liked, and a playlist downloaded whole is offered as a chip that lists
-/// it in its own order.
+/// The header's download button keeps the shown playlist offline; the
+/// Downloads screen then lists it as a card (after every downloaded song),
+/// which opens its songs in the playlist's own order, hearts and all.
 #[test]
-fn downloads_show_likes_and_whole_playlists() {
-    let h = harness();
+fn playlists_kept_offline_are_the_downloads_screen() {
+    let mut h = harness();
     let library = h.view.borrow().store.clone();
-    let liked = library
-        .tracks(crate::api::models::LIKED_PLAYLIST_ID)
-        .unwrap();
+    assert!(h.ui.get_can_keep_offline(), "Liked music is shown");
+    assert!(!h.ui.get_kept_offline());
+    h.ui.invoke_toggle_offline();
+    assert!(h.ui.get_kept_offline(), "the button turns at once");
+    let cmds = h.commands();
+    let [Cmd::KeepOffline(list, None)] = &cmds[..] else {
+        panic!("keeps the playlist itself, not a copy of its songs");
+    };
+    assert_eq!(list.id, crate::api::models::LIKED_PLAYLIST_ID);
+    // What the session does with it.
+    library.keep_offline(list, None).unwrap();
+    let liked = library.tracks(&list.id).unwrap();
     for t in liked.iter().rev() {
         library
             .add_download(&crate::storage::Download {
@@ -434,26 +443,30 @@ fn downloads_show_likes_and_whole_playlists() {
             })
             .unwrap();
     }
+
     h.ui.invoke_nav_to(3);
     assert_eq!(h.ui.get_tracks_title(), "Downloads");
+    let cards = h.ui.get_cards();
+    assert_eq!(cards.row_count(), 2);
+    assert_eq!(cards.row_data(0).unwrap().title, "All downloaded songs");
+    assert_eq!(cards.row_data(1).unwrap().title, "Liked music");
+    assert_eq!(cards.row_data(1).unwrap().subtitle, "3 songs");
+
+    h.ui.invoke_open_card(1);
+    assert!(
+        h.commands().is_empty(),
+        "opened from disk, no page to fetch"
+    );
+    assert_eq!(h.ui.get_tracks_title(), "Liked music");
     let first = h.ui.get_tracks().row_data(0).unwrap();
-    assert_eq!(first.title, "Smells Like Teen Spirit", "download order");
+    assert_eq!(first.title, "Bohemian Rhapsody", "the playlist's own order");
     assert!(
         first.liked && first.downloaded,
         "the heart shows on a download"
     );
-    assert_eq!(h.ui.get_download_lists().row_count(), 1);
-    assert_eq!(h.ui.get_download_list(), -1, "every song at first");
-
-    h.ui.invoke_select_download_list(0);
-    assert_eq!(h.ui.get_download_list(), 0);
-    assert_eq!(
-        h.ui.get_tracks().row_data(0).unwrap().title,
-        "Bohemian Rhapsody",
-        "the playlist's own order"
-    );
-    h.ui.invoke_select_download_list(-1);
-    assert_eq!(h.ui.get_tracks().row_count(), 3);
+    assert!(h.ui.get_kept_offline(), "the same button lets it go");
+    h.ui.invoke_toggle_offline();
+    assert!(matches!(&h.commands()[..], [Cmd::UnkeepOffline(id, _)] if id == &list.id));
 }
 
 #[test]
@@ -889,6 +902,34 @@ fn screens_png() {
         "the suggestions don't hang over the full-screen view"
     );
     assert_eq!(ui.get_lyrics().row_count(), 7, "6 lines plus the intro");
+
+    // --- Downloads: every downloaded song, then the lists kept offline ------
+    ui.set_expanded(false);
+    let store = view.borrow().store.clone();
+    let liked = store.tracks(crate::api::models::LIKED_PLAYLIST_ID).unwrap();
+    store
+        .keep_offline(
+            &crate::storage::OfflineList {
+                id: crate::api::models::LIKED_PLAYLIST_ID.into(),
+                title: "Liked music".into(),
+                thumbnail: None,
+            },
+            None,
+        )
+        .unwrap();
+    store
+        .add_download(&crate::storage::Download {
+            track: liked[0].clone(),
+            path: "/tmp/x.m4a".into(),
+            bytes: 4_200_000,
+        })
+        .unwrap();
+    ui.invoke_nav_to(3);
+    settle(30);
+    save("downloads");
+    ui.invoke_open_card(1);
+    settle(30);
+    save("downloads-list");
 }
 
 /// The language switch changes the window at once and tells the core to

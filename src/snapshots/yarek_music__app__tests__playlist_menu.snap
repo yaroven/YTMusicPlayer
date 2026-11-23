@@ -1,6 +1,5 @@
 ---
 source: src/app_tests.rs
-assertion_line: 83
 expression: screen(&mut app)
 ---
 ┌ Library ───────────────────┐┌ Liked music · 3 songs ─────────────────────────────────────────────┐
@@ -18,7 +17,7 @@ expression: screen(&mut app)
 │                            ││                                                                    │
 │                            │┌ Playlist ────────────────────────────┐                             │
 │                            ││› New playlist…                       │                             │
-│                            ││  Download all for offline            │                             │
+│                            ││  Download and keep offline           │                             │
 │                            │└──────────────────────────────────────┘                             │
 │                            ││                                                                    │
 │                            ││                                                                    │

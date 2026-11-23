@@ -777,13 +777,33 @@ Domain terms are defined in `CONTEXT.md`.
   much. Phones: `Pairs.cover(id)` (cached, no request) for rows, lock
   screen / notification; the big cover and the kept covers (`Covers.fetch`)
   wait for the pair.
-- **Downloads in download order**, not newest first (it looked shuffled),
-  and **playlists downloaded whole** (`Library::downloaded_playlists`, SQL:
-  every song in `downloads`): desktop chips on the Downloads screen
-  (`LibraryView::download_lists` / `select_download_list`; TUI `[` `]`),
-  phones a "Downloaded playlists" section above the songs. Playlist pages
-  show "N songs" in the subtitle on all three (YouTube's line names the
-  owner only).
+- **Downloads in download order**, not newest first (it looked shuffled).
+  Playlist pages show "N songs" in the subtitle on all three (YouTube's
+  line names the owner only). Phones: a "Downloaded playlists" section
+  (every song on disk) above the songs.
+- **Lists kept offline** (desktop, user's request 2026-11-23, YouTube
+  Music's model): the list header's download button keeps the list
+  (schema v6 `offline_lists`; a library playlist is read from the library,
+  a page — album, someone's playlist — keeps its songs in
+  `offline_tracks`). `Library::offline_missing` = every kept list's songs
+  not on disk, list by list in their own order; `Session::fill_offline`
+  queues them after every sync / playlist edit / like and when the
+  connection is back, so songs added later download too. One download at
+  a time (`download_queue`, a network failure pauses the rest; Stop pauses
+  kept lists until the next download or start). Letting a list go deletes
+  its downloads except songs another kept list has; a kept song can't be
+  deleted alone (it would come back). Downloads screen = cards ("All
+  downloaded songs" + the kept lists, `Source::Offline(id)`, opened from
+  disk). Playlists downloaded whole before v6 became kept lists.
+  Phones: not ported yet.
+- **A clip's sound and cover are the studio song's** (user's report
+  2026-11-23, `NixNsandZ34` "Fence"): the clip's `next` entry has only
+  its i.ytimg frame, so `media_pair` takes the album art from the found
+  song's search row (120 px there, asked at 544). Downloads use the song
+  strictly (`TrackSource::song_id`: no catalog answer = the download fails
+  and is retried, never the clip's sound) and record it
+  (`downloads.audio_id`); older downloads are checked once per run
+  (`recheck_download`) and a clip saved with its own sound is replaced.
 - **Player bar**: both side layouts take the wider one's preferred width
   (`side`), so the song block is centred in the window, not in what the
   sides left (user's screenshot 2026-10-26). iPhone's top row got a 40 pt
