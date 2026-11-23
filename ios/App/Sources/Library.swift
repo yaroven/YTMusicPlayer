@@ -33,9 +33,24 @@ struct Downloaded: Codable, Hashable {
     var loudnessDb: Double?
 }
 
+/// A list kept offline: downloaded whole, in its own order, and every song
+/// added to it later downloaded too (YouTube Music's model, as on the
+/// desktop). `key`: `liked`, `pl:<local playlist id>` (both read from the
+/// library, so syncs and edits reach them) or `page:<browse id>` (an album
+/// or someone's playlist, whose `tracks` are kept as they were).
+struct KeptList: Codable, Hashable {
+    var key: String
+    var title: String
+    var thumbnail: URL?
+    var tracks: [Track]?
+}
+
 enum LocalList: Hashable {
+    /// `downloads`: every downloaded song.
     case liked, history, downloads
     case playlist(UUID)
+    /// A page kept offline (see `KeptList`).
+    case kept(String)
 }
 
 /// The library: liked songs, playlists and saved pages of the signed-in
@@ -59,6 +74,11 @@ final class Library {
     private(set) var batchTotal = 0
     /// How often each song was played (by video id); outlives the capped history.
     private(set) var plays: [String: Int] = [:]
+    /// Lists kept offline, in the order they were chosen.
+    private(set) var kept: [KeptList] = []
+    /// The user stopped downloading: kept lists wait until something is
+    /// downloaded again (or the next start).
+    @ObservationIgnored private var downloadsStopped = false
     @ObservationIgnored private var queue: [Track] = []
     @ObservationIgnored private var worker: Task<Void, Never>?
     /// A sync is running.
@@ -77,6 +97,7 @@ final class Library {
         var saved: [SavedPage]?
         var downloads: [Downloaded]?
         var plays: [String: Int]?
+        var kept: [KeptList]?
     }
 
     init(file: URL? = nil, catalog: Catalog = Services.catalog) {
@@ -96,6 +117,16 @@ final class Library {
             downloads = (stored.downloads ?? []).filter {
                 FileManager.default.fileExists(atPath: Self.downloadsDirectory.appendingPathComponent($0.file).path)
             }
+            if let stored = stored.kept {
+                kept = stored
+            } else {
+                // Before kept lists: the playlists already on the phone whole become ones.
+                func whole(_ tracks: [Track]) -> Bool {
+                    !tracks.isEmpty && tracks.allSatisfy { isDownloaded($0.videoId) }
+                }
+                kept = (whole(liked) ? [KeptList(key: "liked", title: "")] : [])
+                    + playlists.filter { whole($0.tracks) }.map { KeptList(key: "pl:\($0.id.uuidString)", title: $0.name) }
+            }
         }
     }
 
@@ -107,7 +138,7 @@ final class Library {
 
     private func save() {
         let stored = Stored(liked: liked, history: history, playlists: playlists, saved: saved,
-                            downloads: downloads, plays: plays)
+                            downloads: downloads, plays: plays, kept: kept)
         guard let data = try? JSONEncoder().encode(stored) else { return }
         try? data.write(to: file, options: .atomic)
     }
@@ -153,6 +184,8 @@ final class Library {
             saved = fromAccount + saved.filter { !$0.synced && !ids.contains($0.id) }
             save()
             error = nil
+            // Kept playlists download the songs added to them.
+            fillOffline()
         } catch {
             self.error = String(localized: "Sync failed: \(error.friendly)")
         }
@@ -203,6 +236,7 @@ final class Library {
             liked.removeAll { $0.videoId == track.videoId }
         }
         save()
+        if liking { fillOffline() }
         write(liking ? String(localized: "Liking \(track.title)") : String(localized: "Unliking \(track.title)")) { [catalog] in
             try await catalog.rate(track.videoId, liking ? .like : .none)
         } undo: { [weak self] in
@@ -248,6 +282,7 @@ final class Library {
         case .history: history
         case .downloads: downloads.map(\.track)
         case let .playlist(id): playlists.first { $0.id == id }?.tracks ?? []
+        case let .kept(key): kept.first { $0.key == key }?.tracks ?? []
         }
     }
 
@@ -257,6 +292,7 @@ final class Library {
         case .history: String(localized: "History")
         case .downloads: String(localized: "Downloads")
         case let .playlist(id): playlists.first { $0.id == id }?.name ?? String(localized: "Playlist")
+        case let .kept(key): kept.first { $0.key == key }?.title ?? String(localized: "Playlist")
         }
     }
 
@@ -276,6 +312,8 @@ final class Library {
             save()
         case .downloads:
             for download in offsets.map({ downloads[$0] }) { removeDownload(download.track) }
+        case .kept:
+            break
         case let .playlist(id):
             guard let i = playlists.firstIndex(where: { $0.id == id }) else { return }
             let remoteId = playlists[i].remoteId
@@ -392,6 +430,8 @@ final class Library {
     func deletePlaylists(at offsets: IndexSet) {
         let removed = offsets.map { playlists[$0] }
         playlists.remove(atOffsets: offsets)
+        let gone = Set(removed.map { "pl:\($0.id.uuidString)" })
+        kept.removeAll { gone.contains($0.key) }
         save()
         for playlist in removed {
             guard let remoteId = playlist.remoteId else { continue }
@@ -407,6 +447,7 @@ final class Library {
         playlists[i].tracks.append(track)
         playlists[i].setVideoIds.append("")
         save()
+        fillOffline()
         guard let remoteId = playlists[i].remoteId else { return }
         let id = playlist
         write(String(localized: "Adding \(track.title)")) { [self] in
@@ -474,6 +515,96 @@ final class Library {
     /// like the desktop player), in 1 MB ranges — what YouTube's servers
     /// answer reliably.
     func download(_ tracks: [Track]) {
+        downloadsStopped = false
+        enqueue(tracks)
+    }
+
+    // MARK: Lists kept offline
+
+    /// The key a list is kept offline under, if it can be.
+    func key(for list: LocalList) -> String? {
+        switch list {
+        case .liked: "liked"
+        case let .playlist(id): "pl:\(id.uuidString)"
+        case let .kept(key): key
+        case .history, .downloads: nil
+        }
+    }
+
+    /// A page's key: one of the account's playlists (or Liked Music) is
+    /// kept as the library's copy.
+    func key(for page: Page) -> String {
+        if page.id == "VLLM" { return "liked" }
+        if let own = playlists.first(where: { $0.remoteId != nil && "VL" + ($0.remoteId ?? "") == page.id }) {
+            return "pl:\(own.id.uuidString)"
+        }
+        return "page:\(page.id)"
+    }
+
+    func isKept(_ key: String) -> Bool { kept.contains { $0.key == key } }
+
+    /// A kept list's songs as they are now, in its own order.
+    func keptTracks(_ list: KeptList) -> [Track] {
+        if list.key == "liked" { return liked }
+        if list.key.hasPrefix("pl:") {
+            return playlists.first { "pl:\($0.id.uuidString)" == list.key }?.tracks ?? []
+        }
+        return list.tracks ?? []
+    }
+
+    func keptTitle(_ list: KeptList) -> String {
+        if list.key == "liked" { return title(.liked) }
+        if list.key.hasPrefix("pl:") {
+            return playlists.first { "pl:\($0.id.uuidString)" == list.key }?.name ?? list.title
+        }
+        return list.title
+    }
+
+    /// Where a kept list's songs are shown.
+    func keptRoute(_ list: KeptList) -> LocalList {
+        if list.key == "liked" { return .liked }
+        if list.key.hasPrefix("pl:"), let id = UUID(uuidString: String(list.key.dropFirst(3))) { return .playlist(id) }
+        return .kept(list.key)
+    }
+
+    /// Keeps a list offline: downloads it whole, and the songs added later.
+    /// `tracks`: a page's, kept as they are.
+    func keep(_ key: String, title: String, thumbnail: URL?, tracks: [Track]?) {
+        downloadsStopped = false
+        kept.removeAll { $0.key == key }
+        kept.append(KeptList(key: key, title: title, thumbnail: thumbnail,
+                             tracks: key.hasPrefix("page:") ? tracks : nil))
+        save()
+        fillOffline()
+    }
+
+    /// Stops keeping a list offline and deletes its downloads, except songs
+    /// another kept list has.
+    func unkeep(_ key: String) {
+        guard let list = kept.first(where: { $0.key == key }) else { return }
+        let songs = keptTracks(list)
+        kept.removeAll { $0.key == key }
+        let others = Set(kept.flatMap { keptTracks($0).map(\.videoId) })
+        let gone = Set(songs.map(\.videoId).filter { !others.contains($0) })
+        queue.removeAll { gone.contains($0.videoId) }
+        for id in gone where !queue.contains(where: { $0.videoId == id }) { downloading.remove(id) }
+        for track in songs where gone.contains(track.videoId) { deleteDownload(track) }
+        save()
+    }
+
+    /// The kept list that has `videoId`, if any.
+    func keptList(of videoId: String) -> KeptList? {
+        kept.first { keptTracks($0).contains { $0.videoId == videoId } }
+    }
+
+    /// Queues the kept lists' songs that aren't on the phone yet, list by
+    /// list in their own order. Cheap when none are missing.
+    func fillOffline() {
+        guard !downloadsStopped else { return }
+        enqueue(kept.flatMap { keptTracks($0) })
+    }
+
+    private func enqueue(_ tracks: [Track]) {
         var seen = Set<String>()
         let fresh = tracks.filter {
             seen.insert($0.videoId).inserted && !isDownloaded($0.videoId) && !downloading.contains($0.videoId)
@@ -516,8 +647,9 @@ final class Library {
     }
 
     private func fetchSong(_ track: Track) async throws {
-        // The studio song's sound, also for a clip (as it plays).
-        let stream = try await Services.resolver.stream(await Pairs.shared.audioId(track))
+        // The studio song's sound, also for a clip (as it plays); a clip
+        // whose song can't be told now waits for a retry.
+        let stream = try await Services.resolver.stream(try await Pairs.shared.songId(track))
         guard !stream.hls else { throw DownloadError.notADownloadableFile }
         let file = Self.fileName(track)
         let target = Self.downloadsDirectory.appendingPathComponent(file)
@@ -552,6 +684,7 @@ final class Library {
 
     /// Stops what is downloading and forgets what was waiting.
     func cancelDownloads() {
+        downloadsStopped = true
         queue = []
         worker?.cancel()
         worker = nil
@@ -560,7 +693,17 @@ final class Library {
         batchTotal = 0
     }
 
+    /// Deletes a downloaded song — unless a kept list has it (it would only
+    /// come back): then that list is what to let go.
     func removeDownload(_ track: Track) {
+        if let list = keptList(of: track.videoId) {
+            error = String(localized: "This song is in \(keptTitle(list)), which is kept downloaded: remove that list's download instead")
+            return
+        }
+        deleteDownload(track)
+    }
+
+    private func deleteDownload(_ track: Track) {
         guard let (url, _) = download(of: track.videoId) else { return }
         try? FileManager.default.removeItem(at: url)
         Covers.remove(track.videoId)
@@ -578,6 +721,8 @@ final class Library {
             KeptLyrics.remove(item.track.videoId)
         }
         downloads = []
+        // Kept lists would only download it all again.
+        kept = []
         save()
     }
 

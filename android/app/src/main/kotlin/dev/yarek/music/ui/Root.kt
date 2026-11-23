@@ -82,7 +82,13 @@ fun Root() {
     }
     // Covers and lyrics for songs downloaded before they were kept with them, once online.
     val online by app.network.online.collectAsState()
-    LaunchedEffect(online) { if (online) library.fetchMissingExtras() }
+    LaunchedEffect(online) {
+        if (online) {
+            // Kept lists go on where a lost connection stopped them.
+            library.fillOffline()
+            library.fetchMissingExtras()
+        }
+    }
     LaunchedEffect(library.error) {
         library.error?.let {
             snackbar.showSnackbar(it)
@@ -143,6 +149,7 @@ fun Root() {
                             }
                             is Route.Page -> PageScreen(route.id)
                             is Route.List -> TrackListScreen(route.list)
+                            Route.Downloads -> DownloadsScreen()
                             Route.AgeTest -> AgeTestScreen()
                             Route.Settings -> SettingsScreen()
                             Route.Search -> SearchScreen()

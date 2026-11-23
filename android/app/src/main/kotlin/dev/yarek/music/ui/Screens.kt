@@ -502,7 +502,11 @@ private fun PageHeader(title: String, subtitle: String, thumbnail: String?, roun
         }
         Spacer(Modifier.height(20.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            DownloadAllButton(tracks)
+            if (page != null && page.kind != ItemKind.Artist) {
+                OfflineButton(library.keyFor(page), page.title, page.thumbnail, tracks)
+            } else {
+                DownloadAllButton(tracks)
+            }
             val saved = page != null && library.isSaved(page.id)
             CircleIcon(
                 if (saved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,

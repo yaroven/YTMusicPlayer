@@ -65,7 +65,11 @@ struct RootView: View {
         .task { Updater.shared.checkDaily() }
         // Covers and lyrics for songs downloaded before they were kept with them.
         .task { await library.fetchMissingExtras() }
-        .onChange(of: Connectivity.shared.cameBack) { Task { await library.fetchMissingExtras() } }
+        .onChange(of: Connectivity.shared.cameBack) {
+            // Kept lists go on where a lost connection stopped them.
+            library.fillOffline()
+            Task { await library.fetchMissingExtras() }
+        }
         .overlay(alignment: .bottom) { NoticeToast() }
         .animation(.easeInOut(duration: 0.25), value: Notice.shared.text)
     }
@@ -76,7 +80,7 @@ extension View {
         navigationDestination(for: Route.self) { route in
             switch route {
             case let .page(id): PageView(id: id)
-            case .downloads: TrackListView(list: .downloads)
+            case .downloads: DownloadsView()
             case .search: SearchView()
             }
         }

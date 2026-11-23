@@ -173,7 +173,6 @@
 "A–Z" = "А–Я";
 "Shuffle all" = "Перемішати все";
 "Playlist • %@" = "Плейлист • %@";
-"Downloaded playlists" = "Завантажені плейлисти";
 "Remove from library" = "Видалити з бібліотеки";
 "Recently played" = "Нещодавно відтворені";
 "Back" = "Назад";
@@ -186,3 +185,10 @@
 "Sign in with your Google account. Yarek Music shows only your own music: your Home and mixes, likes, playlists and albums." = "Увійди зі своїм акаунтом Google. Yarek Music показує лише твою музику: твою Головну й мікси, вподобання, плейлисти й альбоми.";
 "Next song" = "Наступна пісня";
 "Previous song" = "Попередня пісня";
+"All downloaded songs" = "Усі завантажені пісні";
+"%lld of %lld songs downloaded" = "Завантажено %1$lld з %2$lld";
+"Remove the download of %@?" = "Прибрати завантаження «%@»?";
+"Its songs leave the phone (those another downloaded list has stay), and new songs added to it won't download any more." = "Його пісні зникнуть з телефона (ті, що є в іншому завантаженому списку, лишаться), а нові пісні в ньому більше не завантажуватимуться.";
+"This song is in %@, which is kept downloaded: remove that list's download instead" = "Ця пісня є в «%@», що зберігається завантаженим: приберіть завантаження всього списку";
+"YouTube Music didn't say which song this is" = "YouTube Music не сказав, яка це пісня";
+"Download songs from their menu to play them without the internet." = "Завантаж пісні з їхнього меню, щоб слухати без інтернету.";

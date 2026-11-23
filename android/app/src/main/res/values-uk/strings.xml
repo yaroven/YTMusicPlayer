@@ -58,7 +58,6 @@
     <string name="history">Історія</string>
     <string name="downloads">Завантаження</string>
     <string name="playlist">Плейлист</string>
-    <string name="downloaded_playlists">Завантажені плейлисти</string>
     <string name="playlist_n">Плейлист %1$d</string>
     <string name="saved_pages">Альбоми, виконавці, плейлисти</string>
     <string name="remove_from_library">Прибрати з бібліотеки</string>
@@ -194,4 +193,9 @@
     <string name="auto_playlist">Автоплейлист</string>
 <string name="gate_title">Твій YouTube Music, тільки легший</string>
     <string name="gate_text">Увійди зі своїм акаунтом Google. Yarek Music показує лише твою музику: твою Головну й мікси, вподобання, плейлисти й альбоми.</string>
+    <string name="all_downloaded_songs">Усі завантажені пісні</string>
+    <string name="downloaded_of">Завантажено %1$d з %2$d</string>
+    <string name="unkeep_q">Прибрати завантаження «%1$s»?</string>
+    <string name="unkeep_note">Його пісні зникнуть з телефона (ті, що є в іншому завантаженому списку, лишаться), а нові пісні в ньому більше не завантажуватимуться.</string>
+    <string name="kept_song_note">Ця пісня є в «%1$s», що зберігається завантаженим: приберіть завантаження всього списку</string>
 </resources>

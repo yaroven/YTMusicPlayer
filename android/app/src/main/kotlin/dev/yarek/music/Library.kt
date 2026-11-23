@@ -61,11 +61,28 @@ data class Downloaded(
     val exported: String? = null,
 )
 
+/**
+ * A list kept offline: downloaded whole, in its own order, and every song
+ * added to it later downloaded too (YouTube Music's model, as on the
+ * desktop). [key]: `liked`, `pl:<local playlist id>` (both read from the
+ * library, so syncs and edits reach them) or `page:<browse id>` (an album
+ * or someone's playlist, whose [tracks] are kept as they were).
+ */
+data class KeptList(
+    val key: String,
+    val title: String,
+    val thumbnail: String? = null,
+    val tracks: List<Track>? = null,
+)
+
 sealed interface LocalList {
     object Liked : LocalList
     object History : LocalList
+    /** Every downloaded song. */
     object Downloads : LocalList
     data class Playlist(val id: String) : LocalList
+    /** A page kept offline (see [KeptList]). */
+    data class Kept(val key: String) : LocalList
 }
 
 /**
@@ -95,6 +112,13 @@ class Library(private val context: Context, private val catalog: Catalog, privat
     /** Songs being downloaded now. */
     var downloading by mutableStateOf<Set<String>>(emptySet())
         private set
+
+    /** Lists kept offline, in the order they were chosen. */
+    var kept by mutableStateOf<List<KeptList>>(emptyList())
+        private set
+
+    /** The user stopped downloading: kept lists wait until something is downloaded again (or the next start). */
+    private var downloadsStopped = false
     var syncing by mutableStateOf(false)
         private set
 
@@ -150,6 +174,21 @@ class Library(private val context: Context, private val catalog: Catalog, privat
                 d.str("exported"),
             )
         }.orEmpty()
+        kept = if (o.has("kept")) {
+            o.arr("kept")?.objects()?.mapNotNull { k ->
+                KeptList(
+                    key = k.str("key") ?: return@mapNotNull null,
+                    title = k.optString("title"),
+                    thumbnail = k.str("thumbnail"),
+                    tracks = k.arr("tracks")?.objects()?.mapNotNull(Track::fromJson),
+                )
+            }.orEmpty()
+        } else {
+            // Before kept lists: the playlists already on the phone whole become ones.
+            fun whole(tracks: List<Track>) = tracks.isNotEmpty() && tracks.all { isDownloaded(it.videoId) }
+            listOfNotNull(KeptList("liked", "").takeIf { whole(liked) }) +
+                playlists.filter { whole(it.tracks) }.map { KeptList("pl:" + it.id, it.name) }
+        }
     }
 
     private fun save() {
@@ -182,6 +221,15 @@ class Library(private val context: Context, private val catalog: Catalog, privat
                 downloads.map { d ->
                     JSONObject().put("track", d.track.toJson()).put("file", d.file).put("bytes", d.bytes)
                         .put("duration", d.duration).put("loudnessDb", d.loudnessDb).put("exported", d.exported)
+                },
+            ),
+        )
+        o.put(
+            "kept",
+            JSONArray(
+                kept.map { k ->
+                    JSONObject().put("key", k.key).put("title", k.title).put("thumbnail", k.thumbnail)
+                        .put("tracks", k.tracks?.let { t -> JSONArray(t.map { it.toJson() }) })
                 },
             ),
         )
@@ -230,6 +278,8 @@ class Library(private val context: Context, private val catalog: Catalog, privat
             saved = fromAccount + saved.filter { !it.synced && it.id !in ids }
             save()
             error = null
+            // Kept playlists download the songs added to them.
+            fillOffline()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -274,6 +324,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         val liking = !isLiked(track)
         liked = if (liking) listOf(track) + liked else liked.filter { it.videoId != track.videoId }
         save()
+        if (liking) fillOffline()
         write(
             context.getString(if (liking) R.string.liking else R.string.unliking, track.title),
             undo = {
@@ -310,6 +361,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         LocalList.History -> history
         LocalList.Downloads -> downloads.map { it.track }
         is LocalList.Playlist -> playlists.firstOrNull { it.id == list.id }?.tracks.orEmpty()
+        is LocalList.Kept -> kept.firstOrNull { it.key == list.key }?.tracks.orEmpty()
     }
 
     fun title(list: LocalList): String = when (list) {
@@ -317,6 +369,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         LocalList.History -> context.getString(R.string.history)
         LocalList.Downloads -> context.getString(R.string.downloads)
         is LocalList.Playlist -> playlists.firstOrNull { it.id == list.id }?.name ?: context.getString(R.string.playlist)
+        is LocalList.Kept -> kept.firstOrNull { it.key == list.key }?.title ?: context.getString(R.string.playlist)
     }
 
     fun remove(at: Int, list: LocalList) {
@@ -327,6 +380,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
                 save()
             }
             LocalList.Downloads -> downloads.getOrNull(at)?.let { removeDownload(it.track) }
+            is LocalList.Kept -> {}
             is LocalList.Playlist -> {
                 val i = playlists.indexOfFirst { it.id == list.id }.takeIf { it >= 0 } ?: return
                 val p = playlists[i]
@@ -392,6 +446,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
     fun deletePlaylist(id: String) {
         val p = playlists.firstOrNull { it.id == id } ?: return
         playlists = playlists.filter { it.id != id }
+        kept = kept.filter { it.key != "pl:$id" }
         save()
         val remoteId = p.remoteId ?: return
         write(context.getString(R.string.deleting, p.name)) { catalog.deletePlaylist(remoteId) }
@@ -425,6 +480,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
                 )
             }
         }
+        fillOffline()
     }
 
     // Downloads
@@ -447,13 +503,90 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         private set
 
     /** Saves the song's audio on the phone (queued behind the others). */
-    fun download(track: Track) = download(listOf(track))
+    fun download(track: Track) {
+        downloadsStopped = false
+        enqueue(listOf(track))
+    }
+
+    // Lists kept offline
+
+    /** The key a list is kept offline under, if it can be. */
+    fun keyFor(list: LocalList): String? = when (list) {
+        LocalList.Liked -> "liked"
+        is LocalList.Playlist -> "pl:" + list.id
+        is LocalList.Kept -> list.key
+        else -> null
+    }
+
+    /** A page's key: one of the account's playlists (or Liked Music) is kept as the library's copy. */
+    fun keyFor(page: Page): String = when {
+        page.id == "VLLM" -> "liked"
+        else -> playlists.firstOrNull { it.remoteId != null && "VL" + it.remoteId == page.id }?.let { "pl:" + it.id }
+            ?: "page:" + page.id
+    }
+
+    fun isKept(key: String): Boolean = kept.any { it.key == key }
+
+    /** A kept list's songs as they are now, in its own order. */
+    fun keptTracks(list: KeptList): List<Track> = when {
+        list.key == "liked" -> liked
+        list.key.startsWith("pl:") -> playlists.firstOrNull { "pl:" + it.id == list.key }?.tracks.orEmpty()
+        else -> list.tracks.orEmpty()
+    }
+
+    fun keptTitle(list: KeptList): String = when {
+        list.key == "liked" -> title(LocalList.Liked)
+        list.key.startsWith("pl:") -> playlists.firstOrNull { "pl:" + it.id == list.key }?.name ?: list.title
+        else -> list.title
+    }
+
+    /** Where a kept list's songs are shown. */
+    fun keptRoute(list: KeptList): LocalList = when {
+        list.key == "liked" -> LocalList.Liked
+        list.key.startsWith("pl:") -> LocalList.Playlist(list.key.removePrefix("pl:"))
+        else -> LocalList.Kept(list.key)
+    }
+
+    /** Keeps a list offline: downloads it whole, and the songs added later. [tracks]: a page's, kept as they are. */
+    fun keep(key: String, title: String, thumbnail: String?, tracks: List<Track>?) {
+        downloadsStopped = false
+        kept = kept.filter { it.key != key } + KeptList(key, title, thumbnail, tracks.takeIf { key.startsWith("page:") })
+        save()
+        fillOffline()
+    }
+
+    /** Stops keeping a list offline and deletes its downloads, except songs another kept list has. */
+    fun unkeep(key: String) {
+        val list = kept.firstOrNull { it.key == key } ?: return
+        val songs = keptTracks(list)
+        kept = kept.filter { it.key != key }
+        val others = kept.flatMapTo(HashSet()) { k -> keptTracks(k).map { it.videoId } }
+        val gone = songs.map { it.videoId }.filter { it !in others }.toSet()
+        queue.removeAll { it.videoId in gone }
+        downloading = downloading - gone.filter { id -> queue.none { it.videoId == id } }.toSet()
+        songs.filter { it.videoId in gone }.forEach { deleteDownload(it) }
+        save()
+    }
+
+    /** The kept list that has [videoId], if any. */
+    fun keptListOf(videoId: String): KeptList? = kept.firstOrNull { k -> keptTracks(k).any { it.videoId == videoId } }
+
+    /** Queues the kept lists' songs that aren't on the phone yet, list by list in their own order. Cheap when none are missing. */
+    fun fillOffline() {
+        if (downloadsStopped) return
+        enqueue(kept.flatMap(::keptTracks))
+    }
 
     /**
      * Saves songs on the phone one after another (one stream at a time, like
      * the desktop player), in 1 MB ranges — what googlevideo answers reliably.
      */
     fun download(tracks: List<Track>) {
+        downloadsStopped = false
+        enqueue(tracks)
+    }
+
+    private fun enqueue(tracks: List<Track>) {
         val fresh = tracks.distinctBy { it.videoId }.filter { !isDownloaded(it.videoId) && it.videoId !in downloading }
         if (fresh.isEmpty()) return
         if (queue.isEmpty() && worker?.isActive != true) {
@@ -492,8 +625,8 @@ class Library(private val context: Context, private val catalog: Catalog, privat
     }
 
     private suspend fun fetchSong(track: Track) {
-        // The studio song's sound, also for a clip (as it plays).
-        val stream = resolver.stream(Pairs.audioId(track))
+        // The studio song's sound, also for a clip (as it plays); a clip whose song can't be told now waits.
+        val stream = resolver.stream(Pairs.songId(track))
         if (stream.hls) throw YTMError.Unplayable(context.getString(R.string.download_age_restricted))
         val name = "${track.videoId}.m4a"
         val file = File(downloadsDir, name)
@@ -525,6 +658,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
 
     /** Stops what is downloading and forgets what was waiting. */
     fun cancelDownloads() {
+        downloadsStopped = true
         queue.clear()
         worker?.cancel()
         worker = null
@@ -533,7 +667,16 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         batchDone = 0
     }
 
+    /** Deletes a downloaded song — unless a kept list has it (it would only come back): then that list is what to let go. */
     fun removeDownload(track: Track) {
+        keptListOf(track.videoId)?.let {
+            error = context.getString(R.string.kept_song_note, keptTitle(it))
+            return
+        }
+        deleteDownload(track)
+    }
+
+    private fun deleteDownload(track: Track) {
         val (file, item) = download(track.videoId) ?: return
         file.delete()
         unexport(item)
@@ -554,6 +697,8 @@ class Library(private val context: Context, private val catalog: Catalog, privat
         }
         downloadsDir.listFiles()?.forEach { it.delete() }
         downloads = emptyList()
+        // Kept lists would only download it all again.
+        kept = emptyList()
         save()
     }
 

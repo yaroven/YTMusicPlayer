@@ -164,7 +164,7 @@ fun LibraryScreen() {
             if (filter == null || filter == LibraryFilter.Downloads) {
                 item {
                     Entry(stringResource(R.string.downloads), songsCount(library.downloads.size), { IconArt(Icons.Default.DownloadForOffline) }) {
-                        Router.open(Route.List(LocalList.Downloads))
+                        Router.open(Route.Downloads)
                     }
                 }
             }
@@ -486,7 +486,10 @@ fun TrackListScreen(list: LocalList) {
                     Text(songsCount(tracks.size), fontSize = 14.sp, color = YT.secondary)
                     Spacer(Modifier.height(20.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (list != LocalList.Downloads) DownloadAllButton(tracks)
+                        when (val key = library.keyFor(list)) {
+                            null -> if (list != LocalList.Downloads) DownloadAllButton(tracks)
+                            else -> OfflineButton(key, library.title(list), null, null)
+                        }
                         CircleIcon(Icons.Default.PlayArrow, stringResource(R.string.play), 64.dp, filled = true) { playFrom(tracks, 0) }
                         Box {
                             var more by remember { mutableStateOf(false) }
@@ -526,21 +529,6 @@ fun TrackListScreen(list: LocalList) {
                     }
                 }
             }
-            // Playlists that are on the phone whole, as YouTube Music lists them under Downloads.
-            val whole = if (list == LocalList.Downloads) {
-                library.playlists.filter { p -> p.tracks.isNotEmpty() && p.tracks.all { library.isDownloaded(it.videoId) } }
-            } else {
-                emptyList()
-            }
-            if (whole.isNotEmpty()) {
-                item { SectionTitle(stringResource(R.string.downloaded_playlists)) }
-                items(whole, key = { "playlist:" + it.id }) { p ->
-                    Entry(p.name, stringResource(R.string.kind_count, stringResource(R.string.playlist), songsCount(p.tracks.size)), {
-                        Artwork(p.tracks.firstOrNull()?.let { Art.Video(it.videoId) } ?: Art.None, 56.dp)
-                    }) { Router.open(Route.List(LocalList.Playlist(p.id))) }
-                }
-                item { SectionTitle(stringResource(R.string.songs)) }
-            }
             itemsIndexed(tracks) { i, track ->
                 // Edits name the song's place in the list as stored, not as sorted.
                 val at = if (sort == Sort.Default) i else original.indexOf(track)
@@ -557,6 +545,7 @@ fun TrackListScreen(list: LocalList) {
                     val label = when (list) {
                         LocalList.Liked -> null
                         LocalList.Downloads -> null
+                        is LocalList.Kept -> null
                         LocalList.History -> stringResource(R.string.remove_from_history)
                         is LocalList.Playlist -> stringResource(R.string.remove_from_playlist)
                     }
@@ -626,6 +615,109 @@ fun DownloadProgress() {
         androidx.compose.material3.LinearProgressIndicator(
             progress = { library.batchDone.toFloat() / library.batchTotal },
             modifier = Modifier.fillMaxWidth(), color = Color.White, trackColor = Color.White.copy(alpha = 0.15f),
+        )
+    }
+}
+
+/**
+ * YouTube Music's Downloads: every downloaded song, then the lists kept
+ * offline (each opens its songs, in its own order).
+ */
+@Composable
+fun DownloadsScreen() {
+    val library = App.instance.library
+    var confirmDeleteAll by remember { mutableStateOf(false) }
+    val onPhone = library.downloadedIds
+    Column(Modifier.fillMaxSize()) {
+        TopBar(stringResource(R.string.downloads), back = true) {
+            if (library.downloading.isNotEmpty()) {
+                TextButton(onClick = { library.cancelDownloads() }) {
+                    Icon(Icons.Default.Stop, null)
+                    Text(stringResource(R.string.stop_downloads))
+                }
+            }
+            if (library.downloads.isNotEmpty()) {
+                TextButton(onClick = { confirmDeleteAll = true }) { Text(stringResource(R.string.delete_all)) }
+            }
+        }
+        DownloadProgress()
+        if (library.downloads.isEmpty() && library.kept.isEmpty()) {
+            Message(Icons.Default.MusicNote, stringResource(R.string.no_songs), stringResource(R.string.no_downloads_hint))
+            return@Column
+        }
+        LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+            item {
+                Entry(stringResource(R.string.all_downloaded_songs), songsCount(library.downloads.size), { IconArt(Icons.Default.DownloadForOffline) }) {
+                    Router.open(Route.List(LocalList.Downloads))
+                }
+            }
+            items(library.kept, key = { it.key }) { k ->
+                val songs = library.keptTracks(k)
+                val done = songs.count { it.videoId in onPhone }
+                val line = if (done == songs.size) songsCount(songs.size) else stringResource(R.string.downloaded_of, done, songs.size)
+                Entry(library.keptTitle(k), line, {
+                    when {
+                        k.key == "liked" -> LikedArt()
+                        k.thumbnail != null -> Artwork(Art.Url(k.thumbnail), 56.dp)
+                        else -> Artwork(songs.firstOrNull()?.let { Art.Video(it.videoId) } ?: Art.None, 56.dp)
+                    }
+                }) { Router.open(Route.List(library.keptRoute(k))) }
+            }
+        }
+    }
+    if (confirmDeleteAll) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteAll = false },
+            title = { Text(stringResource(R.string.delete_all_downloads_q)) },
+            text = { Text(stringResource(R.string.delete_all_downloads_note)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeleteAll = false
+                    library.removeAllDownloads()
+                }) { Text(stringResource(R.string.delete)) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteAll = false }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+}
+
+/**
+ * Keeps a list offline (YouTube Music's ⬇ on a playlist): the whole list,
+ * and every song added later. A spinner while it downloads (tap stops),
+ * ✓ when it's on the phone; tapping a kept list offers to remove it.
+ * [tracks]: a page's songs, kept as they are (`null` for the library's own).
+ */
+@Composable
+fun OfflineButton(key: String, title: String, thumbnail: String?, tracks: List<dev.yarek.core.Track>?) {
+    val library = App.instance.library
+    val list = library.kept.firstOrNull { it.key == key }
+    var confirm by remember { mutableStateOf(false) }
+    if (list == null) {
+        CircleIcon(Icons.Default.Download, stringResource(R.string.download_all), enabled = tracks == null || tracks.isNotEmpty()) {
+            library.keep(key, title, thumbnail, tracks)
+        }
+        return
+    }
+    val songs = library.keptTracks(list)
+    when {
+        songs.any { it.videoId in library.downloading } -> Box(contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(Modifier.size(48.dp), color = Color.White, strokeWidth = 2.dp)
+            CircleIcon(Icons.Default.Stop, stringResource(R.string.stop_downloads), 40.dp) { library.cancelDownloads() }
+        }
+        else -> CircleIcon(Icons.Default.DownloadDone, stringResource(R.string.remove_download)) { confirm = true }
+    }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text(stringResource(R.string.unkeep_q, library.keptTitle(list))) },
+            text = { Text(stringResource(R.string.unkeep_note)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = false
+                    library.unkeep(key)
+                }) { Text(stringResource(R.string.remove_download)) }
+            },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }

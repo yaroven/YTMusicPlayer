@@ -19,6 +19,8 @@ sealed interface Route {
     /** Album, artist or playlist page by browse id. */
     data class Page(val id: String) : Route
     data class List(val list: LocalList) : Route
+    /** Downloads: every downloaded song and the lists kept offline. */
+    object Downloads : Route
     object AgeTest : Route
     object Settings : Route
     /** Search, opened from the magnifier in a screen's header. */
@@ -54,7 +56,7 @@ object Router {
 
     fun openDownloads() {
         tab = Tab.Library
-        open(Route.List(LocalList.Downloads))
+        open(Route.Downloads)
     }
 
     /** The song's artist page, as linked under the song, else the first artist search hit. */

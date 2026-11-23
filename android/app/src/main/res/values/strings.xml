@@ -59,7 +59,6 @@
     <string name="history">History</string>
     <string name="downloads">Downloads</string>
     <string name="playlist">Playlist</string>
-    <string name="downloaded_playlists">Downloaded playlists</string>
     <string name="playlist_n">Playlist %1$d</string>
     <string name="saved_pages">Albums, artists, playlists</string>
     <string name="remove_from_library">Remove from library</string>
@@ -203,4 +202,9 @@
     <string name="auto_playlist">Auto playlist</string>
 <string name="gate_title">Your YouTube Music, lighter</string>
     <string name="gate_text">Sign in with your Google account. Yarek Music shows only your own music: your Home and mixes, likes, playlists and albums.</string>
+    <string name="all_downloaded_songs">All downloaded songs</string>
+    <string name="downloaded_of">%1$d of %2$d songs downloaded</string>
+    <string name="unkeep_q">Remove the download of %1$s?</string>
+    <string name="unkeep_note">Its songs leave the phone (those another downloaded list has stay), and new songs added to it won\'t download any more.</string>
+    <string name="kept_song_note">This song is in %1$s, which is kept downloaded: remove that list\'s download instead</string>
 </resources>

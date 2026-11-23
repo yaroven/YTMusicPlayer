@@ -24,6 +24,15 @@ actor Pairs {
         await pair(track, findClip: false)?.song ?? track.videoId
     }
 
+    /// The studio song of `track` for a download: never a clip's own sound
+    /// because the catalog didn't answer (the download waits for a retry).
+    func songId(_ track: Track) async throws -> String {
+        guard let song = await pair(track, findClip: false)?.song else {
+            throw YTMError.unplayable(String(localized: "YouTube Music didn't say which song this is"))
+        }
+        return song
+    }
+
     /// The song and its clip; `findClip` also looks for the clip of a song.
     func pair(_ track: Track, findClip: Bool) async -> MediaPair? {
         if let (pair, complete) = known[track.videoId], complete || !findClip || pair.video != nil {

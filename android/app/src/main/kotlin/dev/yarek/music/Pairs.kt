@@ -18,6 +18,10 @@ object Pairs {
     /** The id whose sound plays for [track]: its studio song (one request the first time); its own id when the catalog can't tell. */
     suspend fun audioId(track: Track): String = pair(track, findClip = false)?.song ?: track.videoId
 
+    /** The studio song of [track] for a download: never a clip's own sound because the catalog didn't answer. */
+    suspend fun songId(track: Track): String =
+        pair(track, findClip = false)?.song ?: throw dev.yarek.core.YTMError.Unplayable("YouTube Music didn't say which song this is")
+
     /** The audio id already found for [videoId], if any. */
     fun cachedAudioId(videoId: String): String = known[videoId]?.pair?.song ?: videoId
 

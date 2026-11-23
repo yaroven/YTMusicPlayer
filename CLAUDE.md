@@ -780,7 +780,7 @@ Domain terms are defined in `CONTEXT.md`.
 - **Downloads in download order**, not newest first (it looked shuffled).
   Playlist pages show "N songs" in the subtitle on all three (YouTube's
   line names the owner only). Phones: a "Downloaded playlists" section
-  (every song on disk) above the songs.
+  (every song on disk) above the songs — replaced by the kept lists.
 - **Lists kept offline** (desktop, user's request 2026-11-23, YouTube
   Music's model): the list header's download button keeps the list
   (schema v6 `offline_lists`; a library playlist is read from the library,
@@ -795,7 +795,13 @@ Domain terms are defined in `CONTEXT.md`.
   deleted alone (it would come back). Downloads screen = cards ("All
   downloaded songs" + the kept lists, `Source::Offline(id)`, opened from
   disk). Playlists downloaded whole before v6 became kept lists.
-  Phones: not ported yet.
+  Phones (same rules, unverified here — no toolchain on the Linux box):
+  `Library.kept` (`KeptList`, key `liked` / `pl:<local id>` /
+  `page:<browse id>`, in library.json), `fillOffline` after sync / like /
+  add and when the connection is back, the list header's `OfflineButton`,
+  a Downloads screen (Android `Route.Downloads`, iPhone `DownloadsView`);
+  downloads use `Pairs.songId` (strict). Old clip downloads aren't
+  re-checked on the phones.
 - **A clip's sound and cover are the studio song's** (user's report
   2026-11-23, `NixNsandZ34` "Fence"): the clip's `next` entry has only
   its i.ytimg frame, so `media_pair` takes the album art from the found

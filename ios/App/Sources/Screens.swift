@@ -492,7 +492,12 @@ struct PageView: View {
                         .multilineTextAlignment(.center)
                 }
                 HStack(spacing: 16) {
-                    DownloadAllButton(tracks: tracks)
+                    if let page, page.kind != .artist {
+                        OfflineButton(key: library.key(for: page), title: page.title,
+                                      thumbnail: page.thumbnail, tracks: tracks)
+                    } else {
+                        DownloadAllButton(tracks: tracks)
+                    }
                     if let page {
                         let saved = library.isSaved(page.id)
                         CircleIcon(icon: saved ? "bookmark.fill" : "bookmark") { library.toggleSaved(page) }
@@ -736,9 +741,18 @@ struct LibraryView: View {
                       count: library.liked.count) { LikedArt() }
             }
             if filter == nil || filter == .downloads {
-                entry(.downloads, title: "Downloads", count: library.downloads.count) {
-                    IconArt(icon: "arrow.down.circle.fill")
+                NavigationLink { DownloadsView() } label: {
+                    HStack(spacing: 16) {
+                        IconArt(icon: "arrow.down.circle.fill")
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Downloads").font(.system(size: 17)).lineLimit(1)
+                            Text(String(localized: "\(library.downloads.count) songs"))
+                                .font(.system(size: 14)).foregroundStyle(YT.secondary)
+                        }
+                    }
                 }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             }
             if filter == nil || filter == .playlists {
                 ForEach(byName ? library.playlists.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -897,6 +911,121 @@ enum SongSort: String, CaseIterable, Identifiable {
     }
 }
 
+/// YouTube Music's Downloads: every downloaded song, then the lists kept
+/// offline (each opens its songs, in its own order).
+struct DownloadsView: View {
+    @Environment(Library.self) private var library
+    @State private var confirmDeleteAll = false
+
+    var body: some View {
+        let onPhone = library.downloadedIds
+        List {
+            DownloadProgress()
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            NavigationLink { TrackListView(list: .downloads) } label: {
+                row(title: String(localized: "All downloaded songs"),
+                    line: String(localized: "\(library.downloads.count) songs")) {
+                    IconArt(icon: "arrow.down.circle.fill")
+                }
+            }
+            .listRowBackground(Color.clear)
+            ForEach(library.kept, id: \.key) { list in
+                let songs = library.keptTracks(list)
+                let done = songs.filter { onPhone.contains($0.videoId) }.count
+                NavigationLink { TrackListView(list: library.keptRoute(list)) } label: {
+                    row(title: library.keptTitle(list),
+                        line: done == songs.count ? String(localized: "\(songs.count) songs")
+                            : String(localized: "\(done) of \(songs.count) songs downloaded")) {
+                        if list.key == "liked" {
+                            LikedArt()
+                        } else if let art = list.thumbnail {
+                            Artwork(source: .url(art), size: 64)
+                        } else {
+                            Artwork(source: songs.first.map { .video($0.videoId) } ?? .none, size: 64)
+                        }
+                    }
+                }
+                .listRowBackground(Color.clear)
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .navigationTitle("Downloads")
+        .navigationBarTitleDisplayMode(.inline)
+        .overlay {
+            if library.downloads.isEmpty, library.kept.isEmpty {
+                ContentUnavailableView("No songs yet", systemImage: "music.note",
+                                       description: Text("Download songs from their menu to play them without the internet."))
+            }
+        }
+        .toolbar {
+            if !library.downloading.isEmpty {
+                Button("Stop") { library.cancelDownloads() }
+            }
+            if !library.downloads.isEmpty {
+                Button("Delete all") { confirmDeleteAll = true }
+            }
+        }
+        .confirmationDialog("Delete all downloads?", isPresented: $confirmDeleteAll, titleVisibility: .visible) {
+            Button("Delete all", role: .destructive) { library.removeAllDownloads() }
+        } message: {
+            Text("The songs stay in your library; only the files on the phone go.")
+        }
+    }
+
+    private func row<Art: View>(title: String, line: String, @ViewBuilder art: () -> Art) -> some View {
+        HStack(spacing: 16) {
+            art()
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 17)).lineLimit(1)
+                Text(line).font(.system(size: 14)).foregroundStyle(YT.secondary)
+            }
+        }
+    }
+}
+
+/// Keeps a list offline (YouTube Music's ⬇ on a playlist): the whole list,
+/// and every song added later. A ring while it downloads (tap stops), ✓
+/// when it's on the phone; tapping a kept list offers to remove it.
+/// `tracks`: a page's songs, kept as they are (`nil` for the library's own).
+struct OfflineButton: View {
+    let key: String
+    let title: String
+    let thumbnail: URL?
+    let tracks: [Track]?
+    @Environment(Library.self) private var library
+    @State private var confirm = false
+
+    var body: some View {
+        if let list = library.kept.first(where: { $0.key == key }) {
+            let songs = library.keptTracks(list)
+            Group {
+                if songs.contains(where: { library.downloading.contains($0.videoId) }) {
+                    ZStack {
+                        ProgressView().scaleEffect(1.7)
+                        CircleIcon(icon: "stop.fill", size: 40) { library.cancelDownloads() }
+                    }
+                    .frame(width: 48, height: 48)
+                } else {
+                    CircleIcon(icon: "arrow.down.circle.fill") { confirm = true }
+                        .accessibilityLabel("Remove download")
+                }
+            }
+            .confirmationDialog("Remove the download of \(library.keptTitle(list))?", isPresented: $confirm,
+                                titleVisibility: .visible) {
+                Button("Remove download", role: .destructive) { library.unkeep(key) }
+            } message: {
+                Text("Its songs leave the phone (those another downloaded list has stay), and new songs added to it won't download any more.")
+            }
+        } else {
+            CircleIcon(icon: "arrow.down") { library.keep(key, title: title, thumbnail: thumbnail, tracks: tracks) }
+                .disabled(tracks?.isEmpty ?? false)
+                .accessibilityLabel("Download all")
+        }
+    }
+}
+
 /// Download every song of a list: ⬇, a ring while it runs (tap stops), ✓
 /// when all are on the phone.
 struct DownloadAllButton: View {
@@ -973,7 +1102,11 @@ struct TrackListView: View {
                     .foregroundStyle(YT.secondary)
                 if !tracks.isEmpty {
                     HStack(spacing: 28) {
-                        if list != .downloads { DownloadAllButton(tracks: tracks) }
+                        if let key = library.key(for: list) {
+                            OfflineButton(key: key, title: library.title(list), thumbnail: nil, tracks: nil)
+                        } else if list != .downloads {
+                            DownloadAllButton(tracks: tracks)
+                        }
                         CircleIcon(icon: "play.fill", size: 64, filled: true) { player.playFrom(tracks, at: 0) }
                         CircleIcon(icon: "shuffle") { player.playFrom(tracks.shuffled(), at: 0) }
                     }
@@ -994,37 +1127,6 @@ struct TrackListView: View {
             .frame(maxWidth: .infinity)
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
-            // Playlists whose every song is on the phone, as YouTube Music
-            // lists them under Downloads; then all the songs.
-            if list == .downloads {
-                let whole = library.playlists.filter { p in
-                    !p.tracks.isEmpty && p.tracks.allSatisfy { library.isDownloaded($0.videoId) }
-                }
-                if !whole.isEmpty {
-                    Text("Downloaded playlists")
-                        .font(.system(size: 20, weight: .bold))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                    ForEach(whole) { playlist in
-                        NavigationLink { TrackListView(list: .playlist(playlist.id)) } label: {
-                            HStack(spacing: 16) {
-                                Artwork(source: playlist.tracks.first.map { .video($0.videoId) } ?? .none, size: 56)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(playlist.name).font(.system(size: 17)).lineLimit(1)
-                                    let songs = String(localized: "\(playlist.tracks.count) songs")
-                                    Text(String(localized: "Playlist • \(songs)"))
-                                        .font(.system(size: 14)).foregroundStyle(YT.secondary)
-                                }
-                            }
-                        }
-                        .listRowBackground(Color.clear)
-                    }
-                    Text("Songs")
-                        .font(.system(size: 20, weight: .bold))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                }
-            }
             ForEach(Array(tracks.enumerated()), id: \.offset) { i, track in
                 TrackRow(track: track, list: tracks, index: i,
                          plays: sort == .mostPlayed ? library.plays[track.videoId, default: 0] : nil)
