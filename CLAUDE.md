@@ -165,7 +165,9 @@ Domain terms are defined in `CONTEXT.md`.
 - **yt-dlp onedir zip, not one-file** (macOS, glibc Linux): one-file
   unpacks ~90 MB of Python to a temp dir every run. Measured 2026-10-01:
   macOS 6.2–7.8 s vs 1.8–2.4 s per resolve, Linux aarch64 1.7–1.8 s; same
-  peak RAM, +90 MB disk. Lives in `bin/yt-dlp-dir/`; `-U` works on it.
+  peak RAM, +90 MB disk. Lives in `bin/yt-dlp-dir/`; `-U` refuses it
+  ("unpackaged executables"; a user's copy was 3 months old, 2026-11-24),
+  so `refresh_onedir` reinstalls when the release zip's hash changed.
   Old one-file installs migrate in the background (`update_if_stale`), the
   old binary is deleted on the next start. Windows/musl stay one-file.
 - **Redraw only on visible changes** (`Session::refresh_status`): whole

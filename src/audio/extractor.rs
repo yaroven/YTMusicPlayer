@@ -550,6 +550,7 @@ impl YtDlp {
             let _ = tokio::fs::remove_dir_all(&staging).await;
             return Err(std::io::Error::other(format!("{zip} has no {exe}")).into());
         }
+        tokio::fs::write(staging.join(ZIP_HASH), expected).await?;
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::rename(&staging, &dir).await?;
         let ytdlp = Self::new(dir.join(exe), BinarySource::Managed);
@@ -568,6 +569,13 @@ impl YtDlp {
     pub async fn update(&self) -> Result<String> {
         if self.source != BinarySource::Managed {
             return Err(ExtractorError::NotManaged);
+        }
+        if self.is_onedir() {
+            // yt-dlp refuses `-U` for this build ("unpackaged executables").
+            return Ok(match self.refresh_onedir(&reqwest::Client::new()).await? {
+                true => "installed the latest release".into(),
+                false => "already the latest release".into(),
+            });
         }
         let out = self.run(&["-U"], UPDATE_TIMEOUT).await?;
         if let Some(dir) = self.path.parent() {
@@ -614,7 +622,41 @@ impl YtDlp {
         if fresh {
             return Ok(false);
         }
+        if self.is_onedir() {
+            return self.refresh_onedir(client).await;
+        }
         self.update().await?;
+        Ok(true)
+    }
+
+    fn is_onedir(&self) -> bool {
+        self.source == BinarySource::Managed
+            && self.path.parent().and_then(Path::file_name) == Some(ONEDIR.as_ref())
+    }
+
+    /// Replaces the onedir install when the latest release's zip isn't the
+    /// one it came from (checked by its published hash, a few KB).
+    async fn refresh_onedir(&self, client: &reqwest::Client) -> Result<bool> {
+        let (Some((zip, exe)), Some(dir)) = (onedir_asset(), self.path.parent()) else {
+            return Err(ExtractorError::NotManaged);
+        };
+        let Some(managed_dir) = dir.parent() else {
+            return Err(ExtractorError::NotManaged);
+        };
+        let sums = client
+            .get(format!("{RELEASE_BASE}/SHA2-256SUMS"))
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        let latest = find_checksum(&sums, zip).ok_or(ExtractorError::MissingChecksum(zip))?;
+        let installed = tokio::fs::read_to_string(dir.join(ZIP_HASH)).await;
+        if installed.is_ok_and(|hash| hash.trim() == latest) {
+            mark_updated(dir).await;
+            return Ok(false);
+        }
+        Self::download_onedir(client, managed_dir, &sums, zip, exe).await?;
         Ok(true)
     }
 
@@ -828,6 +870,9 @@ impl YtDlp {
 /// Touched after every successful install/update; its mtime drives
 /// [`YtDlp::update_if_stale`].
 const UPDATE_STAMP: &str = ".yt-dlp-updated";
+
+/// Hash of the release zip an onedir install came from.
+const ZIP_HASH: &str = ".yt-dlp-zip-sha256";
 
 async fn mark_updated(managed_dir: &Path) {
     if let Err(err) = tokio::fs::write(managed_dir.join(UPDATE_STAMP), b"").await {
@@ -1231,6 +1276,15 @@ cccc  yt-dlp_linux
         assert!(!onedir.is_legacy_onefile());
         assert!(!YtDlp::managed_path(&dir).exists());
         assert!(onedir.version().await.unwrap().starts_with("20"));
+
+        // It stays current: nothing to do now, replaced when it's another
+        // release's (`-U` refuses this build).
+        assert!(!onedir.refresh_onedir(&client).await.unwrap());
+        let hash = onedir.path.with_file_name(ZIP_HASH);
+        std::fs::write(&hash, "older").unwrap();
+        onedir.update().await.unwrap();
+        assert_ne!(std::fs::read_to_string(&hash).unwrap(), "older");
+        assert!(onedir.version().await.is_ok());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
