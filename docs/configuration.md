@@ -19,6 +19,7 @@ Everything in it is optional — the player works with the defaults.
 | `check_updates` | `true` | look for a newer release at startup |
 | `download_limit_mb` | `0` | stop downloading for offline beyond this size (0 = no limit) |
 | `liked_music_only` | `true` | keep only "Music"-category videos in the liked list |
+| `innertube` | `true` | get song links straight from YouTube (~0.1 s, no extra process); yt-dlp only when that fails. `false` = always yt-dlp |
 | `js_fallback` | `true` | if yt-dlp fails, retry with a JS runtime (system deno/node, or a ~2 MB QuickJS download). `false` = never run JS |
 | `cookies_from_browser` | `""` | age-restricted songs without the in-app sign-in: a browser (`chrome`, `firefox`, `safari`, `edge`, `brave`, …) or a cookies.txt path |
 | `ytdlp_extra_args` | `[]` | extra yt-dlp flags |

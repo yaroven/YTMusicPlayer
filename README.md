@@ -27,8 +27,10 @@ Linux, Windows, iOS, Android.
   [docs/iphone.md](docs/iphone.md).
 - **Android:** a Kotlin / Jetpack Compose app, installed from the APK —
   [docs/android.md](docs/android.md).
-- Audio comes from [yt-dlp](https://github.com/yt-dlp/yt-dlp), which the app
-  downloads and keeps updated by itself.
+- Song links come straight from YouTube (about a tenth of a second); for what
+  that can't play (age-restricted songs, YouTube changes) the app falls back
+  to [yt-dlp](https://github.com/yt-dlp/yt-dlp), which it downloads and keeps
+  updated by itself.
 
 ```
 ┌ Library ──────────────┐┌ Liked music · 120 ──────────────────────────────┐
@@ -86,8 +88,8 @@ each ask once — that, the install scripts and building from source are in
   message says which.
 - Audio is AAC ~128 kbps. Opus would need a C library on every platform for no
   audible gain, so it isn't used.
-- yt-dlp runs as a short-lived child process, one at a time (~90 MB for a
-  couple of seconds while it fetches a track link).
+- yt-dlp, when needed, runs as a short-lived child process, one at a time
+  (~90 MB for a couple of seconds while it fetches a track link).
 - Chromecast is tested against a simulated receiver only so far.
 - Linux packages are x86_64 only; other architectures build from source with
   `install.sh`.

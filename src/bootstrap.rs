@@ -15,6 +15,7 @@ use crate::{
     audio::{
         JsPolicy, SourceOptions, TrackSource,
         extractor::{Cookies, YtDlp},
+        innertube::{DirectResolver, InnerTube},
     },
     catalog::Catalog,
     config::{paths::AppPaths, settings::Settings},
@@ -85,19 +86,33 @@ pub fn js_policy(settings: &Settings, force_js: bool) -> JsPolicy {
     }
 }
 
+/// How `yarek resolve` asks for a URL (the player: [`Lookup::Default`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lookup {
+    /// InnerTube first (unless `innertube = false`), then yt-dlp.
+    Default,
+    /// yt-dlp only, with a JS runtime from the start (`--js`).
+    ForceJs,
+    /// yt-dlp only (`--ytdlp`).
+    YtDlpOnly,
+}
+
 /// `store`: persist URLs and play downloads (off for `yarek resolve`).
 pub fn track_source(
     paths: &AppPaths,
     settings: &Settings,
     http: &reqwest::Client,
     ytdlp: YtDlp,
-    force_js: bool,
+    lookup: Lookup,
     store: Option<Arc<Library>>,
 ) -> TrackSource {
+    let direct = (settings.innertube && lookup == Lookup::Default)
+        .then(|| Arc::new(InnerTube::new(http.clone())) as Arc<dyn DirectResolver>);
     let options = SourceOptions {
         cookies: ytdlp.cookies(),
         downloads: store.as_ref().map(|_| paths.data_dir().join("downloads")),
         store,
+        direct,
         catalog: Some(Catalog::new(http.clone())),
         normalize: Arc::new(AtomicBool::new(settings.normalize_volume)),
     };
@@ -105,7 +120,7 @@ pub fn track_source(
         Arc::new(ytdlp),
         http.clone(),
         paths.bin_dir(),
-        js_policy(settings, force_js),
+        js_policy(settings, lookup == Lookup::ForceJs),
         options,
     )
 }
@@ -116,7 +131,14 @@ pub async fn deps(paths: &AppPaths, settings: &Settings) -> Result<Deps> {
     let library = Arc::new(Library::open(&paths.database())?);
     let youtube = youtube_session(paths).await;
     let ytdlp = ytdlp(paths, settings, &http, &cookie_source(settings, &youtube)).await?;
-    let source = track_source(paths, settings, &http, ytdlp, false, Some(library.clone()));
+    let source = track_source(
+        paths,
+        settings,
+        &http,
+        ytdlp,
+        Lookup::Default,
+        Some(library.clone()),
+    );
     source.spawn_maintenance();
     Ok(Deps {
         account: account(paths, settings, &http).await?,

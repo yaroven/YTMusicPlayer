@@ -1,15 +1,18 @@
 //! Track source: turns a [`Track`] into a playable, bounded audio stream.
 //!
 //! It owns the whole Media URL lifecycle so callers don't have to: the URL
-//! cache (memory + SQLite), one yt-dlp at a time, the fallback ladder (plain
-//! → JS runtime → `yt-dlp -U`), the format check, a 403/410 when opening
-//! (re-resolve once) or mid-track (fresh URL, same offset), prefetch of the
-//! next track and the daily yt-dlp update. The duration falls back to the
-//! library's when the media doesn't report one. Downloaded tracks play from
-//! their file; loudness normalization uses YouTube's own measurement.
+//! cache (memory + SQLite), the fallback ladder (InnerTube → yt-dlp plain →
+//! JS runtime → `yt-dlp -U`, see `resolver`), one yt-dlp at a time, the
+//! format check, a 403/410 when opening (re-resolve once) or mid-track
+//! (fresh URL, same offset), prefetch of the next track and the daily
+//! yt-dlp update. The duration falls back to the library's when the media
+//! doesn't report one. Downloaded tracks play from their file; downloads
+//! are fetched in ranges from the resolved URL, by yt-dlp only when that
+//! isn't a plain file; loudness normalization uses YouTube's own
+//! measurement.
 //!
-//! yt-dlp sits behind the [`Extractor`] seam: [`YtDlp`] in the app, scripted
-//! fakes in tests.
+//! The URL sources sit behind seams: [`DirectResolver`] (InnerTube) and
+//! [`Extractor`] ([`YtDlp`]), scripted fakes in tests.
 
 use std::{
     path::{Path, PathBuf},
@@ -25,10 +28,11 @@ use futures_util::future::BoxFuture;
 
 use super::{
     extractor::{self, AudioStream, YtDlp},
+    innertube::DirectResolver,
     js_runtime::JsRuntime,
     player::Load,
     resolver::{JsPolicy, StreamResolver},
-    stream::{HttpStream, Media, Refresh},
+    stream::{self, HttpStream, Media, Refresh},
 };
 use crate::{
     api::models::Track,
@@ -46,7 +50,8 @@ pub fn gain_for(db: f32) -> f32 {
     }
 }
 
-/// What resolves video ids into media URLs (and keeps itself current).
+/// yt-dlp's side of the Track source: media URLs when InnerTube has none,
+/// downloads that aren't plain files, search, cookies, its own updates.
 pub trait Extractor: Send + Sync + 'static {
     /// Media URL for `video_id`; `js` when a JS runtime must be used.
     fn resolve<'a>(
@@ -170,6 +175,8 @@ pub struct SourceOptions {
     pub store: Option<Arc<Library>>,
     /// For loudness normalization (`None`: never).
     pub catalog: Option<Catalog>,
+    /// Media URLs without yt-dlp, asked first (`None`: yt-dlp only).
+    pub direct: Option<Arc<dyn DirectResolver>>,
     /// The browser age-restricted videos borrow a YouTube login from.
     pub cookies: extractor::Cookies,
     /// Normalization on (shared by clones, so it can change while playing).
@@ -223,6 +230,7 @@ impl TrackSource {
     ) -> Self {
         Self {
             resolver: StreamResolver::new(
+                options.direct.clone(),
                 extractor.clone(),
                 http.clone(),
                 bin_dir,
@@ -423,7 +431,7 @@ impl TrackSource {
         // clip whose song can't be told now waits for a later try rather
         // than keeping its own sound.
         let audio = self.song_id(track).await?;
-        self.extractor.download(&audio, &path).await?;
+        self.fetch_audio(&audio, &path).await?;
         let bytes = tokio::fs::metadata(&path).await?.len();
         let download = Download {
             track: track.clone(),
@@ -433,6 +441,36 @@ impl TrackSource {
         store.add_download(&download)?;
         store.set_download_audio(&track.video_id, &audio)?;
         Ok(download)
+    }
+
+    /// Saves `video_id`'s audio to `dest`: from its resolved URL in ranges
+    /// when that is a plain m4a file (no second lookup, no process), else —
+    /// or when that fails other than for the network — through yt-dlp.
+    async fn fetch_audio(&self, video_id: &str, dest: &Path) -> Result<()> {
+        let stream = match self.resolver.resolve(video_id).await {
+            Ok(stream) => Some(stream),
+            Err(err) if crate::net::is_network(&err) => return Err(err),
+            Err(err) => {
+                tracing::info!(video_id, %err, "no URL to download from; yt-dlp downloads it");
+                None
+            }
+        };
+        if let Some(stream) = stream.filter(AudioStream::is_plain_file) {
+            match stream::download_file(&self.http, &stream, dest).await {
+                Ok(bytes) => {
+                    tracing::info!(video_id, bytes, via = ?stream.via, "downloaded");
+                    return Ok(());
+                }
+                Err(stream::StreamError::Http(err)) if err.is_connect() || err.is_timeout() => {
+                    return Err(err.into());
+                }
+                Err(err) => {
+                    tracing::info!(video_id, %err, "ranged download failed; yt-dlp downloads it");
+                    self.resolver.report_playback_failure(video_id);
+                }
+            }
+        }
+        Ok(self.extractor.download(video_id, dest).await?)
     }
 
     /// The studio song of `track` (itself for a song), or an error when the
@@ -462,9 +500,9 @@ impl TrackSource {
         if audio != track.video_id {
             let fresh = dir.join(format!("{}.song.m4a", track.video_id));
             let _ = tokio::fs::remove_file(&fresh).await;
-            if let Err(err) = self.extractor.download(&audio, &fresh).await {
+            if let Err(err) = self.fetch_audio(&audio, &fresh).await {
                 let _ = tokio::fs::remove_file(&fresh).await;
-                return Err(err.into());
+                return Err(err);
             }
             tokio::fs::rename(&fresh, &path).await?;
             let bytes = tokio::fs::metadata(&path).await?.len();
@@ -529,7 +567,7 @@ impl TrackSource {
 
     /// The media URL alone (`yarek resolve`, for debugging).
     pub async fn resolve(&self, video_id: &str) -> Result<AudioStream> {
-        Ok(self.resolver.resolve(video_id).await?)
+        self.resolver.resolve(video_id).await
     }
 
     /// Whether resolves currently go through a JS runtime.
@@ -587,7 +625,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::audio::extractor::ExtractorError;
+    use crate::audio::{extractor::ExtractorError, innertube::DirectError};
 
     /// Serves `body` at `/ok` and `/limited` (403 past 1 MiB, as googlevideo
     /// does for some URLs) and 403 for everything at `/gone`.
@@ -650,6 +688,64 @@ mod tests {
             // Fresh for hours, like a googlevideo URL: cacheable.
             expires_at: Some(std::time::SystemTime::now() + Duration::from_secs(6 * 3600)),
             hls: false,
+            via: crate::audio::media_url::Via::YtDlp,
+        }
+    }
+
+    /// What the fake InnerTube answers, in turn.
+    #[derive(Clone)]
+    enum Answer {
+        Url(String),
+        Refuse,
+        Offline,
+    }
+
+    /// A scripted InnerTube: one [`Answer`] per resolve (the last repeats).
+    struct Direct {
+        answers: Vec<Answer>,
+        calls: AtomicUsize,
+        /// Served as the file's length (downloads need it).
+        length: Option<u64>,
+    }
+
+    impl Direct {
+        fn new(answers: Vec<Answer>) -> Arc<Self> {
+            Arc::new(Self {
+                answers,
+                calls: AtomicUsize::new(0),
+                length: None,
+            })
+        }
+    }
+
+    impl DirectResolver for Direct {
+        fn resolve<'a>(
+            &'a self,
+            video_id: &'a str,
+        ) -> BoxFuture<'a, Result<AudioStream, DirectError>> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            let answer = self.answers[n.min(self.answers.len() - 1)].clone();
+            Box::pin(async move {
+                match answer {
+                    Answer::Url(url) => Ok(AudioStream {
+                        video_id: video_id.to_owned(),
+                        content_length: self.length,
+                        via: crate::audio::media_url::Via::InnerTube,
+                        ..audio(url)
+                    }),
+                    Answer::Refuse => Err(DirectError::Refused(
+                        "LOGIN_REQUIRED: Sign in to confirm your age".into(),
+                    )),
+                    Answer::Offline => {
+                        let err = reqwest::Client::new()
+                            .get("http://127.0.0.1:9/")
+                            .send()
+                            .await
+                            .unwrap_err();
+                        Err(DirectError::from(err))
+                    }
+                }
+            })
         }
     }
 
@@ -699,16 +795,25 @@ mod tests {
     }
 
     fn source(urls: Vec<String>) -> (TrackSource, Arc<Scripted>) {
+        source_with(urls, None)
+    }
+
+    /// yt-dlp handing out `urls`, behind `direct` when given.
+    fn source_with(urls: Vec<String>, direct: Option<Arc<Direct>>) -> (TrackSource, Arc<Scripted>) {
         let scripted = Arc::new(Scripted {
             urls,
             calls: AtomicUsize::new(0),
         });
+        let options = SourceOptions {
+            direct: direct.map(|d| d as Arc<dyn DirectResolver>),
+            ..SourceOptions::default()
+        };
         let source = TrackSource::new(
             scripted.clone(),
             reqwest::Client::new(),
             std::env::temp_dir(),
             JsPolicy::Never,
-            SourceOptions::default(),
+            options,
         );
         (source, scripted)
     }
@@ -735,8 +840,12 @@ mod tests {
     }
 
     fn track(duration_secs: Option<u32>) -> Track {
+        track_id("dQw4w9WgXcQ", duration_secs)
+    }
+
+    fn track_id(id: &str, duration_secs: Option<u32>) -> Track {
         Track {
-            video_id: "dQw4w9WgXcQ".into(),
+            video_id: id.into(),
             title: "t".into(),
             artist: "a".into(),
             duration_secs,
@@ -804,7 +913,113 @@ mod tests {
         );
     }
 
-    /// Stopping a download leaves a half-written file (yt-dlp writes
+    #[tokio::test(flavor = "multi_thread")]
+    async fn innertube_url_needs_no_ytdlp() {
+        let body = body();
+        let base = media_server(body.clone()).await;
+        let direct = Direct::new(vec![Answer::Url(format!("{base}/ok"))]);
+        let (source, ytdlp) = source_with(vec![], Some(direct.clone()));
+        let opened = source.open(&track(None), false).await.unwrap();
+        assert_eq!(read_all(opened).await.unwrap(), *body);
+        assert_eq!(direct.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(ytdlp.calls.load(Ordering::SeqCst), 0, "no yt-dlp run");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refused_by_innertube_asks_ytdlp() {
+        let body = body();
+        let base = media_server(body.clone()).await;
+        let direct = Direct::new(vec![Answer::Refuse]);
+        let (source, ytdlp) = source_with(vec![format!("{base}/ok")], Some(direct.clone()));
+        let opened = source.open(&track(None), false).await.unwrap();
+        assert_eq!(read_all(opened).await.unwrap(), *body);
+        assert_eq!(ytdlp.calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Offline, yt-dlp would fail the same way (seconds later, ~90 MB):
+    /// the error goes to the session, which waits for the connection.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn offline_does_not_start_ytdlp() {
+        let direct = Direct::new(vec![Answer::Offline]);
+        let (source, ytdlp) = source_with(vec!["http://unused".into()], Some(direct));
+        let Err(err) = source.open(&track(None), false).await else {
+            panic!("opened while offline");
+        };
+        assert!(crate::net::is_network(&err), "{err:#}");
+        assert_eq!(ytdlp.calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// The media server refusing an InnerTube URL sends the song to yt-dlp;
+    /// after a few such songs InnerTube is left out for the run.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rejected_innertube_urls_go_to_ytdlp() {
+        let body = body();
+        let base = media_server(body.clone()).await;
+        let direct = Direct::new(vec![Answer::Url(format!("{base}/gone"))]);
+        let ok = format!("{base}/ok");
+        let (source, ytdlp) = source_with(vec![ok.clone(); 4], Some(direct.clone()));
+        for (n, id) in ["aaaaaaaaaaa", "bbbbbbbbbbb", "ccccccccccc"]
+            .iter()
+            .enumerate()
+        {
+            let opened = source.open(&track_id(id, None), false).await.unwrap();
+            assert_eq!(read_all(opened).await.unwrap(), *body);
+            assert_eq!(direct.calls.load(Ordering::SeqCst), n + 1);
+            assert_eq!(ytdlp.calls.load(Ordering::SeqCst), n + 1);
+        }
+        // Three songs refused: the fourth doesn't ask InnerTube at all.
+        let opened = source
+            .open(&track_id("ddddddddddd", None), false)
+            .await
+            .unwrap();
+        assert_eq!(read_all(opened).await.unwrap(), *body);
+        assert_eq!(direct.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(ytdlp.calls.load(Ordering::SeqCst), 4);
+    }
+
+    /// A plain URL is downloaded in ranges by us: yt-dlp (whose download
+    /// fails in this fake) isn't started.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn downloads_plain_files_in_ranges() {
+        let body = Arc::new(
+            (0..2_500_000u32)
+                .map(|i| (i % 253) as u8)
+                .collect::<Vec<_>>(),
+        );
+        let base = media_server(body.clone()).await;
+        let dir = std::env::temp_dir().join(format!("yarek-ranged-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = Arc::new(crate::storage::Library::open_in_memory().unwrap());
+        let direct = Arc::new(Direct {
+            answers: vec![Answer::Url(format!("{base}/ok"))],
+            calls: AtomicUsize::new(0),
+            length: Some(body.len() as u64),
+        });
+        let options = SourceOptions {
+            downloads: Some(dir.clone()),
+            store: Some(store.clone()),
+            direct: Some(direct),
+            ..SourceOptions::default()
+        };
+        let scripted = Arc::new(Scripted {
+            urls: Vec::new(),
+            calls: AtomicUsize::new(0),
+        });
+        let source = TrackSource::new(
+            scripted,
+            reqwest::Client::new(),
+            std::env::temp_dir(),
+            JsPolicy::Never,
+            options,
+        );
+        let download = source.download(&track(Some(213))).await.unwrap();
+        assert_eq!(download.bytes, body.len() as u64);
+        assert_eq!(std::fs::read(&download.path).unwrap(), *body);
+        assert_eq!(store.downloads().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Stopping a download leaves a half-written file (downloads write
     /// straight to it): the next cleanup throws it away, and "delete all"
     /// takes the finished ones with their records.
     #[tokio::test]

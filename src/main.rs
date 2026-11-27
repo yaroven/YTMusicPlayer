@@ -37,7 +37,8 @@ USAGE:
                                   read client ID/secret from Google's downloaded JSON
     yarek sync                    refresh the local library from YouTube
     yarek play <id|url>           play one track without the window
-    yarek resolve <id> [--js]     print the direct audio URL (debug)
+    yarek resolve <id> [--js | --ytdlp]
+                                  print the direct audio URL (debug; --ytdlp skips InnerTube)
     yarek devices                 list audio output devices (for `audio_device`)
     yarek lastfm-login            connect Last.fm scrobbling (API key in config)
     yarek update                  install the latest release
@@ -139,7 +140,6 @@ fn single_instance(paths: &AppPaths, kind: &'static str) -> Result<Option<Instan
             eprintln!("Yarek Music is already open; brought its window to the front.");
             Ok(None)
         }
-        // Can't create the socket (read-only dir…): run anyway.
         Err(err) => {
             tracing::warn!(%err, "single-instance check unavailable");
             Ok(Some(Instance::none()))
@@ -191,8 +191,11 @@ async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Resul
             Ok(())
         }
         ["play", input] => play(paths, settings, input).await,
-        ["resolve", id] => resolve(paths, settings, id, false).await,
-        ["resolve", id, "--js"] => resolve(paths, settings, id, true).await,
+        ["resolve", id] => resolve(paths, settings, id, bootstrap::Lookup::Default).await,
+        ["resolve", id, "--js"] => resolve(paths, settings, id, bootstrap::Lookup::ForceJs).await,
+        ["resolve", id, "--ytdlp"] => {
+            resolve(paths, settings, id, bootstrap::Lookup::YtDlpOnly).await
+        }
         ["status"] => status(paths, settings).await,
         ["devices"] => {
             for name in yarek_music::audio::player::output_device_names() {
@@ -460,7 +463,14 @@ async fn play(paths: &AppPaths, settings: &Settings, input: &str) -> Result<()> 
         &bootstrap::cookie_source(settings, &youtube),
     )
     .await?;
-    let source = bootstrap::track_source(paths, settings, &http, ytdlp, false, Some(library));
+    let source = bootstrap::track_source(
+        paths,
+        settings,
+        &http,
+        ytdlp,
+        bootstrap::Lookup::Default,
+        Some(library),
+    );
 
     let started = Instant::now();
     let track = Track {
@@ -519,19 +529,25 @@ fn fmt(d: Duration) -> String {
     format!("{}:{:02}", d.as_secs() / 60, d.as_secs() % 60)
 }
 
-async fn resolve(paths: &AppPaths, settings: &Settings, id: &str, js: bool) -> Result<()> {
+async fn resolve(
+    paths: &AppPaths,
+    settings: &Settings,
+    id: &str,
+    lookup: bootstrap::Lookup,
+) -> Result<()> {
     let video_id = video_id_from_input(id).context("not a YouTube video id or URL")?;
     let http = bootstrap::http_client()?;
     let ytdlp = bootstrap::ytdlp(paths, settings, &http, &settings.cookies_from_browser).await?;
     println!("yt-dlp: {} ({:?})", ytdlp.path().display(), ytdlp.source());
     // No persistent store: this command is for debugging resolution itself.
-    let source = bootstrap::track_source(paths, settings, &http, ytdlp, js, None);
+    let source = bootstrap::track_source(paths, settings, &http, ytdlp, lookup, None);
 
     let started = Instant::now();
     let stream = source.resolve(&video_id).await?;
     println!(
-        "resolved in {:.1?} (js: {})",
+        "resolved in {:.1?} via {:?} (js: {})",
         started.elapsed(),
+        stream.via,
         source.uses_js()
     );
     println!("title:    {}", stream.title.as_deref().unwrap_or("?"));

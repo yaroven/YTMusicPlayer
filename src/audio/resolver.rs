@@ -1,22 +1,32 @@
-//! Caching, deduplicating front-end over an [`Extractor`] (internal to the
-//! Track source).
+//! Caching, deduplicating front-end over the URL sources (internal to the
+//! Track source): the one place that decides which source to ask and what
+//! a failure means.
 //!
 //! - Resolved URLs are reused until shortly before they expire (~6 h).
-//! - Concurrent requests for the same id (play + prefetch) share one yt-dlp run.
-//! - At most [`MAX_CONCURRENT`] yt-dlp processes run at once.
-//! - Fallback ladder on failure: plain → with JS runtime → after `yt-dlp -U`.
+//! - Concurrent requests for the same id (play + prefetch) share one lookup.
+//! - The ladder: InnerTube ([`DirectResolver`], ~0.1 s, no process) →
+//!   yt-dlp plain → with JS runtime → after `yt-dlp -U`. A network failure
+//!   stops it at once (yt-dlp would fail the same way, slower); a refusal
+//!   (bot check, age check, no plain format) goes on to yt-dlp.
+//! - At most [`MAX_CONCURRENT`] yt-dlp processes run at once; InnerTube
+//!   requests don't wait for that permit.
+//! - An InnerTube URL that the media server rejects sends that song to
+//!   yt-dlp from then on (rare: one 403 past 1 MiB in ~20 test plays,
+//!   2026-11-27); [`DIRECT_REJECTIONS`] such songs within
+//!   [`REJECTION_WINDOW`] mean its URLs stopped working here, and InnerTube
+//!   is skipped until they are that old.
 //!
 //! - Resolved URLs are also persisted in the library DB, so a restart doesn't
 //!   pay the ~6 s yt-dlp run again; memory keeps only [`MEMORY_CAP`] entries.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use tokio::sync::{OnceCell, Semaphore};
@@ -24,8 +34,10 @@ use tokio::sync::{OnceCell, Semaphore};
 use crate::{api::models::Track, storage::Library};
 
 use super::{
-    extractor::{AudioStream, ExtractorError, Result},
+    extractor::{ExtractorError, Result},
+    innertube::{DirectError, DirectResolver},
     js_runtime::JsRuntime,
+    media_url::{AudioStream, Via},
     source::Extractor,
 };
 
@@ -37,6 +49,12 @@ const FRESH_MARGIN: Duration = Duration::from_secs(30 * 60);
 const UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// In-memory entries (~2 KB each); older ones are served from the DB.
 const MEMORY_CAP: usize = 16;
+/// Songs whose InnerTube URL the media server refused within
+/// [`REJECTION_WINDOW`] before InnerTube is left out.
+const DIRECT_REJECTIONS: usize = 3;
+const REJECTION_WINDOW: Duration = Duration::from_secs(10 * 60);
+/// Songs remembered as yt-dlp-only (ids, a few bytes each).
+const YTDLP_ONLY_CAP: usize = 256;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum JsPolicy {
@@ -55,6 +73,13 @@ pub(super) struct StreamResolver {
 }
 
 struct Inner {
+    /// Asked first, when present.
+    direct: Option<Arc<dyn DirectResolver>>,
+    /// Songs whose InnerTube URL was refused by the media server.
+    ytdlp_only: Mutex<HashSet<String>>,
+    /// When the latest of those refusals happened (at most
+    /// [`DIRECT_REJECTIONS`] kept).
+    rejected_at: Mutex<Vec<Instant>>,
     ytdlp: Arc<dyn Extractor>,
     http: reqwest::Client,
     bin_dir: PathBuf,
@@ -72,6 +97,7 @@ struct Inner {
 impl StreamResolver {
     /// Persists resolved URLs in `store` when given.
     pub(super) fn new(
+        direct: Option<Arc<dyn DirectResolver>>,
         ytdlp: Arc<dyn Extractor>,
         http: reqwest::Client,
         bin_dir: PathBuf,
@@ -85,6 +111,9 @@ impl StreamResolver {
         }
         Self {
             inner: Arc::new(Inner {
+                direct,
+                ytdlp_only: Mutex::new(HashSet::new()),
+                rejected_at: Mutex::new(Vec::new()),
                 ytdlp,
                 http,
                 bin_dir,
@@ -105,7 +134,7 @@ impl StreamResolver {
     }
 
     /// Returns a fresh stream for `video_id`, from cache when possible.
-    pub(super) async fn resolve(&self, video_id: &str) -> Result<AudioStream> {
+    pub(super) async fn resolve(&self, video_id: &str) -> anyhow::Result<AudioStream> {
         let cell = {
             let mut cache = self.inner.cache.lock().unwrap_or_else(|e| e.into_inner());
             match cache.get(video_id) {
@@ -181,15 +210,45 @@ impl StreamResolver {
     }
 
     /// The player calls this when a resolved URL returns 403/410: drops the
-    /// cached URL and, under [`JsPolicy::OnDemand`], switches to JS resolution.
+    /// cached URL and distrusts its source — an InnerTube URL sends the song
+    /// to yt-dlp, a yt-dlp one switches to JS resolution (under
+    /// [`JsPolicy::OnDemand`]).
     pub(super) fn report_playback_failure(&self, video_id: &str) {
-        self.inner
+        let via = self
+            .inner
             .cache
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .remove(video_id);
+            .remove(video_id)
+            .and_then(|cell| cell.get().map(|s| s.via));
         if let Some(store) = &self.inner.store {
             let _ = store.put_stream(video_id, "{}", 0); // expire it
+        }
+        if via == Some(Via::InnerTube) {
+            let mut only = self
+                .inner
+                .ytdlp_only
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if only.len() >= YTDLP_ONLY_CAP {
+                only.clear();
+            }
+            only.insert(video_id.to_owned());
+            drop(only);
+            let mut at = self
+                .inner
+                .rejected_at
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            at.push(Instant::now());
+            if at.len() > DIRECT_REJECTIONS {
+                at.remove(0);
+            }
+            tracing::info!(video_id, "InnerTube URL rejected; this song goes to yt-dlp");
+            if at.len() == DIRECT_REJECTIONS && at[0].elapsed() < REJECTION_WINDOW {
+                tracing::warn!("InnerTube URLs keep being rejected; using yt-dlp for a while");
+            }
+            return;
         }
         if self.inner.policy == JsPolicy::OnDemand
             && !self.inner.js_required.swap(true, Ordering::Relaxed)
@@ -198,10 +257,14 @@ impl StreamResolver {
         }
     }
 
-    /// Daily `yt-dlp -U` for the managed binary. Run in the background at startup.
+    /// Daily `yt-dlp -U` for the managed binary and InnerTube's client
+    /// list. Run in the background at startup.
     pub(super) fn spawn_maintenance(&self) {
         let this = self.clone();
         tokio::spawn(async move {
+            if let Some(direct) = &this.inner.direct {
+                direct.maintain().await;
+            }
             match this
                 .inner
                 .ytdlp
@@ -215,7 +278,35 @@ impl StreamResolver {
         });
     }
 
-    async fn resolve_uncached(&self, video_id: &str) -> Result<AudioStream> {
+    /// Whether InnerTube is asked for `video_id`.
+    fn direct_for(&self, video_id: &str) -> Option<&Arc<dyn DirectResolver>> {
+        let inner = &self.inner;
+        let direct = inner.direct.as_ref()?;
+        let at = inner.rejected_at.lock().unwrap_or_else(|e| e.into_inner());
+        if at.len() == DIRECT_REJECTIONS && at[0].elapsed() < REJECTION_WINDOW {
+            return None;
+        }
+        drop(at);
+        let only = inner.ytdlp_only.lock().unwrap_or_else(|e| e.into_inner());
+        (!only.contains(video_id)).then_some(direct)
+    }
+
+    async fn resolve_uncached(&self, video_id: &str) -> anyhow::Result<AudioStream> {
+        if let Some(direct) = self.direct_for(video_id) {
+            match direct.resolve(video_id).await {
+                Ok(stream) => return Ok(stream),
+                // Offline or too slow: yt-dlp asks the same servers.
+                Err(err @ DirectError::Network(_)) => return Err(err.into()),
+                Err(DirectError::Refused(why)) => {
+                    tracing::info!(video_id, %why, "InnerTube has no URL; asking yt-dlp");
+                }
+            }
+        }
+        Ok(self.resolve_with_ytdlp(video_id).await?)
+    }
+
+    /// yt-dlp's own ladder: plain → JS runtime → after `yt-dlp -U`.
+    async fn resolve_with_ytdlp(&self, video_id: &str) -> Result<AudioStream> {
         let _permit = self
             .inner
             .permits

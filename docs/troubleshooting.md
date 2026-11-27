@@ -59,8 +59,10 @@ Downloaded songs (**Downloads**) play without a connection.
   `yarek devices` as `audio_device`.
 - **Sign-in isn't remembered on Linux:** a Secret Service provider is needed —
   GNOME Keyring or KWallet, unlocked.
-- **A track won't play:** yt-dlp updates itself when YouTube changes and the
-  player retries automatically. Age-restricted tracks need a sign-in (above).
+- **A track won't play:** when YouTube refuses the direct link the player
+  asks yt-dlp, which updates itself when YouTube changes; the player retries
+  automatically. Age-restricted tracks need a sign-in (above). To compare the
+  two: `yarek resolve <id>` and `yarek resolve <id> --ytdlp`.
 - **The window doesn't open on Linux:** it needs `libxkbcommon` plus X11 or
   Wayland libraries (installed with any desktop; the packages recommend them).
 - **No synced lyrics for a song:** the word timings come from

@@ -65,11 +65,6 @@ pub fn problem(err: &anyhow::Error) -> Problem {
                 _ => {}
             }
         }
-        if let Some(crate::audio::extractor::ExtractorError::Timeout(_)) =
-            cause.downcast_ref::<crate::audio::extractor::ExtractorError>()
-        {
-            return Problem::Slow;
-        }
     }
     problem_in_text(&format!("{err:#}"))
 }
@@ -151,6 +146,23 @@ mod tests {
             problem_in_text("media request failed: error sending request for url"),
             Problem::Offline
         );
+        // yt-dlp's own timeout, by its message (no yt-dlp types here).
+        let timeout = anyhow::Error::from(crate::audio::extractor::ExtractorError::Timeout(
+            Duration::from_secs(60),
+        ));
+        assert_eq!(problem(&timeout), Problem::Slow);
+    }
+
+    /// InnerTube's "didn't answer" keeps reqwest's error in the chain.
+    #[tokio::test]
+    async fn innertube_network_failure_is_offline() {
+        let err = reqwest::Client::new()
+            .get("http://127.0.0.1:9/")
+            .send()
+            .await
+            .unwrap_err();
+        let err = anyhow::Error::from(crate::audio::innertube::DirectError::from(err));
+        assert_eq!(problem(&err), Problem::Offline);
     }
 
     #[test]

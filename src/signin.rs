@@ -7,6 +7,8 @@
 
 use anyhow::{Context, Result, bail};
 
+/// Browsers whose sign-in can be imported (yt-dlp reads their cookies).
+pub use crate::audio::extractor::{COOKIE_BROWSERS, installed_browsers};
 use crate::youtube_session::{Cookies, is_signed_in, parse_cookies_txt};
 
 /// The YouTube sign-in in a browser's cookies, as yt-dlp exported them

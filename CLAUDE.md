@@ -33,7 +33,7 @@ cargo test                          # unit tests
 cargo test -- --ignored             # network tests (downloads yt-dlp)
 yarek                               # the window;  yarek --help for all commands
 yarek play <id|url>                 # headless playback, good for testing audio
-yarek resolve <id> [--js]           # debug URL resolution
+yarek resolve <id> [--js|--ytdlp]   # debug URL resolution (via InnerTube / yt-dlp)
 yarek config                        # prints config.toml path
 ```
 
@@ -101,12 +101,14 @@ single-threaded tokio runtime; the window owns the main thread).
 | `lastfm`, `discord`, `notify` | `Listener`s: Last.fm scrobbler (md5-signed, session key in `<data_dir>/lastfm.session`), Discord IPC presence on its own thread; GUI track notifications (notify-rust) |
 | `account` | OAuth client setup, browser/device sign-in, sign-out, YouTube API client; token behind `api::token_store::Tokens` (Keyring / InMemory) |
 | `bootstrap` | builds the HTTP client, yt-dlp, Track source, Account and `Deps` for every frontend and CLI command |
-| `audio::source` | Track source: `open(track, remote)` → downloaded file, bounded stream (+ loudness gain, 3 s cap) or, for cast, just the URL; downloads; owns URL cache, yt-dlp ladder, 403/410 refresh, prefetch, search, daily update; yt-dlp behind the `Extractor` seam |
-| `audio::resolver` (private) | URL cache (16 in memory, rest in SQLite), one yt-dlp at a time, JS switch, update-once |
+| `audio::source` | Track source (the facade): `open(track, remote)` → downloaded file, bounded stream (+ loudness gain, 3 s cap) or, for cast, just the URL; downloads (ranged from the URL, yt-dlp only for non-plain files); 403/410 refresh, prefetch, search, daily update; URL sources behind the `DirectResolver` (InnerTube) and `Extractor` (yt-dlp) seams |
+| `audio::resolver` (private) | the one ladder: InnerTube → yt-dlp plain → JS → `-U`; network failure stops it, refusal goes on; URL cache (16 in memory, rest in SQLite), dedup, one yt-dlp at a time, rejected InnerTube URL → that song to yt-dlp (3 in 10 min → InnerTube off for a while) |
+| `audio::innertube` | `InnerTube: DirectResolver`: player endpoint as VISIONOS + `visitor_id` visitorData, itag 140, `DirectError::{Network, Refused}`; anonymous plain clients of `ios/clients.json` |
+| `audio::media_url` | `AudioStream` (+ `Via`: InnerTube / YtDlp), the type every URL source returns |
 | `audio::player` | `Playback` trait; `PlayerHandle` = rodio on its own thread (256 KiB stack), one rodio Player per track on a shared mixer: gapless = append within 2 s of the end, crossfade = second player + volume ramp; gain via `amplify`; device opened lazily, closed after 30 s idle; events tagged with a load `generation` |
 | `audio::stream` | bounded `Read + Seek` over googlevideo: 256 KiB Range chunks, 4 ahead, max 8 cached (2 MiB); asks `Refresh` for a new URL on 403/410 |
 | `audio::queue` | source `Arc<[Track]>` + appended tracks + `u32` play order, shuffle/repeat, "play next" FIFO, edit upcoming (remove/move/clear), `revision()` |
-| `audio::{extractor, js_runtime, install}` | yt-dlp lookup/download (onedir), search; QuickJS fallback |
+| `audio::{extractor, js_runtime, install}` | yt-dlp lookup/download (onedir), resolve, search, cookies export; QuickJS fallback |
 | `api::{auth, token_store, client, models}` | OAuth PKCE loopback + device flow, token stores, Data API v3 (list, search, rate, insert), `Track` with `Arc<str>` fields |
 | `storage` | SQLite (schema v3): library (+ playlist item ids), playlist ETags, stream URL cache, history (500), saved albums / followed artists, downloads, `meta` (UI state) |
 | `sync` | YouTube -> storage. `sync_with_session` (InnerTube, the signed-in session: liked music, playlists with their `setVideoId`s, saved albums, followed artists); `sync_library` (legacy Data API, skips playlists with unchanged ETag); `SyncReport::summary` |
@@ -115,7 +117,7 @@ single-threaded tokio runtime; the window owns the main thread).
 | `media` | souvlaki: media keys + Now Playing (macOS, Linux/MPRIS, Windows SMTC with the GUI's HWND via `set_window_handle`) |
 | `gui` (feature `gui`) | Slint window on the main thread; `Session` on a "core" thread with its own runtime; UI sends `Cmd`s, core pushes `Snapshot`s (`SessionView` + changes + page/home/lyrics/related) via `upgrade_in_event_loop`; `TracksModel` reads rows straight from the `LibraryView` (or the queue); `Cards`/`Shelves` models fill art by URL as it arrives; `tray` (tray-icon / ksni); `ui.rs` is assembled Slint (keep `#rrggbb` colours out of Rust tokenization: `3e…` parses as an exponent — use `rgb()`) |
 | `fmt` | display formatting shared by both UIs |
-| `net` | network failures told apart (`problem`: offline / slow / other, from reqwest / io errors and yt-dlp's messages), plain-words `describe`, `online()` probe (TCP connect to music.youtube.com) |
+| `net` | network failures told apart (`problem`: offline / slow / other, from reqwest / io errors and error text incl. yt-dlp's; knows no yt-dlp types), plain-words `describe`, `online()` probe (TCP connect to music.youtube.com) |
 | `packaging/` | Linux .desktop, Arch PKGBUILD, Inno Setup script, macOS pkg builder |
 | `config::{paths, settings}` | per-OS dirs; `config.toml` (template on first run, `store_client` / `store_value` rewrite keys in place, keeping comments) |
 | `ios/YTMKit` (Swift package) | iPhone core, no UI: InnerTube catalog + LRCLIB lyrics ported from `catalog.rs` / `lyrics.rs` (same lenient `findAll` parsing), `Resolver` = on-device stream URLs (no yt-dlp), client list overridable by `ios/clients.json` on main; `swift run YTMKitChecks [--live]` (no XCTest in CLT) |
@@ -822,6 +824,34 @@ Domain terms are defined in `CONTEXT.md`.
 - **This Linux box (2026-10-26)** has no JDK 17, Android SDK or Swift,
   and installing them was blocked: phone changes compile only in CI
   (`.github/workflows`) or on the Mac. Review Kotlin/Swift edits by eye.
+
+- **Desktop URLs from InnerTube first, yt-dlp as the fallback** (user's
+  request 2026-11-27): the phones' resolver ported to Rust
+  (`audio::innertube`), anonymous VISIONOS only — signed-in / age-restricted
+  / ciphered stays with yt-dlp. Spike from this Linux box: VISIONOS player
+  ~0.13 s, itag 140, every 256 KiB range 206 (googlevideo 302s first:
+  follow redirects); without `visitorData` YouTube says "confirm you're not
+  a bot" after a few requests — `youtubei/v1/visitor_id` (774 B) works as
+  well as the 1.5 MB watch page. The ladder lives only in `resolver`:
+  `DirectError::Network` → no yt-dlp (it would fail too, seconds later),
+  `Refused` → yt-dlp. One mid-track 403 past 1 MiB seen in ~20 plays
+  (`RnkShwdXfyc`, not reproducible with curl): the refresh moved it to
+  yt-dlp at the same byte; hence the per-song yt-dlp list and a breaker of
+  3 rejections in 10 min (not "per run": rare 403s would switch it off in
+  a long session). Downloads are ranged (1 MiB) from the resolved URL.
+  Measured 2026-11-27 (Linux x86_64, release, `yarek play`, sandbox HOME,
+  cold URL cache, PSS of the whole process tree): before 2.3–2.8 s to
+  "ready", peak 94–101 MB (yt-dlp); after 0.4–1.3 s, peak 26–27 MB (no
+  child process). `innertube = false` restores yt-dlp only;
+  `yarek resolve <id> --ytdlp` compares.
+
+- **Terminal UI removed** (user's request 2026-11-27): the window is the
+  only player; `yarek` / `yarek gui` open it, the CLI commands stay
+  (`play`, `sync`, `resolve`, …), `--no-default-features` builds only them.
+  Gone with it: `app`, `ui`, the insta snapshots, ratatui / crossterm /
+  insta / core-foundation (the macOS CFRunLoop worker existed only for the
+  TUI's media keys) and the `ui` config key (old configs still load).
+  Older TUI measurements above are kept as history.
 
 ## Open TODOs
 

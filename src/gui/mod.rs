@@ -2474,7 +2474,7 @@ fn wire_callbacks(
     on!(on_cookies_cycle, [tx, view, ui], || {
         // Off, then the browsers that have a profile on this computer.
         let choices: Vec<&str> = std::iter::once("")
-            .chain(crate::audio::extractor::installed_browsers())
+            .chain(crate::signin::installed_browsers())
             .collect();
         let mut v = view.borrow_mut();
         let at = choices.iter().position(|c| *c == v.prefs.cookies);
@@ -2511,7 +2511,7 @@ fn wire_callbacks(
     ));
     on!(on_yt_import, [tx, view, ui], || {
         let browser = view.borrow().prefs.cookies.clone();
-        if crate::audio::extractor::COOKIE_BROWSERS.contains(&browser.as_str()) {
+        if crate::signin::COOKIE_BROWSERS.contains(&browser.as_str()) {
             send(Cmd::YouTubeSignIn(Some(browser)), tx);
         } else {
             ui.set_status_text("Pick the browser you're signed in to YouTube with first".into());

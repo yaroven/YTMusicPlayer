@@ -25,6 +25,10 @@ language = "auto"
 # Media keys and the system "Now Playing" widget (macOS, Linux).
 media_controls = true
 
+# Get song links straight from YouTube (~0.1 s); yt-dlp (seconds, ~90 MB
+# while it runs) only when that fails. false = always yt-dlp.
+innertube = true
+
 # Retry with a JavaScript runtime (system deno/node, or a ~2 MB QuickJS-NG
 # download) when yt-dlp fails without one. false = never run JS.
 js_fallback = true
@@ -92,6 +96,8 @@ pub struct Settings {
     pub language: String,
     pub media_controls: bool,
     pub audio_device: String,
+    /// Media URLs from InnerTube first, yt-dlp as the fallback.
+    pub innertube: bool,
     pub js_fallback: bool,
     pub ytdlp_extra_args: Vec<String>,
     pub cookies_from_browser: String,
@@ -120,6 +126,7 @@ impl Default for Settings {
             language: "auto".into(),
             media_controls: true,
             audio_device: String::new(),
+            innertube: true,
             js_fallback: true,
             ytdlp_extra_args: Vec::new(),
             cookies_from_browser: String::new(),

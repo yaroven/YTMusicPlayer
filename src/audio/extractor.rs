@@ -19,15 +19,17 @@ use std::{
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
     sync::{Arc, RwLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::process::Command;
 
+pub use super::media_url::AudioStream;
 use super::{
     install::{InstallError, download_verified},
     js_runtime::JsRuntime,
+    media_url::{Via, expiry_from_url},
 };
 use crate::api::models::{Track, clean_artist};
 
@@ -112,47 +114,6 @@ pub enum ExtractorError {
 pub enum BinarySource {
     System,
     Managed,
-}
-
-/// A direct, time-limited audio URL plus what's needed to play it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AudioStream {
-    pub video_id: String,
-    pub title: Option<String>,
-    pub url: String,
-    pub format_id: Option<String>,
-    /// Container extension, e.g. `m4a` or `webm`.
-    pub ext: Option<String>,
-    /// Codec, e.g. `mp4a.40.2` or `opus`.
-    pub codec: Option<String>,
-    pub bitrate_kbps: Option<f64>,
-    pub sample_rate: Option<u32>,
-    pub duration: Option<Duration>,
-    pub content_length: Option<u64>,
-    /// Headers yt-dlp expects on the media request (User-Agent etc.).
-    pub http_headers: HashMap<String, String>,
-    /// From the URL's `expire` param; googlevideo URLs live ~6h.
-    pub expires_at: Option<SystemTime>,
-    /// `url` is an HLS media playlist (age-restricted songs, signed in:
-    /// see `audio::hls`).
-    #[serde(default)]
-    pub hls: bool,
-}
-
-impl AudioStream {
-    /// True when the URL is still valid for at least `margin` from now.
-    pub fn is_fresh(&self, margin: Duration) -> bool {
-        self.expires_at
-            .is_some_and(|exp| SystemTime::now() + margin < exp)
-    }
-
-    /// True for codecs our rodio/symphonia build can decode.
-    pub fn is_decodable(&self) -> bool {
-        matches!(
-            self.ext.as_deref(),
-            Some("m4a" | "mp4" | "mp3" | "ogg" | "flac" | "wav")
-        ) && !self.codec.as_deref().is_some_and(|c| c.starts_with("opus"))
-    }
 }
 
 /// macOS keeps other apps' data private: reading a browser's cookies needs
@@ -1054,16 +1015,8 @@ fn parse_stream(video_id: &str, json: &str) -> Result<AudioStream> {
         content_length: info.filesize.or(info.filesize_approx.map(|s| s as u64)),
         http_headers: info.http_headers,
         hls: info.protocol.is_some_and(|p| p.starts_with("m3u8")),
+        via: Via::YtDlp,
     })
-}
-
-fn expiry_from_url(raw: &str) -> Option<SystemTime> {
-    let url = url::Url::parse(raw).ok()?;
-    let secs = url
-        .query_pairs()
-        .find(|(k, _)| k == "expire")
-        .and_then(|(_, v)| v.parse::<u64>().ok())?;
-    Some(UNIX_EPOCH + Duration::from_secs(secs))
 }
 
 #[cfg(test)]
@@ -1117,8 +1070,9 @@ cccc  yt-dlp_linux
         assert_eq!(s.duration, Some(Duration::from_secs(213)));
         assert_eq!(
             s.expires_at,
-            Some(UNIX_EPOCH + Duration::from_secs(1_900_000_000))
+            Some(std::time::UNIX_EPOCH + Duration::from_secs(1_900_000_000))
         );
+        assert_eq!(s.via, Via::YtDlp);
         assert_eq!(s.http_headers["User-Agent"], "Mozilla/5.0");
         assert!(s.is_decodable());
     }

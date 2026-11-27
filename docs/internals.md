@@ -70,8 +70,19 @@ it, one per user action. File names are the Rust modules under `src/`;
    (`audio::queue`) keeps the source list as `Arc<[Track]>` plus a play order
    for shuffle.
 2. `audio::source::TrackSource::open` looks for a downloaded file, then the
-   URL cache (16 in memory, the rest in SQLite), then asks yt-dlp — one at a
-   time, because each run costs ~90 MB while it lives.
+   URL cache (16 in memory, the rest in SQLite), then the resolver's ladder
+   (`audio::resolver`, the only place that decides what a failure means):
+   - `audio::innertube` asks YouTube's player endpoint as the VISIONOS
+     client with a `visitorData` (the phones' resolver): ~0.1 s, no process;
+   - when YouTube refuses (bot check, age check, no plain AAC format), yt-dlp
+     — one at a time, because each run costs ~90 MB while it lives — plain,
+     then with a JS runtime, then after `yt-dlp -U`;
+   - a network failure stops the ladder at once: yt-dlp would fail the same
+     way, seconds later. The session waits for the connection instead.
+
+   An InnerTube URL the media server rejects (403) sends that song to
+   yt-dlp; three such songs within 10 minutes switch InnerTube off until
+   they are older.
 3. Playback is a bounded stream over googlevideo: 256 KiB range requests, 4
    ahead, 8 cached. A mid-track 403 (YouTube expiring the URL) asks the
    resolver for a fresh one and continues at the same byte.
@@ -119,12 +130,15 @@ timer; the phone does the same at 10 Hz.
 
 ## Downloads
 
-`D` (or the row menu) saves the audio through yt-dlp into
-`<data_dir>/downloads`. A batch is one task: **Stop** aborts it, which kills
-yt-dlp with it, and the half-written file — yt-dlp writes straight to the
-target — is cleaned up along with anything else in the folder the library
-doesn't know. **Delete all** removes the files and the records; one song goes
-with `D` again or the row menu.
+The download button (or the row menu) saves the audio into
+`<data_dir>/downloads`: the song's URL comes from the same ladder, and a
+plain m4a file is fetched in 1 MiB ranges (googlevideo throttles one big
+read to the song's bitrate) and written as it arrives; yt-dlp downloads only
+what isn't a plain file (HLS, age-restricted). A batch is one task: **Stop**
+aborts it (and a running yt-dlp with it), and the half-written file is
+cleaned up along with anything else in the folder the library doesn't know.
+**Delete all** removes the files and the records; one song goes with its
+download button again or the row menu.
 
 ## Watching the clip
 

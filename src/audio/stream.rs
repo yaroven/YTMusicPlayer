@@ -49,6 +49,8 @@ pub enum StreamError {
     Http(#[from] reqwest::Error),
     #[error("media server sent no length")]
     UnknownLength,
+    #[error("writing the download: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 impl StreamError {
@@ -183,6 +185,47 @@ async fn fetch_chunk(
         status => return Err(StreamError::Status(status)),
     };
     Ok((response.bytes().await?.to_vec(), total))
+}
+
+/// Range size for downloads: googlevideo throttles one big read to the
+/// song's bitrate, 1 MiB ranges come at full speed (phones, 2026-10-20).
+const DOWNLOAD_RANGE: u64 = 1024 * 1024;
+
+/// Saves the whole file behind `stream` (a plain URL of known length) to
+/// `dest` in [`DOWNLOAD_RANGE`] requests, each written out as it arrives:
+/// memory stays at one network buffer. Returns the bytes written.
+pub async fn download_file(
+    http: &reqwest::Client,
+    stream: &AudioStream,
+    dest: &std::path::Path,
+) -> Result<u64, StreamError> {
+    use tokio::io::AsyncWriteExt;
+    let total = stream.content_length.ok_or(StreamError::UnknownLength)?;
+    let headers = header_map(stream);
+    let mut file = tokio::fs::File::create(dest).await?;
+    let mut written = 0;
+    while written < total {
+        let end = (written + DOWNLOAD_RANGE).min(total) - 1;
+        let mut response = http
+            .get(&stream.url)
+            .headers(headers.clone())
+            .header(RANGE, format!("bytes={written}-{end}"))
+            .send()
+            .await?;
+        if response.status() != StatusCode::PARTIAL_CONTENT {
+            return Err(StreamError::Status(response.status()));
+        }
+        let before = written;
+        while let Some(bytes) = response.chunk().await? {
+            file.write_all(&bytes).await?;
+            written += bytes.len() as u64;
+        }
+        if written == before {
+            return Err(StreamError::UnknownLength);
+        }
+    }
+    file.flush().await?;
+    Ok(written)
 }
 
 /// Next chunk to fetch: whatever the reader is blocked on, else the first
