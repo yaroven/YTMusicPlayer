@@ -284,7 +284,7 @@ impl Engine {
     fn new_player(&mut self) -> Result<Player, String> {
         if self.sink.is_none() {
             let mut sink = open_sink(self.device.as_deref())?;
-            // Default prints to stderr on drop, which would corrupt the TUI.
+            // Default prints to stderr on drop (noise in CLI output).
             sink.log_on_drop(false);
             self.sink = Some(sink);
             tracing::debug!("audio output opened");

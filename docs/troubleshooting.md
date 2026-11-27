@@ -33,7 +33,7 @@ the config.
 ## "No internet connection"
 
 The player says so in plain words (the window also shows a bar with
-**Retry**, the terminal UI a ⚠ in its status line) and doesn't skip through
+**Retry**) and doesn't skip through
 the queue: the song waits and continues at the same place when YouTube Music
 answers again — the player checks every few seconds, so there's nothing to
 do. Home, Explore and pages that failed load again by themselves.

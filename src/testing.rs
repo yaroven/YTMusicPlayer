@@ -1,4 +1,4 @@
-//! Test support shared by the session, TUI and GUI tests: a recording
+//! Test support shared by the session and GUI tests: a recording
 //! [`Playback`] fake, scripted extractors and a [`Session`] built on them
 //! (no audio device, no network).
 
@@ -282,6 +282,7 @@ pub(crate) fn seeded_library() -> Arc<Library> {
 }
 
 /// An artist page: `songs` top songs and an albums shelf.
+#[cfg(feature = "gui")]
 pub(crate) fn artist_page(songs: usize) -> crate::catalog::Page {
     use crate::catalog::{Item, ItemKind, Page, Shelf};
     Page {

@@ -2,7 +2,7 @@
 
 ## Desktop window
 
-Open **Yarek Music** from your applications, or run `yarek gui`.
+Open **Yarek Music** from your applications, or run `yarek`.
 
 - **Sidebar:** Home, **Explore** (charts, new releases, moods and genres),
   your Library (History, Downloads, Albums, Artists),
@@ -66,50 +66,12 @@ the window is shown again. (Linux needs a desktop with tray icons — on GNOME
 the AppIndicator extension; without one, closing the window quits.)
 
 The bottom of the sidebar shows the player's memory use (plus yt-dlp's while
-it fetches a track link). To make `yarek` open the window instead of the
-terminal UI, set `ui = "gui"` in the [config](configuration.md).
-
-## Terminal UI
-
-Run `yarek` in a terminal.
-
-| Key | Action |
-|---|---|
-| `↑/↓` `k/j`, `PgUp/PgDn`, `g/G` | move |
-| `Tab` `h/l` | switch pane |
-| `Enter`, click | open / play |
-| `b`, `Backspace` | back |
-| `1` … `6` | home, history, downloads, albums, artists, explore |
-| `Space` | play / pause |
-| `n` / `p` | next / previous (restarts the track if > 3 s in) |
-| `←` / `→`, click the bar | seek |
-| `+` / `-` | volume |
-| `/` | filter the list (`Esc` clears) |
-| `o`, then `[` / `]` | search YouTube Music, switch category |
-| `i` | albums / artists / shelves on this page |
-| `s` / `e` / `A` | shuffle / repeat (off → all → one) / autoplay |
-| `v` | queue (`x` remove, `J`/`K` move, `X` clear) |
-| `u` / `R` / `w` | play next / start radio / the artist's page |
-| `f` / `d` | like / dislike |
-| `a` / `x` | add to / remove from a playlist (`x` in History: remove the entry) |
-| `D` | download for offline (again: delete the download) |
-| `S` | save album / follow artist |
-| `m` | menu: new / rename / delete playlist, download all, stop downloading, delete all downloads, save the queue as a playlist, clear history |
-| `O` | sort the list: own order → title → artist → most played |
-| `J` / `K` | in your own playlist: move the selected song (in the queue view: move it in the queue) |
-| `t` | lyrics |
-| `z` | sleep timer (15 / 30 / 60 min, end of song, off) |
-| `C` | play on a Chromecast |
-| `r` / `L` | sync library / sign in |
-| `?` / `q` | help / quit |
-
-Volume, shuffle, repeat and the selected playlist are remembered.
+it fetches a track link).
 
 ## Commands
 
 ```bash
-yarek                         # open the player (terminal UI, or the window with ui = "gui")
-yarek gui | yarek tui           # open the window / the terminal UI
+yarek | yarek gui             # open the player window
 yarek sign-in [--from <browser>]        # sign in to YouTube: library, age-restricted songs
 yarek sign-out                # forget the YouTube sign-in
 yarek sync                    # refresh the library (unchanged playlists are skipped)

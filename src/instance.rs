@@ -1,16 +1,16 @@
-//! Single instance: the first player (TUI or GUI) listens on a Unix socket;
-//! a second launch connects, asks it to show its window, and exits.
+//! Single instance: the first player window listens on a Unix socket; a
+//! second launch connects, asks it to show its window, and exits.
 //!
-//! Protocol: client writes `show\n`, server replies with its kind (`gui` or
-//! `tui`) and, for the GUI, raises its window. CLI subcommands (`sync`,
-//! `status`, …) don't take part and may run alongside.
+//! Protocol: client writes `show\n`, server replies with its kind (`gui`)
+//! and raises its window. CLI subcommands (`sync`, `status`, …) don't take
+//! part and may run alongside.
 
 use std::path::{Path, PathBuf};
 
 pub enum Acquired {
     /// We are the only player; keep this alive until exit.
     Primary(Instance),
-    /// Another player is running; its kind (`gui` / `tui`).
+    /// Another player is running; its kind (`gui`).
     Running(String),
 }
 
@@ -108,7 +108,7 @@ mod tests {
         })
         .unwrap();
         assert!(matches!(first, Acquired::Primary(_)));
-        match acquire(&path, "tui", || {}).unwrap() {
+        match acquire(&path, "gui", || {}).unwrap() {
             Acquired::Running(kind) => assert_eq!(kind, "gui"),
             Acquired::Primary(_) => panic!("second launch became primary"),
         }

@@ -1,4 +1,4 @@
-//! UI-independent player core shared by the TUI and the GUI: queue and
+//! UI-independent player core behind the GUI and the CLI: queue and
 //! playback (with preloading for gapless / crossfaded transitions, autoplay
 //! radio and a sleep timer), library edits, browsing the YouTube Music
 //! catalog, the account and media keys. Frontends call the action methods

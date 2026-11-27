@@ -1197,12 +1197,6 @@ impl Session {
         self.deps.youtube.signed_in() && !self.deps.youtube.expired()
     }
 
-    /// Forgets the (made-up) YouTube sign-in of the test session.
-    #[cfg(test)]
-    pub(crate) fn sign_out_for_tests(&mut self) {
-        self.deps.youtube = crate::youtube_session::YouTubeSession::none();
-    }
-
     pub fn signed_in(&self) -> bool {
         self.deps.account.signed_in()
     }

@@ -829,7 +829,7 @@ impl YtDlp {
     async fn run(&self, args: &[&str], timeout: Duration) -> Result<String> {
         let mut cmd = Command::new(&self.path);
         cmd.args(args)
-            // Never let the child read the TUI's stdin.
+            // Never let the child read our stdin.
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

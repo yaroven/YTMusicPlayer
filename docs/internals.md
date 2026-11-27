@@ -8,12 +8,11 @@ it, one per user action. File names are the Rust modules under `src/`;
 ## The shape of it
 
 ```
-         ┌──────────────┐        ┌──────────────┐
-         │ terminal UI  │        │   window     │   ios/ (separate Swift app)
-         │  app, ui::   │        │   gui::      │
-         └──────┬───────┘        └──────┬───────┘
-                │   actions / Cmd      │
-                └──────────┬───────────┘
+                 ┌───────────────────┐
+                 │      window       │   ios/, android/ (separate apps)
+                 │       gui::       │
+                 └─────────┬─────────┘
+                           │ Cmd / Snapshot
                            ▼
                  ┌───────────────────┐
                  │     session       │  queue, playback, background work,
@@ -27,10 +26,10 @@ it, one per user action. File names are the Rust modules under `src/`;
 └───────────┘     └────────────────┘     └──────────────┘
 ```
 
-- **One core, two frontends.** `session::Session` owns everything that isn't
+- **One core, thin frontend.** `session::Session` owns everything that isn't
   pixels: the queue, the player, the library view's data, background tasks.
-  The terminal UI (`app`) and the window (`gui`) each drive the same methods
-  and render `session.view()`.
+  The window (`gui`) drives its methods and renders `session.view()`; the
+  CLI commands use the same pieces.
 - **Nothing blocks the UI.** Every network or disk call runs in a tokio task
   that ends by sending a `Background` event; `Session::next_event()` folds
   the event into the state and returns a `Changes` struct saying what to
@@ -55,8 +54,8 @@ it, one per user action. File names are the Rust modules under `src/`;
 
 ## Starting up
 
-1. `main` reads `config.toml`, decides terminal UI or window (`ui =`, or the
-   macOS app bundle), and takes the single-instance lock (`instance`): a
+1. `main` reads `config.toml`, opens the window (or runs a CLI command),
+   and takes the single-instance lock (`instance`): a
    second launch just raises the first window and exits.
 2. `bootstrap::deps` builds the HTTP client, the library, the YouTube session
    (keyring), yt-dlp's handle (without probing it — that costs seconds), the
@@ -136,8 +135,7 @@ the layout, the system draws the video into the rectangle Slint reports. The
 page is YouTube's watch page, stripped to the player by an injected script
 that also reports `currentTime`; switching back destroys the view (its
 WebContent processes go too) and seeks the audio to where the video stopped.
-The terminal UI opens the clip in a window of its own (a child process), and
-Linux — which has no system web view — in the browser.
+Linux — which has no system web view — opens it in the browser.
 
 ## Signing in
 
@@ -192,7 +190,7 @@ it instead of showing the error chain:
 - **Desktop** (`net`): `net::problem` reads reqwest / io errors and yt-dlp's
   messages ("Unable to download webpage", "nodename nor servname"…) as
   *offline* or *slow*. The session then marks itself `offline` (the window
-  shows a banner with Retry, the terminal UI a ⚠ in the status bar) and
+  shows a banner with Retry) and
   probes YouTube Music with a TCP connect every 4 s. A song that couldn't
   be opened, or that stopped well before its end for want of data, waits
   (`wait_for_network`, at most 5 times in a row) instead of being skipped;
@@ -207,7 +205,7 @@ it instead of showing the error chain:
 
 ## Testing it
 
-- `cargo test` — unit tests, terminal-UI snapshots (insta) and window tests
+- `cargo test` — unit tests and window tests
   on Slint's headless backend.
 - `cargo test -- --ignored` — the ones that hit the network (nightly CI runs
   them).

@@ -3,7 +3,7 @@ name = "yarek-music"
 version = "1.3.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Yarek Music: a lightweight cross-platform YouTube Music player, terminal UI and a desktop window"
+description = "Yarek Music: a lightweight cross-platform YouTube Music player with a desktop window"
 repository = "https://github.com/yaroven/YTMusicPlayer"
 homepage = "https://github.com/yaroven/YTMusicPlayer"
 license = "MIT OR Apache-2.0"
@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [features]
 default = ["gui"]
-# Desktop window (`yarek gui`); off => terminal-only, smaller binary.
+# Desktop window (`yarek`); off => CLI commands only (`play`, `sync`, ...).
 gui = ["dep:slint", "dep:image", "dep:notify-rust", "dep:tray-icon", "dep:ksni", "dep:wry", "dep:winit"]
 
 [dependencies]
@@ -71,11 +71,6 @@ rodio = { version = "0.22", default-features = false, features = [
 # "bundled" compiles SQLite in: identical behavior on every OS, no system lib.
 rusqlite = { version = "0.40", features = ["bundled", "chrono", "serde_json"] }
 
-# --- TUI ---------------------------------------------------------------------
-ratatui = "0.30"
-# Must match ratatui's crossterm (0.29). "event-stream" gives async EventStream.
-crossterm = { version = "0.29", features = ["event-stream"] }
-
 # --- Config / paths / serialization ------------------------------------------
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
@@ -93,7 +88,7 @@ thiserror = "2.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-appender = "0.2" # log to file: stdout belongs to the TUI
+tracing-appender = "0.2" # log to file, not stdout
 
 # --- GUI (optional) -----------------------------------------------------------
 # Software renderer: no GPU stack; measured the lightest option (34 MB idle
@@ -150,16 +145,13 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 
-# Main-thread run loop for media key handlers; objc2 (already in the tree
-# via winit) to hide the Dock icon while the window is closed to the tray.
+# objc2 (already in the tree via winit) to hide the Dock icon while the
+# window is closed to the tray.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-core-foundation = "0.10"
 
 # Tests: a self-signed certificate for the fake Cast receiver.
 [dev-dependencies]
-# Screen snapshots of the terminal UI (see src/app_tests.rs).
-insta = "1"
 # Headless windows for the GUI tests (src/gui/tests.rs); same version as slint.
 i-slint-backend-testing = { version = "=1.18.1", default-features = false }
 rcgen = { version = "0.14", default-features = false, features = ["ring", "crypto"] }
@@ -185,7 +177,7 @@ depends = "$auto, fontconfig, libxkbcommon0"
 recommends = "libxkbcommon-x11-0, libwayland-client0, libxcursor1, libxi6, libxrandr2, pipewire-alsa | libasound2-plugins, gnome-keyring | kwalletmanager"
 extended-description = """\
 Plays your YouTube Music likes and playlists with a fraction of the memory
-of the browser tab. Terminal UI (`yarek`) and a desktop window (`yarek gui`)."""
+of the browser tab, in a desktop window (`yarek`)."""
 assets = [
     ["target/release/yarek", "usr/bin/", "755"],
     ["packaging/linux/yarek-music.desktop", "usr/share/applications/", "644"],

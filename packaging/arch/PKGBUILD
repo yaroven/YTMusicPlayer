@@ -4,7 +4,7 @@
 pkgname=yarek-music
 pkgver=0.0.0
 pkgrel=1
-pkgdesc="Yarek Music: lightweight YouTube Music player (terminal and desktop window)"
+pkgdesc="Yarek Music: lightweight YouTube Music player (desktop window)"
 arch=('x86_64')
 url="https://github.com/yaroven/YTMusicPlayer"
 license=('MIT OR Apache-2.0')

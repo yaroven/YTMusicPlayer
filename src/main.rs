@@ -10,7 +10,6 @@ use tracing_subscriber::EnvFilter;
 use yarek_music::{
     account::{Account, Flow, Prompt},
     api::models::{Track, video_id_from_input},
-    app,
     audio::{
         extractor::YtDlp,
         player::{PlayState, Playback, PlayerEvent, PlayerHandle},
@@ -27,8 +26,7 @@ const USAGE: &str = "\
 yarek — Yarek Music, a lightweight YouTube Music player
 
 USAGE:
-    yarek                         open the player (TUI, or the window if config has ui = gui)
-    yarek tui | yarek gui         open the terminal / window interface
+    yarek | yarek gui             open the player window
     yarek sign-in [--from <browser>]
                                   sign in to YouTube: Google's page in a window, or the
                                   sign-in of a browser (firefox, chrome, safari, ...)
@@ -38,7 +36,7 @@ USAGE:
     yarek import-client <json> [--device]
                                   read client ID/secret from Google's downloaded JSON
     yarek sync                    refresh the local library from YouTube
-    yarek play <id|url>           play one track without the TUI
+    yarek play <id|url>           play one track without the window
     yarek resolve <id> [--js]     print the direct audio URL (debug)
     yarek devices                 list audio output devices (for `audio_device`)
     yarek lastfm-login            connect Last.fm scrobbling (API key in config)
@@ -92,9 +90,7 @@ fn main() -> Result<()> {
         return yarek_music::video::run_window(video_id, at);
     }
 
-    let gui = matches!(args.as_slice(), ["gui"])
-        || (args.is_empty() && (settings.ui.eq_ignore_ascii_case("gui") || in_app_bundle()));
-    if gui {
+    if matches!(args.as_slice(), [] | ["gui"]) {
         #[cfg(target_os = "macos")]
         macos::restart_without_large_malloc_cache();
         let Some(_instance) = single_instance(&paths, "gui")? else {
@@ -103,28 +99,6 @@ fn main() -> Result<()> {
         #[cfg(windows)]
         detach_console();
         return run_gui(&paths, &settings);
-    }
-    let args: Vec<&str> = if args.as_slice() == ["tui"] {
-        Vec::new()
-    } else {
-        args
-    };
-    let _instance = if args.is_empty() {
-        match single_instance(&paths, "tui")? {
-            Some(instance) => Some(instance),
-            None => return Ok(()),
-        }
-    } else {
-        None
-    };
-
-    // macOS delivers media-key callbacks on the main thread's run loop, so
-    // the TUI runs on a worker thread there while main services the loop.
-    #[cfg(target_os = "macos")]
-    if args.is_empty() && settings.media_controls {
-        return macos::run_with_main_run_loop(move || {
-            runtime()?.block_on(run_tui(&paths, &settings))
-        });
     }
 
     runtime()?.block_on(dispatch(&paths, &settings, &args))
@@ -143,9 +117,8 @@ fn detach_console() {
     }
 }
 
-/// Started from `Yarek Music.app` (Finder, Dock, Spotlight): open the window.
-/// From a terminal (e.g. the `/usr/local/bin/yarek` link the .pkg installs)
-/// stdin is a TTY and the TUI opens as usual.
+/// Started from `Yarek Music.app` (Finder, Dock, Spotlight), not a terminal.
+#[cfg(target_os = "macos")]
 fn in_app_bundle() -> bool {
     use std::io::IsTerminal;
     !std::io::stdin().is_terminal()
@@ -154,7 +127,7 @@ fn in_app_bundle() -> bool {
 }
 
 /// Claims the single player instance. `None`: another player is running
-/// (a running window has been raised); the caller should exit.
+/// (its window has been raised); the caller should exit.
 fn single_instance(paths: &AppPaths, kind: &'static str) -> Result<Option<Instance>> {
     let on_show = || {
         #[cfg(feature = "gui")]
@@ -162,11 +135,10 @@ fn single_instance(paths: &AppPaths, kind: &'static str) -> Result<Option<Instan
     };
     match instance::acquire(&paths.instance_socket(), kind, on_show) {
         Ok(Acquired::Primary(instance)) => Ok(Some(instance)),
-        Ok(Acquired::Running(other)) if other == "gui" => {
+        Ok(Acquired::Running(_)) => {
             eprintln!("Yarek Music is already open; brought its window to the front.");
             Ok(None)
         }
-        Ok(Acquired::Running(_)) => bail!("Yarek Music is already running in another terminal"),
         // Can't create the socket (read-only dir…): run anyway.
         Err(err) => {
             tracing::warn!(%err, "single-instance check unavailable");
@@ -187,7 +159,6 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
 
 async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Result<()> {
     match args {
-        [] => run_tui(paths, settings).await,
         ["sign-in"] => youtube_sign_in(paths, settings, None).await,
         ["sign-in", "--from", browser] => youtube_sign_in(paths, settings, Some(browser)).await,
         ["sign-out"] => {
@@ -324,10 +295,6 @@ async fn lastfm_login(paths: &AppPaths, settings: &Settings) -> Result<()> {
 
 async fn account(paths: &AppPaths, settings: &Settings) -> Result<Account> {
     bootstrap::account(paths, settings, &bootstrap::http_client()?).await
-}
-
-async fn run_tui(paths: &AppPaths, settings: &Settings) -> Result<()> {
-    app::run(bootstrap::deps(paths, settings).await?).await
 }
 
 #[cfg(feature = "gui")]
@@ -579,7 +546,7 @@ async fn resolve(paths: &AppPaths, settings: &Settings, id: &str, js: bool) -> R
     Ok(())
 }
 
-/// Logs go to a daily-rotated file: stdout/stderr belong to the TUI.
+/// Logs go to a daily-rotated file, not to stdout/stderr (CLI output only).
 fn init_logging(paths: &AppPaths) -> tracing_appender::non_blocking::WorkerGuard {
     let appender = tracing_appender::rolling::daily(paths.log_dir(), "yarek.log");
     let (writer, guard) = tracing_appender::non_blocking(appender);
@@ -596,17 +563,6 @@ fn init_logging(paths: &AppPaths) -> tracing_appender::non_blocking::WorkerGuard
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use std::{
-        sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
-        },
-        time::Duration,
-    };
-
-    use anyhow::{Result, anyhow};
-    use core_foundation::runloop::{CFRunLoop, CFRunLoopRunResult, kCFRunLoopDefaultMode};
-
     /// The window's software renderer allocates a fresh full-window pixel
     /// buffer every frame (~11 MB on Retina), and Core Animation its own
     /// copies; macOS malloc kept freed large blocks cached and they counted
@@ -632,37 +588,5 @@ mod macos {
             .env(VAR, "0")
             .exec();
         tracing::warn!(%err, "restarting without the large-allocation cache");
-    }
-
-    /// Runs `work` on a thread while the main thread services its run loop
-    /// (media-key handlers are dispatched there). Returns `work`'s result.
-    pub fn run_with_main_run_loop<F>(work: F) -> Result<()>
-    where
-        F: FnOnce() -> Result<()> + Send + 'static,
-    {
-        let done = Arc::new(AtomicBool::new(false));
-        let worker = {
-            let done = done.clone();
-            std::thread::Builder::new()
-                .name("app".into())
-                .spawn(move || {
-                    let result = work();
-                    done.store(true, Ordering::Release);
-                    CFRunLoop::get_main().stop();
-                    result
-                })?
-        };
-        while !done.load(Ordering::Acquire) {
-            let result = CFRunLoop::run_in_mode(
-                unsafe { kCFRunLoopDefaultMode },
-                Duration::from_millis(250),
-                false,
-            );
-            // No sources yet (e.g. before media controls register): don't spin.
-            if result == CFRunLoopRunResult::Finished {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }
-        worker.join().map_err(|_| anyhow!("app thread panicked"))?
     }
 }

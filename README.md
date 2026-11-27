@@ -1,7 +1,7 @@
 # Yarek Music
 
 A lightweight player for YouTube Music — a desktop window styled after
-YouTube Music, a terminal UI, and native iPhone and Android apps. macOS,
+YouTube Music, and native iPhone and Android apps. macOS,
 Linux, Windows, iOS, Android.
 
 - **Browse and play:** home feed, Explore (charts, new releases, moods and
@@ -17,8 +17,7 @@ Linux, Windows, iOS, Android.
   watched in the window and handed back to the audio where the video stopped.
 - **English or Ukrainian:** the whole interface, switched in Settings
   (`language` in the config; `auto` follows the system).
-- **Light:** the terminal UI takes ~10 MB of memory idle and ~15 MB while
-  playing, the window ~50 MB playing and ~30 MB closed to the tray; near-zero
+- **Light:** the window takes ~50 MB playing and ~30 MB closed to the tray; near-zero
   CPU. A YouTube Music browser tab typically takes several hundred MB.
 - **No or bad internet:** a clear "No internet connection" instead of error
   chains, screens that load again by themselves when the connection is back,
@@ -71,7 +70,7 @@ each ask once — that, the install scripts and building from source are in
 | | |
 |---|---|
 | [install.md](docs/install.md) | installers, install scripts, building, updates, uninstall |
-| [usage.md](docs/usage.md) | the window, the terminal UI and its keys, `yarek` commands |
+| [usage.md](docs/usage.md) | the window, `yarek` commands |
 | [google-account.md](docs/google-account.md) | signing in, library sync, the optional Data API |
 | [configuration.md](docs/configuration.md) | `config.toml`, Chromecast, Last.fm, Discord, offline |
 | [iphone.md](docs/iphone.md) | the iPhone app: install, sign in, limits |
@@ -89,7 +88,6 @@ each ask once — that, the install scripts and building from source are in
   audible gain, so it isn't used.
 - yt-dlp runs as a short-lived child process, one at a time (~90 MB for a
   couple of seconds while it fetches a track link).
-- On Windows, media keys work in the window, not in the terminal UI.
 - Chromecast is tested against a simulated receiver only so far.
 - Linux packages are x86_64 only; other architectures build from source with
   `install.sh`.
@@ -98,7 +96,7 @@ each ask once — that, the install scripts and building from source are in
 
 ```bash
 cargo build --release     # binary: target/release/yarek
-cargo test                # unit, window and terminal-UI tests
+cargo test                # unit and window tests
 cargo test -- --ignored   # tests that hit the network
 ```
 

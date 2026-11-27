@@ -19,11 +19,7 @@ client_secret = ""
 device_client_id = ""
 device_client_secret = ""
 
-# Interface `yarek` opens: "tui" (terminal) or "gui" (window).
-ui = "tui"
-
-# Language of the window and the terminal UI: "auto" (the system's),
-# "en" or "uk".
+# Language of the window: "auto" (the system's), "en" or "uk".
 language = "auto"
 
 # Media keys and the system "Now Playing" widget (macOS, Linux).
@@ -92,7 +88,6 @@ pub struct Settings {
     pub client_secret: String,
     pub device_client_id: String,
     pub device_client_secret: String,
-    pub ui: String,
     /// "auto", "en" or "uk".
     pub language: String,
     pub media_controls: bool,
@@ -122,7 +117,6 @@ impl Default for Settings {
             client_secret: String::new(),
             device_client_id: String::new(),
             device_client_secret: String::new(),
-            ui: "tui".into(),
             language: "auto".into(),
             media_controls: true,
             audio_device: String::new(),

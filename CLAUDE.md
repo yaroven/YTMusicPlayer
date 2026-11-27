@@ -1,7 +1,7 @@
 # Yarek Music
 
-Lightweight cross-platform (macOS, Linux, Windows) music player in Rust (TUI
-and a Slint desktop window), plus native iPhone (Swift) and Android (Kotlin)
+Lightweight cross-platform (macOS, Linux, Windows) music player in Rust (a Slint
+desktop window and CLI commands), plus native iPhone (Swift) and Android (Kotlin)
 apps, synced with a YouTube Music account. Its reason to exist is being a much
 lighter alternative to the YouTube Music browser tab: RAM, CPU and disk
 footprint are first-class requirements. Measure, don't guess.
@@ -31,33 +31,24 @@ states a new rule, append it here (numbered, with a one-line reason).
 cargo build --release               # binary: target/release/yarek (~8 MB)
 cargo test                          # unit tests
 cargo test -- --ignored             # network tests (downloads yt-dlp)
-yarek                               # TUI;  yarek --help for all commands
+yarek                               # the window;  yarek --help for all commands
 yarek play <id|url>                 # headless playback, good for testing audio
 yarek resolve <id> [--js]           # debug URL resolution
 yarek config                        # prints config.toml path
 ```
 
 Logs go to `<cache_dir>/logs/yarek.log` (filter: `YTM_LOG=debug`), never to
-stdout/stderr — the terminal belongs to the TUI.
+stdout/stderr (CLI commands print their own output there).
 
-## Testing the TUI / audio without bothering the user
+## Testing the GUI / audio without bothering the user
 
 - Set `volume = 0.0` in config.toml before playback tests; restore after.
-- No tmux here. Drive the TUI with Python `pty` + `pyte` (pip install
-  `--target` into the scratchpad), send keys, print `screen.display`. Mouse:
-  write SGR sequences (`\x1b[<0;col;rowM` / `m`, 1-based); send both clicks of
-  a double-click in one write (the driver pauses 0.3 s per step).
 - Unit tests use the seams instead of real devices: `Session::with_playback`
   + a recording `Playback` fake, scripted `Extractor`s with a local HTTP
   server, `Tokens::new(InMemory)`, `Library::open_in_memory`. Shared
   helpers (fake player/extractor, `session_with`, `seeded_library`,
   `artist_page`) live in `src/testing.rs`.
-- **Regression tests — prefer them to manual GUI/TUI runs**:
-  - TUI (`src/app_tests.rs`): `App::new` on a fake session, keys via
-    `on_key`, screen rendered into ratatui's `TestBackend` and compared
-    with insta snapshots in `src/snapshots/`. After an intended UI change:
-    `INSTA_UPDATE=always cargo test` (or `cargo insta review`), then look
-    at the diff before committing.
+- **Regression tests — prefer them to manual GUI runs**:
   - GUI (`src/gui/tests.rs`): Slint's headless testing backend
     (`i-slint-backend-testing`, pinned to the slint version); build with
     `new_view` + `open_window`, feed `Snapshot`s to `View::absorb`, invoke
@@ -71,7 +62,7 @@ stdout/stderr — the terminal belongs to the TUI.
 - Memory: compare `footprint -p PID` (phys_footprint, what Activity Monitor
   shows), not RSS — RSS includes shared framework pages and is noisy.
   Build the previous commit in a `git worktree` to compare like for like.
-- Run TUI/CLI tests with `HOME=<scratch dir>` (create config with
+- Run GUI/CLI tests with `HOME=<scratch dir>` (create config with
   `yarek config`, copy the managed yt-dlp into its `bin/`). The user is logged
   in on this Mac: with the real HOME every rebuilt binary triggers a macOS
   Keychain permission dialog and the app waits on it (looks like a hang).
@@ -98,21 +89,18 @@ stdout/stderr — the terminal belongs to the TUI.
 ## Architecture
 
 Library crate (`src/lib.rs`) plus thin binary (`src/main.rs`, CLI commands,
-single-threaded tokio runtime; on macOS the TUI runs on a worker thread and
-main services the CFRunLoop for media keys).
+single-threaded tokio runtime; the window owns the main thread).
 
 | Module | Role |
 |---|---|
 | `session` | UI-independent core: queue, playback (preload for gapless/crossfade, autoplay radio, sleep timer, history), background work (sync, library edits, downloads, search, pages, lyrics, sign-in), media keys, `Listener`s, cast switching; `next_event()` reports `Changes`, `view()` returns one `SessionView`; takes a `Playback` adapter (`with_playback` in tests). Split: `library.rs`, `discover.rs`, `cast.rs` |
-| `library_view` | what the list shows (`Source`: Playlist, Search, Page, Home, History, Downloads, Saved), back stack (12), filter, selection, action target, "save to" choices, reaction to `Changes`; both frontends render it |
+| `library_view` | what the list shows (`Source`: Playlist, Search, Page, Home, History, Downloads, Saved), back stack (12), filter, selection, action target, "save to" choices, reaction to `Changes`; the window renders it |
 | `catalog` | YouTube Music InnerTube (WEB_REMIX, quota-free): search by category, pages (`MPREb_`/`UC`/`VL`), home, radio (`RDAMVM`), related, lyrics; loudness via the IOS client's player response |
 | `lyrics` | LRCLIB synced lyrics (duration ±4 s), YouTube Music text as fallback; current line by position |
 | `cast` | Chromecast: hand-rolled mDNS (one unicast-answer query) + Cast v2 client (rustls, hand-encoded CastMessage); `CastPlayer: Playback` drives the Default Media Receiver |
 | `lastfm`, `discord`, `notify` | `Listener`s: Last.fm scrobbler (md5-signed, session key in `<data_dir>/lastfm.session`), Discord IPC presence on its own thread; GUI track notifications (notify-rust) |
 | `account` | OAuth client setup, browser/device sign-in, sign-out, YouTube API client; token behind `api::token_store::Tokens` (Keyring / InMemory) |
 | `bootstrap` | builds the HTTP client, yt-dlp, Track source, Account and `Deps` for every frontend and CLI command |
-| `app` | TUI frontend: focus, popups, mouse; `select!` over input + `session.next_event()`; redraws only when dirty |
-| `ui::{keymap, views}` | ratatui rendering; track table builds widgets for visible rows only |
 | `audio::source` | Track source: `open(track, remote)` → downloaded file, bounded stream (+ loudness gain, 3 s cap) or, for cast, just the URL; downloads; owns URL cache, yt-dlp ladder, 403/410 refresh, prefetch, search, daily update; yt-dlp behind the `Extractor` seam |
 | `audio::resolver` (private) | URL cache (16 in memory, rest in SQLite), one yt-dlp at a time, JS switch, update-once |
 | `audio::player` | `Playback` trait; `PlayerHandle` = rodio on its own thread (256 KiB stack), one rodio Player per track on a shared mixer: gapless = append within 2 s of the end, crossfade = second player + volume ramp; gain via `amplify`; device opened lazily, closed after 30 s idle; events tagged with a load `generation` |
@@ -245,7 +233,7 @@ Domain terms are defined in `CONTEXT.md`.
   `${x,,}`; check with `/bin/bash -n install.sh`. It removes other
   Yarek Music binaries/apps (identified by `--help` banner / bundle id) so
   only one of each remains.
-- Tests that launch the GUI/TUI must use their own `TMPDIR` (single-instance
+- Tests that launch the GUI must use their own `TMPDIR` (single-instance
   socket is per user, not per HOME) or they find the user's running player.
 - **Windows media keys**: souvlaki SMTC needs an HWND, so only the GUI
   has them (`media::set_window_handle` before the session starts).
@@ -267,10 +255,8 @@ Domain terms are defined in `CONTEXT.md`.
   (`yarek uninstall` writes it to temp and execs bash). Never test `--purge`
   with the real HOME on this Mac: `yarek logout` hits the real Keychain entry
   (Keychain isn't per-HOME). Windows: Inno uninstaller / `uninstall.ps1`.
-- **Windows console**: `yarek` is a console program (TUI/CLI); `yarek gui` frees
+- **Windows console**: `yarek` is a console program (CLI); the window frees
   the console when it owns it alone (started from the Start menu).
-- **Bundle detection**: the app binary opens the GUI only when stdin isn't a
-  TTY, so `/usr/local/bin/yarek` (link into the bundle) still opens the TUI.
 - **Search**: Data API `search.list` (100 units, music category, 25 hits,
   +1 unit for durations) only on Enter / `o`, never as-you-type; falls back
   to yt-dlp `ytsearch25:` with `--flat-playlist` (~2 s, no quota) when not
@@ -279,8 +265,8 @@ Domain terms are defined in `CONTEXT.md`.
   GUI's "Google account" overlay saves the OAuth client into config.toml
   (`Settings::store_client`), imports the newest Downloads
   `client_secret_*.json`, and runs the loopback login on the core thread
-  (`Session::sign_in`; `auth::login` takes a URL callback so the TUI's
-  screen isn't printed over). Opens by itself when not signed in. An
+  (`Session::sign_in`; `auth::login` takes a URL callback, so the
+  caller decides how to show the URL). Opens by itself when not signed in. An
   overlay, not a PopupWindow, so text fields keep focus. Testing with a
   sandbox HOME: fake client JSON is fine; never click Sign in (opens the
   real browser) and remember the token lives in the real Keychain.
@@ -502,7 +488,7 @@ Domain terms are defined in `CONTEXT.md`.
   a truncated `<id>.m4a` that no record points at: `TrackSource::clean_downloads`
   deletes everything in the folder the library doesn't know, right after a
   cancel. "Delete all" (`remove_all_downloads`) removes the files and the
-  records; the GUI asks first, the TUI has it in the `m` menu.
+  records; the GUI asks first.
 
 - **Watching the clip in the window** (user's request 2026-10-14, who asked
   for YouTube Music's behaviour: the video in the app, not a browser): the
@@ -527,7 +513,7 @@ Domain terms are defined in `CONTEXT.md`.
   processes 547 MB (WebContent) + 35 MB (GPU) + 16 MB (Networking) while a
   YouTube page plays — they are separate processes and all of it goes when
   the video is switched off, which destroys the web view.
-  The TUI and Linux keep `video::watch` / `video::watch_url`: a child
+  Linux keeps `video::watch` / `video::watch_url`: a child
   process `yarek video-window <id> <seconds>` (same trick as `signin`) or the
   browser. `YTM_VIDEO_EXIT_AFTER=<secs>` closes that window by itself, for
   testing without a hand on the mouse.
@@ -605,7 +591,7 @@ Domain terms are defined in `CONTEXT.md`.
 - **No / bad internet, every frontend** (user's request 2026-10-19): a
   network failure waits instead of skipping and shows plain words, not the
   error chain. Desktop: `net::problem`; the session sets `offline`
-  (`SessionView.offline`: window banner + Retry, TUI ⚠ in the status line),
+  (`SessionView.offline`: window banner + Retry),
   probes every 4 s (`PROBE_EVERY`), and on success replays the waiting song
   at `resume_at`, reloads Home / Explore / the failed page. A track ending
   more than 8 s (`EARLY_END`) before its length asks the probe first (the
@@ -715,13 +701,10 @@ Domain terms are defined in `CONTEXT.md`.
 - **Sign-in first, everywhere** (user's call 2026-10-20: the app must not
   show anonymous "fake" suggestions, only the account's own music): until
   YouTube is signed in, the window shows only its sign-in screen (ui.rs,
-  above everything but the account dialog), the TUI only a sign-in box
-  (Enter = window / import a browser's sign-in, `b` browser, `q` quit),
-  the phones only `WelcomeView` / `WelcomeScreen`; `Session::load_home`
+  above everything but the account dialog), the phones only `WelcomeView` / `WelcomeScreen`; `Session::load_home`
   does nothing while signed out. The legacy Data API sign-in alone isn't
   enough (its Home would be anonymous). Tests run signed in
-  (`YouTubeSession::signed_in_for_tests`, made-up cookies in memory);
-  `sign_out_for_tests` for the signed-out cases. Personal mixes ("Mixed
+  (`YouTubeSession::signed_in_for_tests`, made-up cookies in memory). Personal mixes ("Mixed
   for you": My Supermix, My Mix 1–7, Discover / Replay / Archive Mix) come
   with the signed-in Home as playlists `VLRDTMAK…` — checked live 2026-10-20
   (`sync::tests::live_home_mixes`, the user's cookies).
@@ -849,7 +832,6 @@ Domain terms are defined in `CONTEXT.md`.
   memory measurement on a real device; the video pane and crossfade on a
   real device (checked on macOS only).
 
-- Windows media keys in the TUI (needs a hidden window for SMTC).
 - Chromecast verified only against the simulated receiver in
   `cast::tests`; try a real device (googlevideo URLs are IP-bound: same
   public IP needed).

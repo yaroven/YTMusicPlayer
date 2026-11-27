@@ -1,6 +1,6 @@
 //! Builds the app's dependencies from settings: the HTTP client, the
 //! Library, the Track source (with yt-dlp located or downloaded) and the
-//! Account. Shared by the terminal UI, the window and the CLI commands.
+//! Account. Shared by the window and the CLI commands.
 
 use std::{
     sync::{Arc, atomic::AtomicBool},

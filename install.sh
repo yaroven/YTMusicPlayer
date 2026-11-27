@@ -16,7 +16,7 @@ usage() {
   cat <<'EOF'
 Usage: ./install.sh [options]
 
-  -y, --yes        don't ask; accept defaults (never starts the TUI)
+  -y, --yes        don't ask; accept defaults (never starts the player)
   --from-source    build from this checkout instead of downloading a release
   --no-deps        skip system package installation (source builds)
   --no-launch      don't start yarek at the end

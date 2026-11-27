@@ -7,8 +7,7 @@ Everything in it is optional — the player works with the defaults.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `ui` | `"tui"` | what `yarek` opens: `"tui"` or `"gui"` |
-| `language` | `"auto"` | language of the window and the terminal UI: `"auto"` (the system's), `"en"` or `"uk"` |
+| `language` | `"auto"` | language of the window: `"auto"` (the system's), `"en"` or `"uk"` |
 | `volume` | `0.8` | volume for the very first start |
 | `autoplay` | `true` | when the queue runs out, keep playing the last song's radio |
 | `normalize_volume` | `true` | turn loud tracks down to YouTube's loudness target |
@@ -33,8 +32,7 @@ detail).
 
 ## Integrations
 
-- **Chromecast:** the Cast button in the player bar (or `C` in the terminal
-  UI) lists devices on your network; the device streams the audio itself, and
+- **Chromecast:** the Cast button in the player bar lists devices on your network; the device streams the audio itself, and
   "This computer" brings playback back. Downloaded files are cast from YouTube
   too. On macOS allow "Local Network" access when asked.
 - **Last.fm:** create an API account at

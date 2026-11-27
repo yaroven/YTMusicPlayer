@@ -3,7 +3,6 @@
 
 pub mod account;
 pub mod api;
-pub mod app;
 pub mod audio;
 pub mod bootstrap;
 pub mod cast;
@@ -29,7 +28,6 @@ pub mod sync;
 pub mod sysmem;
 #[cfg(test)]
 pub(crate) mod testing;
-pub mod ui;
 pub mod update;
 pub mod video;
 pub mod youtube_session;

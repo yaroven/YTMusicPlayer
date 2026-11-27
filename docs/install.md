@@ -16,7 +16,7 @@ Download the file for your system from the
 | macOS 11+ (Apple Silicon and Intel) | `yarek-music-<version>-macos.pkg` | open it |
 
 Each one adds **Yarek Music** to your applications (opens the window) and the
-`yarek` command (terminal UI and the [commands](usage.md#commands)). Linux
+`yarek` command (the window and the [commands](usage.md#commands)). Linux
 packages need glibc 2.35+ (Debian 12, Ubuntu 22.04, current Fedora and Arch)
 and are x86_64 only — other architectures can use `install.sh`, which builds
 from source.
@@ -71,8 +71,8 @@ compiled in):
 | Windows | Visual Studio Build Tools, workload "Desktop development with C++" |
 
 ```bash
-cargo install --path . --locked                        # window + terminal UI
-cargo install --path . --locked --no-default-features  # terminal UI only (smaller)
+cargo install --path . --locked                        # window + commands
+cargo install --path . --locked --no-default-features  # commands only, no window (smaller)
 ```
 
 ## Updates

@@ -54,8 +54,8 @@ more. If you want it:
      JSON** finds the newest `client_secret_*.json` in your Downloads; or
      paste the client ID and secret and click **Save client**.
    - **In a terminal:** `yarek import-client ~/Downloads/client_secret_….json`
-6. Sign in: **Sign in with Google** inside that section, `L` in the terminal
-   UI, or `yarek login`. Your browser opens; Google warns that the app is
+6. Sign in: **Sign in with Google** inside that section or
+   `yarek login`. Your browser opens; Google warns that the app is
    unverified — choose **Continue**, it is your own app. The app asks to
    manage your YouTube account so it can like tracks and add them to
    playlists; it never deletes anything.
