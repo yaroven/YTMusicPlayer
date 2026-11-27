@@ -259,6 +259,21 @@ impl Catalog {
             .and_then(|r| parse_duration(&text(r.get("lengthText"))))
             .map(f64::from);
         let cover = entry.and_then(|r| album_art(r.get("thumbnail")?));
+        // YouTube Music's own name for it ("Fence" / "Sevendust"): the listed
+        // one may be the video's ('Sevendust - "Fence" (Official …)', on the
+        // label's channel), which matches no song (NixNsandZ34).
+        let (own_title, own_artist) = entry.map(queue_names).unwrap_or_default();
+        let (listed_title, listed_artist) = (title, artist);
+        let title = if own_title.is_empty() {
+            title
+        } else {
+            &own_title
+        };
+        let artist = if own_artist.is_empty() {
+            artist
+        } else {
+            &own_artist
+        };
         let lead = lead_artist(artist);
         let query = format!("{lead} {}", song_title(title, &lead));
         let is_song = matches!(
@@ -286,7 +301,8 @@ impl Catalog {
         let other = found.into_iter().find(|(t, kind, _)| {
             t.video_id.as_ref() != video_id
                 && (!is_song || kind.as_deref() == Some("MUSIC_VIDEO_TYPE_OMV"))
-                && same_recording(title, artist, &t.title, &t.artist)
+                && (same_recording(title, artist, &t.title, &t.artist)
+                    || same_recording(listed_title, listed_artist, &t.title, &t.artist))
                 && match (length, t.duration_secs.map(f64::from)) {
                     // A clip runs as long as its song or longer (an intro,
                     // an outro), not much shorter.
@@ -1065,6 +1081,16 @@ fn parse_suggestions(data: &Value) -> Vec<String> {
         .collect()
 }
 
+/// Title and first artist of a queue entry.
+fn queue_names(entry: &Value) -> (String, String) {
+    let artist = runs(entry.get("longBylineText"))
+        .first()
+        .and_then(|run| run.get("text"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    (text(entry.get("title")), artist.to_owned())
+}
+
 /// YouTube Music's search filter for videos (clips).
 const SEARCH_VIDEOS: &str = "EgWKAQIQAWoMEA4QChADEAQQCRAF";
 
@@ -1499,6 +1525,17 @@ mod tests {
         println!("{clip:?}");
         assert_ne!(clip.song, "fJ9rUzIMcZQ", "the clip plays the studio track");
         assert_eq!(clip.video.as_deref(), Some("fJ9rUzIMcZQ"));
+        // The same clip listed by its video's name on the label's channel.
+        let listed = catalog
+            .media_pair(
+                "NixNsandZ34",
+                "Sevendust - \"Fence\" (Official Music Video)",
+                "Rise Records",
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.song, "QCLMxzpSEN8");
         // A clip's own queue entry has only its frame: the album art comes
         // from the studio song (user's report 2026-11-23).
         let fence = catalog

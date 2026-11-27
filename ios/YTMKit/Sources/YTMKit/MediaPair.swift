@@ -52,8 +52,14 @@ extension Catalog {
         let isSong = kind == "MUSIC_VIDEO_TYPE_ATV" || kind == "MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK"
         let cover = entry.flatMap { albumArt($0) }
         if isSong && !findClip { return MediaPair(song: videoId, video: nil, offset: 0, cover: cover) }
-        let lead = leadArtist(artist)
-        let query = "\(lead) \(songTitle(title, artist: lead))"
+        // YouTube Music's own name for it: the listed one may be the video's,
+        // on the label's channel, which matches no song.
+        let entryTitle = text(entry?["title"])
+        let entryArtist = runs(entry?["longBylineText"]).first?["text"] as? String ?? ""
+        let ownTitle = entryTitle.isEmpty ? title : entryTitle
+        let ownArtist = entryArtist.isEmpty ? artist : entryArtist
+        let lead = leadArtist(ownArtist)
+        let query = "\(lead) \(songTitle(ownTitle, artist: lead))"
         let params = isSong ? searchVideosParams : SearchKind.songs.params
         let rows: [(Track, String?, String?)] = ((try? await call("search", ["query": query, "params": params])).map { data in
             findAll(data, "musicResponsiveListItemRenderer").compactMap { row -> (Track, String?, String?)? in
@@ -63,7 +69,8 @@ extension Catalog {
         }) ?? []
         let found = rows.first { track, type, _ in
             guard track.videoId != videoId, !isSong || type == "MUSIC_VIDEO_TYPE_OMV",
-                  sameRecording(title, artist, track.title, track.artist) else { return false }
+                  sameRecording(ownTitle, ownArtist, track.title, track.artist)
+                      || sameRecording(title, artist, track.title, track.artist) else { return false }
             guard let mine = length, let theirs = track.durationSecs.map(Double.init) else { return true }
             // A clip runs as long as its song or longer, not much shorter.
             return isSong ? theirs >= mine - 3 && theirs <= mine + 180 : theirs <= mine + 3 && theirs >= mine * 0.6

@@ -814,6 +814,8 @@ Domain terms are defined in `CONTEXT.md`.
   and is retried, never the clip's sound) and record it
   (`downloads.audio_id`); older downloads are checked once per run
   (`recheck_download`) and a clip saved with its own sound is replaced.
+  Names come from `next`'s own entry first: a listing may carry the
+  video's title on the label's channel, which matched no song (2026-11-24).
 - **Player bar**: both side layouts take the wider one's preferred width
   (`side`), so the song block is centred in the window, not in what the
   sides left (user's screenshot 2026-10-26). iPhone's top row got a 40 pt

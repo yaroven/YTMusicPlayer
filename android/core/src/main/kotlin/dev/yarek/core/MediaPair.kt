@@ -42,8 +42,11 @@ suspend fun Catalog.mediaPair(videoId: String, title: String, artist: String, fi
     val isSong = kind == "MUSIC_VIDEO_TYPE_ATV" || kind == "MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK"
     val cover = entry?.let { albumArt(it.opt("thumbnail")) }
     if (isSong && !findClip) return MediaPair(videoId, null, 0.0, cover)
-    val lead = leadArtist(artist)
-    val query = "$lead ${songTitle(title, lead)}"
+    // YouTube Music's own name for it: the listed one may be the video's, on the label's channel, which matches no song.
+    val ownTitle = text(entry?.opt("title")).ifEmpty { title }
+    val ownArtist = runs(entry?.opt("longBylineText")).firstOrNull()?.str("text").orEmpty().ifEmpty { artist }
+    val lead = leadArtist(ownArtist)
+    val query = "$lead ${songTitle(ownTitle, lead)}"
     val rows = runCatching {
         val found = call("search", json("query" to query, "params" to if (isSong) SEARCH_VIDEOS else SearchKind.Songs.params))
         findAll(found, "musicResponsiveListItemRenderer").filterIsInstance<org.json.JSONObject>().mapNotNull { r ->
@@ -53,7 +56,7 @@ suspend fun Catalog.mediaPair(videoId: String, title: String, artist: String, fi
     }.getOrDefault(emptyList())
     val found = rows.firstOrNull { (t, type, _) ->
         if (t.videoId == videoId || (isSong && type != "MUSIC_VIDEO_TYPE_OMV")) return@firstOrNull false
-        if (!sameRecording(title, artist, t.title, t.artist)) return@firstOrNull false
+        if (!sameRecording(ownTitle, ownArtist, t.title, t.artist) && !sameRecording(title, artist, t.title, t.artist)) return@firstOrNull false
         val theirs = t.durationSecs?.toDouble()
         when {
             length == null || theirs == null -> true
