@@ -105,7 +105,7 @@ class Library(private val context: Context, private val catalog: Catalog, privat
     var saved by mutableStateOf<List<SavedPage>>(emptyList())
         private set
 
-    /** Songs on the phone, newest first. */
+    /** Songs on the phone, in download order. */
     var downloads by mutableStateOf<List<Downloaded>>(emptyList())
         private set
 

@@ -54,8 +54,9 @@ class PlaybackService : MediaSessionService() {
 }
 
 /**
- * Notification / lock screen art: the centre square of the video
- * thumbnail (maxresdefault, else hqdefault with its letterbox bars cut).
+ * Notification / lock screen art: a kept cover file as it is, else the
+ * centre square of the picture (album art, or the video thumbnail:
+ * maxresdefault, else hqdefault with its letterbox bars cut).
  */
 @OptIn(UnstableApi::class)
 private class SquareArtLoader : BitmapLoader {

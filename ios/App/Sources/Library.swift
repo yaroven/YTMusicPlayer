@@ -65,9 +65,8 @@ final class Library {
     private(set) var history: [Track] = []
     private(set) var playlists: [LocalPlaylist] = []
     private(set) var saved: [SavedPage] = []
-    /// Songs on the phone, newest first.
+    /// Songs on the phone, in download order.
     private(set) var downloads: [Downloaded] = []
-    /// Songs being downloaded now.
     private(set) var downloading: Set<String> = []
     /// How far a batch got: done of total ("Downloading 3 of 12").
     private(set) var batchDone = 0
@@ -81,7 +80,6 @@ final class Library {
     @ObservationIgnored private var downloadsStopped = false
     @ObservationIgnored private var queue: [Track] = []
     @ObservationIgnored private var worker: Task<Void, Never>?
-    /// A sync is running.
     private(set) var syncing = false
     /// Last failure of a sync or of a write back to YouTube.
     var error: String?
@@ -712,7 +710,6 @@ final class Library {
         save()
     }
 
-    /// Deletes every downloaded song.
     func removeAllDownloads() {
         cancelDownloads()
         for item in downloads {

@@ -2,7 +2,6 @@ package dev.yarek.core
 
 import org.json.JSONObject
 
-/** A song. */
 data class Track(
     val videoId: String,
     val title: String,
@@ -78,7 +77,7 @@ enum class ShelfStyle {
     /** Square cards in a row (albums, playlists, artists). */
     Cards,
 
-    /** Song rows ("Quick picks"): a grid of small tiles, three rows high. */
+    /** Song rows ("Quick picks"): columns of four rows, paged sideways. */
     Grid,
 
     /** 16:9 cards (music videos). */

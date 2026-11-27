@@ -204,7 +204,6 @@ slint::slint! {
         cards: [CardRow],
     }
 
-    // state: 0 upcoming, 1 being sung, 2 sung, 3 not synced.
     // state: 0 upcoming, 1 being sung, 2 sung, 3 unsynced lyrics.
     export struct LyricLine {
         text: string,
@@ -309,7 +308,6 @@ slint::slint! {
         }
     }
 
-    // Pill button ("Play", "Shuffle"); icon-only when `compact`.
     // YouTube Music's "E": explicit lyrics (18+).
     component ExplicitBadge inherits Rectangle {
         width: 16px;
@@ -328,6 +326,7 @@ slint::slint! {
         }
     }
 
+    // Pill button ("Play", "Shuffle"); icon-only when `compact`.
     component Pill inherits Rectangle {
         in property <string> text;
         in property <string> icon;
@@ -478,8 +477,6 @@ slint::slint! {
         }
     }
 
-    // Two-line row: art, title over artist, duration (as in YT Music lists).
-    // On hover: save to playlist, like, more (⋮); a liked heart stays.
     // A red dot over a button: something waits there (an update).
     component Badge inherits Rectangle {
         width: 10px;
@@ -490,6 +487,8 @@ slint::slint! {
         border-color: Yt.bg;
     }
 
+    // Two-line row: art, title over artist, duration (as in YT Music lists).
+    // On hover: save to playlist, like, more (⋮); a liked heart stays.
     component TrackItem inherits Rectangle {
         in property <TrackRow> track;
         in property <bool> selected;
@@ -1257,7 +1256,7 @@ slint::slint! {
         in property <[string]> add-choices;
         in-out property <int> selected-playlist: -1;
         // Sidebar destination: 0 none, 1 home, 2 history, 3 downloads,
-        // 4 albums, 5 artists, 6 search results.
+        // 4 albums, 5 artists, 6 search results, 7 explore.
         in property <int> nav;
         in property <[TrackRow]> tracks;
         in-out property <int> selected-track: -1;
@@ -1310,8 +1309,6 @@ slint::slint! {
         in property <[string]> search-suggestions;
         // 0 songs, 1 albums, 2 artists, 3 playlists (when showing results).
         in property <int> search-kind;
-        // Downloads: the playlists downloaded whole, and the chosen one
-        // (-1: every downloaded song).
         // The shown list can be kept offline / is.
         in property <bool> can-keep-offline;
         in-out property <bool> kept-offline;
@@ -1340,7 +1337,7 @@ slint::slint! {
         in property <int> repeat-mode;
         in property <bool> liked;
         in property <bool> autoplay;
-        // "" or "23 min" / "end of track".
+        // "" or "23 min" / "end of song".
         in property <string> sleep-text;
         // Name of the Cast device playing ("" = this computer).
         in property <string> casting;

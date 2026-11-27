@@ -123,7 +123,7 @@ pub struct Art {
     pub pixels: Pixels,
     /// Average colour, for the now-playing background.
     pub tint: (u8, u8, u8),
-    /// Large covers: a 12 px copy that, stretched over the now-playing
+    /// Large covers: a small blurred copy that, stretched over the now-playing
     /// view, looks like a blurred cover (no blur filter in the renderer).
     pub backdrop: Option<SharedPixelBuffer<Rgb8Pixel>>,
 }

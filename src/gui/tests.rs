@@ -395,7 +395,7 @@ fn queue_rows_move_and_go() {
     ));
 }
 
-/// The player bar's video button switches the window to the clip (on
+/// "Video" over the cover switches the window to the clip (on
 /// Linux, which has no system web view, it hands it to the browser).
 #[test]
 fn the_video_button_switches_to_the_clip() {

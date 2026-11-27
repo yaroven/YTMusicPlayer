@@ -156,7 +156,6 @@ pub struct Changes {
     pub related: bool,
     /// Saved albums / followed artists changed.
     pub saved: bool,
-    /// Downloads changed.
     pub downloads: bool,
     /// The history was edited (entries removed, cleared).
     pub history: bool,
@@ -183,7 +182,6 @@ pub struct SessionView {
     pub status: Option<(String, bool)>,
     pub syncing: bool,
     pub searching: bool,
-    /// The language the UI should use.
     pub lang: Lang,
     /// The clip of the playing song is open in the video window.
     pub watching: bool,
@@ -433,8 +431,6 @@ pub struct Session {
     /// Lyrics of the playing track (when asked for with `want_lyrics`).
     pub lyrics: Option<(Arc<str>, Option<Arc<Lyrics>>)>,
     want_lyrics: bool,
-    /// The playing track's clip (YouTube Music's "Video") and how far it
-    /// runs ahead of the song, once looked up; `None` inside: no clip.
     /// The playing song's `next` lookup: its clip and its album art.
     video_pair: Option<Pair>,
     /// Related shelves of the playing track (when asked for).
@@ -1212,7 +1208,6 @@ impl Session {
         self.player.toggle_pause();
     }
 
-    /// The window switched to the video: the audio waits there.
     /// The playing track's clip and its offset, when known.
     pub(super) fn clip(&self) -> Option<Clip> {
         let now = self.queue.current()?;
@@ -1242,6 +1237,7 @@ impl Session {
         clip_at.saturating_sub(Duration::from_secs_f64(offset))
     }
 
+    /// The window switched to the video: the audio waits there.
     pub fn pause_for_video(&mut self) {
         self.watching = true;
         self.player.set_paused(true);
@@ -1438,7 +1434,6 @@ impl Session {
         self.queue_changed();
     }
 
-    /// Adds tracks to the end of the queue.
     pub fn add_to_queue(&mut self, tracks: Vec<Track>) {
         let n = tracks.len();
         self.queue.append(tracks);

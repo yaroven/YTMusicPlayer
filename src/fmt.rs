@@ -1,4 +1,4 @@
-//! Display formatting shared by both frontends.
+//! Display formatting for the window.
 
 use std::time::Duration;
 

@@ -542,8 +542,8 @@ impl TrackSource {
     }
 
     /// Deletes files in the downloads folder that no record points at: what
-    /// a cancelled download leaves behind (yt-dlp writes straight to the
-    /// final file, `--no-part`).
+    /// a cancelled download leaves behind (yt-dlp with `--no-part` and the
+    /// ranged download both write straight to the final file).
     pub async fn clean_downloads(&self) -> Result<usize> {
         let (Some(dir), Some(store)) = (&self.options.downloads, &self.options.store) else {
             return Ok(0);
@@ -591,7 +591,7 @@ impl TrackSource {
         Ok(self.resolver.search(query, max).await?)
     }
 
-    /// Background daily self-update of the extractor.
+    /// Background daily self-update of the extractor and InnerTube's client list.
     pub fn spawn_maintenance(&self) {
         self.resolver.spawn_maintenance();
     }

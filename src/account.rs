@@ -1,7 +1,7 @@
 //! The Google account: the OAuth client (ID + secret, saved in
 //! `config.toml`), sign-in (browser or device code), the stored token and
 //! the YouTube API client built from them. One module for the CLI
-//! (`yarek import-client`, `yarek login`, `yarek logout`) and both UIs.
+//! (`yarek import-client`, `yarek login`, `yarek logout`) and the window.
 //!
 //! The token lives behind the [`Tokens`] seam: the OS keyring in the app,
 //! memory in tests.
@@ -115,7 +115,6 @@ impl Account {
         self.signed_in_with.filter(|_| self.signed_in())
     }
 
-    /// The configured client ID for `flow`.
     pub fn client_id(&self, flow: Flow) -> Option<&str> {
         self.client(flow).map(|c| c.client_id.as_str())
     }

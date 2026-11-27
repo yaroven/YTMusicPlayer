@@ -145,7 +145,6 @@ public struct HomeFeed: Sendable {
     public var visitor: String?
 }
 
-/// Who is signed in.
 public struct AccountInfo: Sendable {
     public var name: String
     public var photo: URL?

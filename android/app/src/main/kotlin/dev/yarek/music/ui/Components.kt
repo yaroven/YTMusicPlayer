@@ -531,7 +531,7 @@ fun Card(item: Item, songs: List<Track>, wide: Boolean = false) {
 
 /**
  * A shelf: its header (strapline, title, "Play all"), then its cards — in a
- * row, as a three-row grid of tiles (song shelves like "Quick picks"), as
+ * row, as columns of four song rows (song shelves like "Quick picks"), as
  * wide video cards, or as mood tiles.
  */
 @Composable

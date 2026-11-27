@@ -589,7 +589,6 @@ impl Session {
             .unwrap_or(false)
     }
 
-    /// Likes `track`, or removes the like if it's already liked.
     pub fn toggle_like(&mut self, track: Track) {
         let rating = if self.is_liked(&track.video_id) {
             Rating::None
@@ -644,7 +643,6 @@ impl Session {
         });
     }
 
-    /// Removes `track` from one of the user's playlists.
     pub fn remove_from_playlist(&mut self, playlist: Playlist, track: Track) {
         if playlist.id == LIKED_PLAYLIST_ID {
             return self.rate(track, Rating::None);
@@ -859,7 +857,6 @@ impl Session {
 
     // --- downloads ------------------------------------------------------------------
 
-    /// Video ids of the downloaded songs.
     pub(super) fn downloaded_ids(&self) -> HashSet<String> {
         self.deps
             .library

@@ -1092,17 +1092,16 @@ fn card(r: &Value) -> Option<Item> {
     })
 }
 
-/// True for YouTube Music's own liked list, however it is spelled.
 /// Playlist ids travel as `PL…` here; browse ids carry a `VL` prefix.
 fn bare(playlist_id: &str) -> &str {
     playlist_id.trim_start_matches("VL")
 }
 
+/// True for YouTube Music's own liked list, however it is spelled.
 fn is_liked_music(id: &str) -> bool {
     matches!(id, "LM" | "VLLM")
 }
 
-/// Cards in a library grid (its playlists, saved albums).
 /// The account's own playlists: the library's playlist cards without
 /// "Liked Music" (shown as Liked music) and without the "New playlist"
 /// button, which has no page.
@@ -1113,6 +1112,7 @@ fn own_playlists(data: &Value) -> Vec<Item> {
         .collect()
 }
 
+/// Cards in a library grid (its playlists, saved albums).
 fn library_cards(data: &Value) -> Vec<Item> {
     find_all(data, "musicTwoRowItemRenderer")
         .into_iter()

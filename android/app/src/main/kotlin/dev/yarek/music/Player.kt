@@ -62,7 +62,7 @@ class NeedsHls(val videoId: String) : IOException("HLS only")
 
 /**
  * Queue + playback on ExoPlayer. The whole queue sits in ExoPlayer's
- * playlist as `ytm://<video id>` items; a ResolvingDataSource turns each
+ * playlist as `ytm://<video id>` (or `ytmhls://`) items; a ResolvingDataSource turns each
  * into its googlevideo URL (the Resolver, on ExoPlayer's loader thread)
  * when ExoPlayer starts loading it, so the next song preloads and plays
  * gaplessly, and the notification's next / previous work by themselves.

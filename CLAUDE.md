@@ -116,13 +116,13 @@ single-threaded tokio runtime; the window owns the main thread).
 | `sysmem` | own + child (yt-dlp) memory for the status bar: macOS `proc_pid_rusage` phys_footprint, Linux `smaps_rollup` Pss |
 | `media` | souvlaki: media keys + Now Playing (macOS, Linux/MPRIS, Windows SMTC with the GUI's HWND via `set_window_handle`) |
 | `gui` (feature `gui`) | Slint window on the main thread; `Session` on a "core" thread with its own runtime; UI sends `Cmd`s, core pushes `Snapshot`s (`SessionView` + changes + page/home/lyrics/related) via `upgrade_in_event_loop`; `TracksModel` reads rows straight from the `LibraryView` (or the queue); `Cards`/`Shelves` models fill art by URL as it arrives; `tray` (tray-icon / ksni); `ui.rs` is assembled Slint (keep `#rrggbb` colours out of Rust tokenization: `3e…` parses as an exponent — use `rgb()`) |
-| `fmt` | display formatting shared by both UIs |
+| `fmt` | display formatting for the window |
 | `net` | network failures told apart (`problem`: offline / slow / other, from reqwest / io errors and error text incl. yt-dlp's; knows no yt-dlp types), plain-words `describe`, `online()` probe (TCP connect to music.youtube.com) |
 | `packaging/` | Linux .desktop, Arch PKGBUILD, Inno Setup script, macOS pkg builder |
 | `config::{paths, settings}` | per-OS dirs; `config.toml` (template on first run, `store_client` / `store_value` rewrite keys in place, keeping comments) |
 | `ios/YTMKit` (Swift package) | iPhone core, no UI: InnerTube catalog + LRCLIB lyrics ported from `catalog.rs` / `lyrics.rs` (same lenient `findAll` parsing), `Resolver` = on-device stream URLs (no yt-dlp), client list overridable by `ios/clients.json` on main; `swift run YTMKitChecks [--live]` (no XCTest in CLT) |
 | `android/core` (Kotlin/JVM) | port of YTMKit: InnerTube catalog + library writes, `Resolver` (same clients, `ios/clients.json`), LRCLIB lyrics, yt-dlp-ejs solver behind `JsEngine`; plain `HttpURLConnection` + `org.json` (Android's own; `compileOnly`) |
-| `android/app` (Compose, Media3) | `Player` (whole queue in ExoPlayer as `yarek://id` items, `ResolvingDataSource` → stream URL), `PlaybackService` (MediaSessionService, square art), `Library` (JSON), `Network` (connectivity flow, `describe`), `SecureStore` (Keystore AES-GCM cookies), `WebViewJs`, `ui/*` |
+| `android/app` (Compose, Media3) | `Player` (whole queue in ExoPlayer as `ytm://id` items, `ResolvingDataSource` → stream URL), `PlaybackService` (MediaSessionService, square art), `Library` (JSON), `Network` (connectivity flow, `describe`), `SecureStore` (Keystore AES-GCM cookies), `WebViewJs`, `ui/*` |
 | `ios/App` (SwiftUI, iOS 17) | `Player` (AVQueuePlayer, next song resolved ahead, radio autoplay, Now Playing / remote commands, queue saved to `queue.json`), `Library` (the account's liked music / playlists / saved pages synced from YouTube Music and written back, plus history, in one JSON), `Router` (per-tab paths); `project.yml` → XcodeGen in CI; `ios/player-check.sh` runs `Player` on macOS, muted, live |
 
 Domain terms are defined in `CONTEXT.md`.
@@ -571,7 +571,7 @@ Domain terms are defined in `CONTEXT.md`.
   ported anyway; JNI/NDK/oboe and the media notification would be harder).
   Compose + Media3 + Coil; `core` is a plain JVM module so the parsing and
   the live checks run on the Mac. **Whole queue in ExoPlayer**: items are
-  `yarek://<id>`, resolved lazily on ExoPlayer's loader thread by a
+  `ytm://<id>`, resolved lazily on ExoPlayer's loader thread by a
   `ResolvingDataSource` (blocking `runBlocking { resolver.stream }` is fine
   there), so preload / gapless / notification next-previous are
   ExoPlayer's; `NeedsHls` swaps an item to `ytmhls://` + M3U8 (age-

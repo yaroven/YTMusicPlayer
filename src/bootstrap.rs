@@ -65,7 +65,7 @@ pub async fn ytdlp(
     let ytdlp = match YtDlp::find(&paths.bin_dir()) {
         Some(found) => found,
         None => {
-            // Visible for CLI commands; the UIs show "loading" meanwhile.
+            // Visible for CLI commands; the window shows "loading" meanwhile.
             eprintln!("Downloading yt-dlp (first run)…");
             YtDlp::ensure(http, &paths.bin_dir())
                 .await

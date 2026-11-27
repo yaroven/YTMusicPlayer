@@ -114,12 +114,6 @@ fun TopBar(title: String, back: Boolean = false, actions: @Composable () -> Unit
     )
 }
 
-/**
- * YouTube Music's Home: the logo and the account at the top, mood chips,
- * then shelves ("Quick picks" as a grid of tiles, videos wide, the rest as
- * cards), more of them loading as you scroll, over the colours of the first
- * picture.
- */
 /** Home's and Explore's header: the logo, search and the account. */
 @Composable
 fun HomeHeader() {
@@ -131,6 +125,12 @@ fun HomeHeader() {
     }
 }
 
+/**
+ * YouTube Music's Home: the logo and the account at the top, mood chips,
+ * then shelves ("Quick picks" as columns of song rows, videos wide, the rest as
+ * cards), more of them loading as you scroll, over the colours of the first
+ * picture.
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen() {
@@ -212,7 +212,6 @@ private fun OfflineHint() {
 
 fun Track.toItem() = dev.yarek.core.Item(ItemKind.Song, videoId, title, artist, track = this, explicit = explicit)
 
-/** Search, with Explore when nothing is typed and YouTube Music's suggestions while typing. */
 /** Search, with Explore when nothing is typed and YouTube Music's suggestions while typing. */
 @Composable
 fun SearchScreen() {

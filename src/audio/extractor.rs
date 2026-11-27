@@ -1,9 +1,9 @@
 //! yt-dlp discovery, provisioning and direct audio URL resolution.
 //!
-//! Lookup order: `yt-dlp` in `PATH`, then the app-managed copy in
-//! `<data_dir>/bin`. If neither runs, [`YtDlp::ensure`] downloads the official
-//! build for the current OS/arch from GitHub releases and verifies it against
-//! the release's `SHA2-256SUMS` before making it executable.
+//! Lookup order: the app-managed copy in `<data_dir>/bin`; without one,
+//! [`YtDlp::ensure`] downloads the official build for the current OS/arch
+//! from GitHub releases and verifies it against the release's `SHA2-256SUMS`
+//! before making it executable; `yt-dlp` in `PATH` is the last resort.
 //!
 //! On macOS and glibc Linux the "onedir" zip is preferred over the one-file
 //! binary: the one-file build unpacks ~90 MB of Python into a temp dir on

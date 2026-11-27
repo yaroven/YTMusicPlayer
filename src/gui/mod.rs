@@ -228,7 +228,6 @@ impl Snapshot {
     }
 }
 
-/// The playing track's big cover: id, image, average colour.
 /// Video id, cover, average colour, blurred backdrop.
 type LargeArt = (Arc<str>, Image, (u8, u8, u8), Image);
 
@@ -2237,8 +2236,6 @@ fn wire_callbacks(
             send(Cmd::ToggleSaved(item, channel), tx);
         }
     });
-    // The clip plays in the window on macOS / Windows; elsewhere the
-    // browser gets it (`Session::watch_video`).
     on!(on_save_queue_as, [tx, view, ui], |name| {
         send(Cmd::SaveQueue(name.to_string()), tx)
     });
@@ -2755,7 +2752,6 @@ fn push(snap: Snapshot) {
 thread_local! {
     /// The tray icon, when enabled (UI thread).
     static TRAY: RefCell<Option<tray::Tray>> = const { RefCell::new(None) };
-    /// The open window, if any.
     static UI: RefCell<Option<MainWindow>> = const { RefCell::new(None) };
     /// The UI-thread view, for handlers queued from the core thread.
     static VIEW: RefCell<Option<Rc<RefCell<View>>>> = const { RefCell::new(None) };

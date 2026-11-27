@@ -1,5 +1,5 @@
 //! The signed-in YouTube session: youtube.com cookies left by Google's own
-//! sign-in page (`signin_window`) or imported from a browser, kept in the
+//! sign-in page (`signin`) or imported from a browser, kept in the
 //! OS credential store. It signs InnerTube requests (`SAPISIDHASH`) and
 //! gives yt-dlp a cookies.txt for age-restricted songs. Same scheme as the
 //! iPhone app's `Auth` (ios/YTMKit).

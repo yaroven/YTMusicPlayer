@@ -17,7 +17,8 @@ public enum YTMError: LocalizedError, Sendable {
 }
 
 /// YouTube Music's own API (InnerTube, WEB_REMIX client): quota-free, no
-/// sign-in. Mirrors the desktop player's `Catalog`.
+/// OAuth (the youtube.com cookies when signed in). Mirrors the desktop
+/// player's `Catalog`.
 public final class Catalog: Sendable {
     static let base = "https://music.youtube.com/youtubei/v1"
     static let clientVersion = "1.20260901.01.00"
@@ -131,7 +132,7 @@ public final class Catalog: Sendable {
         return parseSuggestions(try await call("music/get_search_suggestions", ["input": query]))
     }
 
-    /// Home page shelves (not personalised).
+    /// Home page shelves (the account's own when signed in).
     public func home() async throws -> [Shelf] {
         parseShelves(try await call("browse", ["browseId": "FEmusic_home"]))
     }

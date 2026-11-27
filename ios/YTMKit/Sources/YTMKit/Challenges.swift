@@ -58,7 +58,6 @@ actor ChallengeSolver {
         return nil
     }
 
-    /// Solutions for each challenge, by challenge.
     func solve(player url: URL, sig: [String], n: [String]) async throws -> (sig: [String: String], n: [String: String]) {
         if sig.isEmpty && n.isEmpty { return ([:], [:]) }
         var requests: [[String: Any]] = []

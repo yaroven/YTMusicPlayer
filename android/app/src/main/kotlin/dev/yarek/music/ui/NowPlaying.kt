@@ -137,7 +137,7 @@ private enum class Pane(val label: Int) { Queue(R.string.your_queue), Related(R.
 /**
  * YouTube Music's player: ⌄, the song / video switch, ⋮; the big cover (or
  * the clip); the title with its ›, the artist; a row of pills (👍|👎,
- * Lyrics, Save, Share, Download, Mix); a thin scrubber; the controls; and
+ * Lyrics, Save, Download, Share, Mix); a thin scrubber; the controls; and
  * "Up next" at the bottom, a sheet with the queue, the lyrics and related
  * music.
  */
@@ -173,7 +173,6 @@ fun NowPlaying() {
             player.resumeAfterVideo(videoAt?.let { maxOf(0.0, it - offset) })
         }
     }
-    // Another song: back to its audio, from its start.
     // Another song while the clip was on: the clip goes, the song plays.
     LaunchedEffect(track?.videoId) {
         if (video) {
@@ -470,7 +469,7 @@ private fun Header(track: Track) {
     }
 }
 
-/** 👍 | 👎, Save, Download, Share — YouTube Music's pill row. */
+/** 👍 | 👎, Lyrics, Save, Download, Share, Mix — YouTube Music's pill row. */
 @Composable
 private fun Actions(track: Track, onLyrics: () -> Unit) {
     val app = App.instance

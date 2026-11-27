@@ -1,8 +1,8 @@
 //! Library view: what the main list shows — one of the user's playlists,
 //! search results, an album / artist / playlist page, the home feed,
 //! history, downloads, saved albums or followed artists — the filter typed
-//! over its tracks, the selected row, and the way back. Both frontends hold
-//! one and only render it and forward input, so browsing rules live here
+//! over its tracks, the selected row, and the way back. The window holds
+//! one and only renders it and forwards input, so browsing rules live here
 //! once:
 //!
 //! - the playlist selection survives a library reload (by id) and restarts;
@@ -55,7 +55,7 @@ impl SortBy {
         }
     }
 
-    /// The next one, for a key that cycles through them.
+    /// The next one, for a button that cycles through them.
     pub fn next(self) -> Self {
         let i = Self::ALL.iter().position(|s| *s == self).unwrap_or(0);
         Self::ALL[(i + 1) % Self::ALL.len()]
@@ -249,7 +249,6 @@ impl LibraryView {
         }
     }
 
-    /// The shown user playlist.
     pub fn shown_playlist(&self) -> Option<&Playlist> {
         self.selected_playlist().map(|i| &self.playlists[i])
     }

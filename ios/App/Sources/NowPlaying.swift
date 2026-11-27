@@ -250,7 +250,7 @@ struct NowPlayingView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// 👍 | 👎, Save, Download, Share — YouTube Music's pill row.
+    /// 👍 | 👎, Lyrics, Save, Download, Share, Mix — YouTube Music's pill row.
     private func actions(_ track: Track) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {

@@ -381,7 +381,7 @@ impl Session {
 
     /// Loads the home feed (once; again with `refresh`). Only signed in to
     /// YouTube: Home is the account's own, never anonymous suggestions (the
-    /// frontends show their sign-in screen until then).
+    /// window shows its sign-in screen until then).
     pub fn load_home(&mut self, refresh: bool) {
         if !self.youtube_signed_in() || (self.home.is_some() && !refresh) {
             return;
@@ -403,7 +403,6 @@ impl Session {
         self.load_home(true);
     }
 
-    /// Whether Home has more shelves to load.
     pub fn home_has_more(&self) -> bool {
         self.home_next.is_some()
     }

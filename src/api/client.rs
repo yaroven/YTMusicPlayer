@@ -552,7 +552,6 @@ impl YouTubeClient {
     }
 }
 
-/// A video rating.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rating {
     Like,

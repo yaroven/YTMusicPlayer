@@ -147,8 +147,6 @@ fn single_instance(paths: &AppPaths, kind: &'static str) -> Result<Option<Instan
     }
 }
 
-/// Single-threaded runtime: the work is I/O-bound and every extra worker
-/// thread costs memory. Blocking calls go to `spawn_blocking`.
 fn runtime() -> Result<tokio::runtime::Runtime> {
     Ok(tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -216,8 +214,6 @@ async fn dispatch(paths: &AppPaths, settings: &Settings, args: &[&str]) -> Resul
     }
 }
 
-/// Runs the bundled `uninstall.sh` (the same script as in the repository and
-/// the release assets), replacing this process.
 #[cfg(unix)]
 fn uninstall(options: &[&str]) -> Result<()> {
     use std::os::unix::process::CommandExt;
@@ -227,13 +223,11 @@ fn uninstall(options: &[&str]) -> Result<()> {
     let err = std::process::Command::new("bash")
         .arg(&path)
         .args(options)
-        // Lets the script delete itself when done.
         .env("YAREK_UNINSTALL_TMP", &path)
         .exec();
     Err(err).context("starting bash")
 }
 
-/// Opens the installer's uninstaller ("Apps & features" runs the same one).
 #[cfg(windows)]
 fn uninstall(_options: &[&str]) -> Result<()> {
     let exe = std::env::current_exe()?;
