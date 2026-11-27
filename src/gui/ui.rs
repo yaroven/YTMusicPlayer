@@ -2952,7 +2952,8 @@ slint::slint! {
     // (above it on a bottom taskbar) with the cover, the song and its
     // controls. Built when the icon is clicked, destroyed when it loses focus.
     export component MiniPlayer inherits Window {
-        title: "Yarek Music";
+        // `mini::TITLE`: KWin finds the window by it.
+        title: "Yarek Music mini player";
         no-frame: true;
         always-on-top: true;
         width: 280px;

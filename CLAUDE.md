@@ -300,7 +300,12 @@ Domain terms are defined in `CONTEXT.md`.
   icon opens `MiniPlayer` (`gui::mini`, a frameless 280x420 always-on-top
   Slint window: big cover, song, like, open window, seek, ⏮ ⏯ ⏭) under the
   icon (above it on a bottom taskbar, from `TrayIconEvent::Click`'s rect;
-  Linux: ksni's `activate` x/y, none on Wayland); the menu moved to the
+  Linux: ksni's `activate` x/y; Wayland lets no client place its own
+  window — it came up mid-screen on KDE (user's screenshot 2026-11-28) —
+  so on KDE Wayland a one-off KWin script, loaded over D-Bus (`zbus`,
+  already in the tree) right before the window shows, puts it at the
+  pointer (= the icon just clicked): `mini::kwin`, checked on Plasma 6.3;
+  other Wayland desktops still centre it); the menu moved to the
   right click. Destroyed on focus loss / Esc / a second click (a click
   within 300 ms of losing focus doesn't reopen it). Shares the one large
   cover; with the main window closed it fetches it at 640 px and drops it

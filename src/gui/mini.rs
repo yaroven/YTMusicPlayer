@@ -3,6 +3,11 @@
 //! a click and destroyed when it loses focus, so it costs nothing while
 //! closed (its frame at 280x420 is ~1.9 MB at 2x while open). The cover is
 //! the main window's large one: one large image lives at a time.
+//!
+//! Placing it: the icon's position where the tray reports one (macOS,
+//! Windows, X11). Wayland lets no client place its own window (it came up
+//! in the middle of the screen, user's screenshot 2026-11-28); on KDE,
+//! KWin is asked instead ([`kwin`]).
 
 use std::{cell::Cell, cell::RefCell, rc::Rc, time::Instant};
 
@@ -23,6 +28,9 @@ use crate::audio::player::PlayState;
 const REOPEN_GUARD_MS: u128 = 300;
 /// Gap between the icon and the window, logical pixels.
 const GAP: f64 = 6.0;
+/// The window's title (`MiniPlayer` in `ui.rs`): KWin finds it by it.
+#[cfg(target_os = "linux")]
+const TITLE: &str = "Yarek Music mini player";
 
 thread_local! {
     static MINI: RefCell<Option<MiniPlayer>> = const { RefCell::new(None) };
@@ -81,7 +89,11 @@ fn open(anchor: Option<Anchor>) -> Result<()> {
         v.render_mini(&mini);
         v.show_mini_art(&mini);
     }
-    if let Some(anchor) = anchor {
+    #[cfg(target_os = "linux")]
+    let kwin_places = kwin::wanted() && kwin::place_at_pointer();
+    #[cfg(not(target_os = "linux"))]
+    let kwin_places = false;
+    if let Some(anchor) = anchor.filter(|_| !kwin_places) {
         let scale = f64::from(mini.window().scale_factor());
         let size = mini.window().size();
         let (w, h) = (f64::from(size.width), f64::from(size.height));
@@ -231,5 +243,116 @@ mod tests {
         assert_eq!((p.x, p.y), (1672, 614));
         // Never off the left edge.
         assert_eq!(place((10.0, 0.0, 20.0, 20.0), 280.0, 420.0, 6.0).x, 0);
+    }
+}
+
+/// KDE on Wayland: a one-off KWin script, loaded over D-Bus just before the
+/// window shows, puts the mini player at the pointer — which is on the tray
+/// icon that was just clicked — under it on a top panel, above it on a
+/// bottom one, inside the screen. Checked 2026-11-28 on Plasma 6.3 (KWin
+/// moved a test window, `workspace.cursorPos` and `clientArea` answered).
+#[cfg(target_os = "linux")]
+mod kwin {
+    use std::time::Duration;
+
+    const PLUGIN: &str = "yarek-mini-player";
+    /// The script lives this long: enough for the window to appear.
+    const LIFETIME: Duration = Duration::from_secs(3);
+
+    pub fn wanted() -> bool {
+        let var = |name| std::env::var(name).unwrap_or_default().to_lowercase();
+        var("XDG_SESSION_TYPE") == "wayland" && var("XDG_CURRENT_DESKTOP").contains("kde")
+    }
+
+    /// Starts placing the window being opened; false when KWin can't be
+    /// asked (the window then goes wherever the compositor puts it).
+    pub fn place_at_pointer() -> bool {
+        let path = std::env::temp_dir().join(format!("{PLUGIN}-{}.js", std::process::id()));
+        if let Err(err) = std::fs::write(&path, script(std::process::id(), super::TITLE)) {
+            tracing::debug!(%err, "mini player: KWin script");
+            return false;
+        }
+        std::thread::spawn(move || {
+            if let Err(err) = run(&path) {
+                tracing::debug!(%err, "mini player: KWin placement");
+            }
+            let _ = std::fs::remove_file(&path);
+        });
+        true
+    }
+
+    fn run(path: &std::path::Path) -> zbus::Result<()> {
+        let bus = zbus::blocking::Connection::session()?;
+        // A script left from a run that stopped early would shadow ours.
+        let loaded: bool = call(&bus, "isScriptLoaded", &(PLUGIN,))?
+            .body()
+            .deserialize()?;
+        if loaded {
+            call(&bus, "unloadScript", &(PLUGIN,))?;
+        }
+        call(
+            &bus,
+            "loadScript",
+            &(path.to_string_lossy().as_ref(), PLUGIN),
+        )?;
+        call(&bus, "start", &())?;
+        std::thread::sleep(LIFETIME);
+        call(&bus, "unloadScript", &(PLUGIN,))?;
+        Ok(())
+    }
+
+    /// A call to KWin's scripting object.
+    fn call<B>(
+        bus: &zbus::blocking::Connection,
+        method: &str,
+        body: &B,
+    ) -> zbus::Result<zbus::message::Message>
+    where
+        B: serde::Serialize + zbus::zvariant::DynamicType,
+    {
+        bus.call_method(
+            Some("org.kde.KWin"),
+            "/Scripting",
+            Some("org.kde.kwin.Scripting"),
+            method,
+            body,
+        )
+    }
+
+    /// The script: places our window (by pid and title) if it's there,
+    /// else when it's added.
+    fn script(pid: u32, title: &str) -> String {
+        let title = serde_json::to_string(title).unwrap_or_default();
+        format!(
+            r#"const PID = {pid}, TITLE = {title}, GAP = 8, OFFSET = 28;
+function place(w) {{
+    if (w.pid !== PID || w.caption !== TITLE) return false;
+    const c = workspace.cursorPos;
+    const a = workspace.clientArea(KWin.MaximizeArea, w.output, workspace.currentDesktop);
+    const g = w.frameGeometry;
+    const below = c.y < a.y + a.height / 2;
+    let x = c.x - g.width / 2;
+    let y = below ? c.y + OFFSET : c.y - OFFSET - g.height;
+    x = Math.max(a.x + GAP, Math.min(x, a.x + a.width - g.width - GAP));
+    y = Math.max(a.y + GAP, Math.min(y, a.y + a.height - g.height - GAP));
+    w.frameGeometry = {{ x: Math.round(x), y: Math.round(y), width: g.width, height: g.height }};
+    return true;
+}}
+if (!workspace.windowList().some(place)) {{
+    const added = function (w) {{ if (place(w)) workspace.windowAdded.disconnect(added); }};
+    workspace.windowAdded.connect(added);
+}}
+"#
+        )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn the_script_names_our_window() {
+            let script = super::script(4242, "Yarek \"mini\"");
+            assert!(script.starts_with("const PID = 4242, TITLE = \"Yarek \\\"mini\\\"\","));
+            assert!(script.contains("workspace.windowAdded.connect(added)"));
+        }
     }
 }

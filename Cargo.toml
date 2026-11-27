@@ -16,7 +16,7 @@ path = "src/main.rs"
 [features]
 default = ["gui"]
 # Desktop window (`yarek`); off => CLI commands only (`play`, `sync`, ...).
-gui = ["dep:slint", "dep:image", "dep:notify-rust", "dep:tray-icon", "dep:ksni", "dep:wry", "dep:winit"]
+gui = ["dep:slint", "dep:image", "dep:notify-rust", "dep:tray-icon", "dep:ksni", "dep:zbus", "dep:wry", "dep:winit"]
 
 [dependencies]
 # --- Async runtime -----------------------------------------------------------
@@ -126,6 +126,9 @@ discord-rich-presence = "1.1"  # Discord "Listening to" status over local IPC
 # Tray icon: StatusNotifierItem over zbus on Linux, native elsewhere.
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3", optional = true }
+# KWin scripting over D-Bus: places the mini player at the tray icon on KDE
+# Wayland (already in the tree through ksni / notify-rust).
+zbus = { version = "5.19", optional = true }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = { version = "0.26", optional = true, default-features = false }

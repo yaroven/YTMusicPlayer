@@ -8017,6 +8017,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "winit",
  "wry",
+ "zbus 5.19.0",
  "zip",
 ]
 
