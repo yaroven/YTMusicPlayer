@@ -2194,11 +2194,13 @@ slint::slint! {
                         spacing: 4px;
                         // Left: transport + time. Both sides take the wider
                         // one's width, so the song block is centred in the
-                        // window, not in what the sides leave.
+                        // window, not in what the sides leave — at every width
+                        // (user's screenshot 2026-11-28: it sat left of centre
+                        // in a 1050 px window).
                         property <length> side: max(transport.preferred-width, modes.preferred-width);
                         transport := HorizontalLayout {
                             alignment: start;
-                            width: root.compact ? self.preferred-width : side;
+                            width: side;
                             IconButton { icon: "prev"; active: true; y: (parent.height - self.height) / 2; clicked => { root.prev(); keys.focus(); } }
                             IconButton {
                                 icon: root.loading ? "busy" : root.playing ? "pause" : "play";
@@ -2220,7 +2222,7 @@ slint::slint! {
                             }
                             HorizontalLayout {
                                 spacing: 8px;
-                                alignment: root.compact ? start : center;
+                                alignment: center;
                                 padding-left: 8px;
                                 if root.now-title != "": Cover {
                                     size: 44px;
@@ -2265,7 +2267,7 @@ slint::slint! {
                         // Right: volume, modes, sleep, expand
                         modes := HorizontalLayout {
                             alignment: end;
-                            width: root.compact ? self.preferred-width : side;
+                            width: side;
                             if !root.compact: Icon { name: "volume"; color: Yt.secondary; width: 22px; height: 22px; y: (parent.height - self.height) / 2; }
                             if !root.compact: ThinSlider {
                                 value: root.volume;
