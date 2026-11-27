@@ -33,7 +33,6 @@ slint::slint! {
         in property <string> artists: "Artists";
         in property <string> playlists: "Playlists";
         in property <string> songs: "Songs";
-        in property <string> all-songs: "All songs";
         in property <string> account: "Account";
         in property <string> sign-in: "Sign in";
         in property <string> sign-out: "Sign out";

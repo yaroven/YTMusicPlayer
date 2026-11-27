@@ -179,11 +179,6 @@ public final class Catalog: Sendable {
         YTMKit.artistId(try await next(videoId), videoId: videoId)
     }
 
-    /// The signed-in account's name ("Jane Doe"), to show who is signed in.
-    public func accountName() async throws -> String? {
-        try await accountInfo()?.name
-    }
-
     /// The signed-in account's name and picture.
     public func accountInfo() async throws -> AccountInfo? {
         let data = try await call("account/account_menu", [:])

@@ -805,23 +805,6 @@ impl LibraryView {
         self.selected = row.filter(|&r| r < self.visible.len());
     }
 
-    /// Selects the first row when nothing is selected (keyboard UIs).
-    pub fn ensure_selection(&mut self) {
-        if self.selected.is_none() && !self.visible.is_empty() {
-            self.selected = Some(0);
-        }
-    }
-
-    /// Moves the selection by `delta` rows, clamped to the list.
-    pub fn move_selection(&mut self, delta: i64) {
-        if self.visible.is_empty() {
-            return;
-        }
-        let last = self.visible.len() as i64 - 1;
-        let from = self.selected.map_or(0, |r| r as i64);
-        self.selected = Some(from.saturating_add(delta).clamp(0, last) as usize);
-    }
-
     /// Reacts to what a Session changed; true when the shown rows were
     /// replaced (so a UI must rebuild them, not just redraw some).
     pub fn apply(&mut self, changes: &Changes, data: SessionData<'_>) -> Result<bool> {
@@ -1380,17 +1363,5 @@ mod tests {
         assert_eq!(v.add_choice(0).unwrap().id, "PLtrip");
         assert!(v.is_liked("aaaaaaaaaaa"));
         assert!(!v.is_liked("ccccccccccc"));
-    }
-
-    #[test]
-    fn keyboard_selection_starts_at_the_top_and_clamps() {
-        let mut v = LibraryView::new(library()).unwrap();
-        assert_eq!(v.selected_row(), None);
-        v.ensure_selection();
-        assert_eq!(v.selected_row(), Some(0));
-        v.move_selection(10);
-        assert_eq!(v.selected_row(), Some(1));
-        v.move_selection(-10);
-        assert_eq!(v.selected_row(), Some(0));
     }
 }

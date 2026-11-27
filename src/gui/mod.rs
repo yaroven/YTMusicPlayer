@@ -1452,7 +1452,6 @@ fn apply_language(ui: &MainWindow, lang: Lang) {
     l.set_artists(t.artists.into());
     l.set_playlists(t.playlists.into());
     l.set_songs(t.songs.into());
-    l.set_all_songs(t.all_songs.into());
     l.set_account(t.account.into());
     l.set_sign_in(t.sign_in.into());
     l.set_sign_out(t.sign_out.into());

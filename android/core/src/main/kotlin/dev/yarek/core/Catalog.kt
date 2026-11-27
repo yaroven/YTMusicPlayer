@@ -133,9 +133,6 @@ class Catalog(private val auth: Auth? = null) {
     /** The song's (first) artist page id. */
     suspend fun artistId(videoId: String): String? = artistIdIn(next(videoId), videoId)
 
-    /** The signed-in account's name, to show who is signed in. */
-    suspend fun accountName(): String? = accountInfo()?.name
-
     /** The signed-in account's name and picture. */
     suspend fun accountInfo(): AccountInfo? {
         val data = call("account/account_menu", JSONObject())
