@@ -18,6 +18,7 @@ optdepends=(
   'libxcursor: desktop window on X11'
   'wayland: desktop window on Wayland'
   'gnome-keyring: remember the Google sign-in (or KWallet)'
+  'ffmpeg: play song clips in the window (else they open in the browser)'
 )
 options=('!strip' '!debug')
 source=('yarek' 'yarek-music.desktop' 'yarek-music.png')

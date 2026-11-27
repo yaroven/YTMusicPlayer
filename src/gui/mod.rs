@@ -11,6 +11,7 @@
 //! cover.
 
 mod art;
+mod clip_view;
 #[cfg(target_os = "macos")]
 mod macos;
 mod mini;
@@ -831,13 +832,15 @@ struct View {
     explore: Option<Arc<[Shelf]>>,
     /// What YouTube Music suggests for the query being typed.
     suggestion_rows: Rc<VecModel<SharedString>>,
-    /// The clip playing over the cover, when the video is on.
+    /// The clip playing over the cover, ours (`crate::clip`).
+    clip: Option<clip_view::ClipView>,
+    /// The clip playing over the cover in YouTube's page, where we can't
+    /// decode it ourselves.
     #[cfg(any(target_os = "macos", windows))]
     video: Option<video::VideoView>,
     /// The language the window speaks.
     lang: Lang,
     /// Where the video goes (window coordinates, logical pixels).
-    #[cfg(any(target_os = "macos", windows))]
     video_rect: (f32, f32, f32, f32),
     /// Art URL of the page header.
     header_art: Option<Arc<str>>,
@@ -1126,6 +1129,7 @@ impl View {
     /// The window closed: drop what only it needed (art, cards).
     fn detach(&mut self) {
         self.lyrics.ticker.stop();
+        self.clip = None;
         // The web view belongs to the window that is going away.
         #[cfg(any(target_os = "macos", windows))]
         if let Some(video) = self.video.take() {
@@ -1336,6 +1340,9 @@ impl View {
         }
         self.lyrics
             .follow(snap.view.position, snap.view.state == PlayState::Playing);
+        if let Some(clip) = &self.clip {
+            clip.follow(snap.view.position, snap.view.state == PlayState::Playing);
+        }
         if let Some(related) = &snap.related {
             self.related_data = related.clone();
         }
@@ -1380,8 +1387,11 @@ impl View {
             return;
         };
         // Another song while its clip was on: the clip goes, the new song
-        // plays (it had kept playing over the new song's sound). Linux has
-        // no clip in the window (it opens apart).
+        // plays (the web view's had kept playing over the new song's sound).
+        if changed && self.clip.take().is_some() {
+            ui.set_video_on(false);
+            ui.set_video_frame(Image::default());
+        }
         #[cfg(any(target_os = "macos", windows))]
         if changed && ui.get_video_on() {
             drop(self.video.take());
@@ -1733,9 +1743,9 @@ fn new_view(
         explore: None,
         suggestion_rows: Rc::new(VecModel::default()),
         lang: Lang::default(),
+        clip: None,
         #[cfg(any(target_os = "macos", windows))]
         video: None,
-        #[cfg(any(target_os = "macos", windows))]
         video_rect: (0.0, 0.0, 0.0, 0.0),
         header_art: None,
         pending_add: None,
@@ -1746,7 +1756,11 @@ fn new_view(
 }
 
 /// Runs the GUI until it quits. `rt` runs the core on its own thread.
+/// The HTTP client our clip player fetches with (the core's, shared).
+static CLIP_HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
 pub fn run(rt: tokio::runtime::Runtime, deps: Deps, settings: &Settings) -> Result<()> {
+    let _ = CLIP_HTTP.set(deps.http.clone());
     let library = deps.library.clone();
     let lang = Lang::from_code(&settings.language);
     let library_view = Rc::new(RefCell::new(LibraryView::new_in(library.clone(), lang)?));
@@ -2277,14 +2291,22 @@ fn wire_callbacks(
         send(Cmd::SetLanguage(code.into()), tx);
     });
     on!(on_watch_video, [tx, view, ui], || {
+        let mut v = view.borrow_mut();
         #[cfg(any(target_os = "macos", windows))]
-        {
-            let mut v = view.borrow_mut();
-            if let Some(video) = v.video.take() {
-                ui.set_video_on(false);
-                send(Cmd::VideoOff(video.position()), tx);
-                return;
-            }
+        if let Some(video) = v.video.take() {
+            ui.set_video_on(false);
+            send(Cmd::VideoOff(video.position()), tx);
+            return;
+        }
+        // Ours on, or still starting: back to the cover. (A failed one has
+        // switched the video off itself, so the next press opens it anew.)
+        v.clip = None;
+        ui.set_video_frame(Image::default());
+        if ui.get_video_on() {
+            ui.set_video_on(false);
+            return;
+        }
+        if crate::clip::available() || cfg!(any(target_os = "macos", windows)) {
             if v.last.as_ref().and_then(|s| s.now.as_ref()).is_none() {
                 return;
             }
@@ -2293,15 +2315,24 @@ fn wire_callbacks(
             // own callback starts the clip once it has a place on screen.
             ui.set_expanded(true);
             ui.set_video_on(true);
-            send(Cmd::VideoOn, tx);
+            // YouTube's page plays its own sound: the song waits.
+            #[cfg(any(target_os = "macos", windows))]
+            if !crate::clip::available() {
+                send(Cmd::VideoOn, tx);
+            }
+            return;
         }
+        drop(v);
         #[cfg(not(any(target_os = "macos", windows)))]
         send(Cmd::WatchVideo, tx);
     });
-    #[cfg(any(target_os = "macos", windows))]
     on!(on_video_rect, [tx, view, ui], |x, y, w, h| {
         let mut v = view.borrow_mut();
         v.video_rect = (x, y, w, h);
+        if let Some(clip) = &v.clip {
+            return clip.set_rect(v.video_rect, ui.window().scale_factor());
+        }
+        #[cfg(any(target_os = "macos", windows))]
         if let Some(video) = &v.video {
             return video.set_bounds(v.video_rect);
         }
@@ -2309,30 +2340,77 @@ fn wire_callbacks(
             return;
         }
         // The song's clip, where the song is (the clip's intro added).
-        let Some((id, at)) = v.last.as_ref().and_then(|s| {
-            let (clip, offset) = s.video.clone()?;
-            Some((clip, s.position + Duration::from_secs_f64(offset)))
-        }) else {
+        let Some(((clip, offset), position, playing)) = v
+            .last
+            .as_ref()
+            .and_then(|s| Some((s.video.clone()?, s.position, s.state == PlayState::Playing)))
+        else {
             return;
         };
-        match video::VideoView::open(ui, id, at, v.video_rect) {
-            Ok(video) => v.video = Some(video),
-            Err(err) => {
-                tracing::warn!("opening the video: {err:#}");
+        if crate::clip::available() {
+            let tx = tx.clone();
+            let failed = move |ui: &MainWindow| {
+                // Couldn't play it here: the page in the browser instead.
                 ui.set_video_on(false);
-                send(Cmd::VideoOff(None), tx);
+                #[cfg(not(any(target_os = "macos", windows)))]
+                send(Cmd::WatchVideo, &tx);
+                #[cfg(any(target_os = "macos", windows))]
+                let _ = &tx;
+            };
+            let http = CLIP_HTTP.get().cloned().unwrap_or_default();
+            let opened = clip_view::ClipView::open(
+                ui,
+                http,
+                &(clip.clone(), offset),
+                position,
+                playing,
+                v.video_rect,
+                failed,
+            );
+            match opened {
+                Ok(clip) => v.clip = Some(clip),
+                Err(err) => {
+                    tracing::warn!("opening the clip: {err:#}");
+                    ui.set_video_on(false);
+                }
+            }
+            return;
+        }
+        #[cfg(any(target_os = "macos", windows))]
+        {
+            let at = position + Duration::from_secs_f64(offset);
+            match video::VideoView::open(ui, clip, at, v.video_rect) {
+                Ok(video) => v.video = Some(video),
+                Err(err) => {
+                    tracing::warn!("opening the video: {err:#}");
+                    ui.set_video_on(false);
+                    send(Cmd::VideoOff(None), tx);
+                }
             }
         }
     });
-    #[cfg(any(target_os = "macos", windows))]
-    on!(on_video_off, [tx, view, ui], || {
-        let at = view.borrow_mut().video.take().and_then(|v| v.position());
-        send(Cmd::VideoOff(at), tx);
+    ui.on_fullscreen({
+        let weak = ui.as_weak();
+        move |full| {
+            if let Some(ui) = weak.upgrade() {
+                ui.window().set_fullscreen(full);
+            }
+        }
     });
-    #[cfg(not(any(target_os = "macos", windows)))]
-    on!(on_video_rect, [tx, view, ui], |_x, _y, _w, _h| {});
-    #[cfg(not(any(target_os = "macos", windows)))]
-    on!(on_video_off, [tx, view, ui], || {});
+    on!(on_video_off, [tx, view, ui], || {
+        let mut v = view.borrow_mut();
+        if v.clip.take().is_some() {
+            ui.set_video_frame(Image::default());
+            return;
+        }
+        #[cfg(any(target_os = "macos", windows))]
+        {
+            let at = v.video.take().and_then(|v| v.position());
+            send(Cmd::VideoOff(at), tx);
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
+        let _ = tx;
+    });
     on!(on_stop_downloads, [tx, view, ui], || send(
         Cmd::StopDownloads,
         tx

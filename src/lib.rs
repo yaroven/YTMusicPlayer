@@ -7,6 +7,8 @@ pub mod audio;
 pub mod bootstrap;
 pub mod cast;
 pub mod catalog;
+#[cfg(feature = "gui")]
+pub mod clip;
 pub mod config;
 pub mod discord;
 pub mod fmt;

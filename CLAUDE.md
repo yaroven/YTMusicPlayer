@@ -116,6 +116,7 @@ single-threaded tokio runtime; the window owns the main thread).
 | `sysmem` | own + child (yt-dlp) memory for the status bar: macOS `proc_pid_rusage` phys_footprint, Linux `smaps_rollup` Pss |
 | `media` | souvlaki: media keys + Now Playing (macOS, Linux/MPRIS, Windows SMTC with the GUI's HWND via `set_window_handle`) |
 | `gui` (feature `gui`) | Slint window on the main thread; `Session` on a "core" thread with its own runtime; UI sends `Cmd`s, core pushes `Snapshot`s (`SessionView` + changes + page/home/lyrics/related) via `upgrade_in_event_loop`; `TracksModel` reads rows straight from the `LibraryView` (or the queue); `Cards`/`Shelves` models fill art by URL as it arrives; `tray` (tray-icon / ksni); `ui.rs` is assembled Slint (keep `#rrggbb` colours out of Rust tokenization: `3e…` parses as an exponent — use `rgb()`) |
+| `clip` (feature `gui`) | the song's clip played by us: InnerTube HLS (VISIONOS) → H.264 variant fitting the area (`hls`, switched at segment boundaries) → our TS demuxer (`ts`, PAT/PMT from `audio::hls`) → `VideoDecoder` (Linux: `ffmpeg`, libavcodec + libswscale `dlopen`ed) → RGB pictures, 3 queued (`ClipPlayer`, own thread + current-thread runtime); `gui::clip_view` shows the one due at song time + intro offset |
 | `fmt` | display formatting for the window |
 | `net` | network failures told apart (`problem`: offline / slow / other, from reqwest / io errors and error text incl. yt-dlp's; knows no yt-dlp types), plain-words `describe`, `online()` probe (TCP connect to music.youtube.com) |
 | `packaging/` | Linux .desktop, Arch PKGBUILD, Inno Setup script, macOS pkg builder |
@@ -844,6 +845,36 @@ Domain terms are defined in `CONTEXT.md`.
   "ready", peak 94–101 MB (yt-dlp); after 0.4–1.3 s, peak 26–27 MB (no
   child process). `innertube = false` restores yt-dlp only;
   `yarek resolve <id> --ytdlp` compares.
+
+- **The clip played by us, not YouTube's page** (user's request
+  2026-11-27: the video "under our control, integrated with our UI").
+  Spike from this Linux box: VISIONOS lists `hlsManifestUrl` for music
+  videos — H.264 (+ AAC) up to 1080p, plus VP9 — and every segment answers
+  200, while its plain video-only URLs 403 past the first range. No
+  pure-Rust H.264 decoder handles YouTube's Main / High profiles (openh264
+  0.9: 9 of 158 frames of a 720p segment, the rest errors), so decoding is
+  the system's: Linux = FFmpeg via `dlopen` (`clip::ffmpeg`: only
+  `AVPacket` pts/data/size and `AVFrame` data/linesize/width/height/format,
+  stable FFmpeg 4–8, verified on 7.1; PTS reordered with a min-heap instead
+  of reading `AVFrame.pts`). macOS (VideoToolbox) / Windows (Media
+  Foundation) backends aren't written yet: they keep the web view. The
+  sound stays the studio song's; the picture follows the snapshot clock
+  (as the lyrics), a jump = seek; "Song" while loading goes back at once.
+  Measured 2026-11-27 (release, this box, i7-13700): first picture ~0.6–1 s
+  after "Video"; the pipeline alone at 720p (1232x692 pictures) peak PSS
+  59.7 MB with 2 decoder threads + 6 queued, **44.9 MB with 1 thread + 3**
+  (test process included; ~30 MB is the clip), CPU 13 → 18 % of a core,
+  25 fps real time, no drops (189 pictures in 8 s). libavcodec pulls ~96
+  shared libraries (~10 MB PSS). Variant switch after a resize: 2 segment
+  boundaries (~5 s). `gui::tests::clip_png` renders it end to end
+  (`target/clip.png`). Unverified: Fedora's `ffmpeg-free` may decode H.264
+  only through openh264 (then RPM Fusion's `libavcodec-freeworld`).
+  Controls over the picture (user's call 2026-11-28): no timeline; ⏮ ⏯ ⏭
+  in the middle, full screen in the bottom-right corner, shown on hover or
+  while paused; a click toggles pause, a double click / the corner button
+  goes full screen (`video-full`: the window itself `set_fullscreen`, the
+  clip a layer over the whole window; Esc, the button or switching the
+  video off leave it).
 
 - **Terminal UI removed** (user's request 2026-11-27): the window is the
   only player; `yarek` / `yarek gui` open it, the CLI commands stay

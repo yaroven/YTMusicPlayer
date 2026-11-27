@@ -159,6 +159,39 @@ impl InnerTube {
     }
 
     async fn resolve_inner(&self, video_id: &str) -> Result<AudioStream, DirectError> {
+        self.each_client(video_id, |data, profile| {
+            parse_player(video_id, data, &profile.user_agent, SystemTime::now())
+        })
+        .await
+    }
+
+    /// The clip's HLS master playlist (H.264 + AAC, up to 1080p) and the
+    /// User-Agent to fetch its playlists and segments with. Measured
+    /// 2026-11-27: VISIONOS lists it for music videos and every segment
+    /// answers 200; its plain video-only URLs 403 past the first range.
+    pub async fn hls_manifest(&self, video_id: &str) -> Result<(String, String), DirectError> {
+        self.each_client(video_id, |data, profile| {
+            let status = data
+                .pointer("/playabilityStatus/status")
+                .and_then(Value::as_str);
+            if status != Some("OK") {
+                return Err(format!("{}: no clip", status.unwrap_or("no answer")));
+            }
+            data.pointer("/streamingData/hlsManifestUrl")
+                .and_then(Value::as_str)
+                .map(|url| (url.to_owned(), profile.user_agent.clone()))
+                .ok_or_else(|| "no HLS manifest".to_owned())
+        })
+        .await
+    }
+
+    /// Asks the player endpoint as each client in turn until `parse` takes
+    /// an answer; a bot check is asked once more with a new visitor id.
+    async fn each_client<T>(
+        &self,
+        video_id: &str,
+        parse: impl Fn(&Value, &Profile) -> Result<T, String>,
+    ) -> Result<T, DirectError> {
         let profiles = self
             .profiles
             .read()
@@ -166,13 +199,17 @@ impl InnerTube {
             .clone();
         let mut refused = String::from("no InnerTube client");
         for profile in profiles.iter() {
-            match self.ask(video_id, profile).await {
-                Ok(stream) => return Ok(stream),
+            let ask = || async {
+                let data = self.ask(video_id, profile).await?;
+                parse(&data, profile).map_err(DirectError::Refused)
+            };
+            match ask().await {
+                Ok(found) => return Ok(found),
                 Err(DirectError::Refused(why)) if is_bot_check(&why) => {
                     // A stale or missing visitor id: once more with a new one.
                     self.forget_visitor();
-                    match self.ask(video_id, profile).await {
-                        Ok(stream) => return Ok(stream),
+                    match ask().await {
+                        Ok(found) => return Ok(found),
                         Err(DirectError::Refused(why)) => refused = why,
                         Err(err) => return Err(err),
                     }
@@ -184,8 +221,8 @@ impl InnerTube {
         Err(DirectError::Refused(refused))
     }
 
-    /// One player request as `profile`.
-    async fn ask(&self, video_id: &str, profile: &Profile) -> Result<AudioStream, DirectError> {
+    /// One player request as `profile`: its answer.
+    async fn ask(&self, video_id: &str, profile: &Profile) -> Result<Value, DirectError> {
         let visitor = self.visitor().await?;
         let body = json!({
             "videoId": video_id,
@@ -213,9 +250,7 @@ impl InnerTube {
                 profile.name
             )));
         }
-        let data: Value = response.json().await?;
-        parse_player(video_id, &data, &profile.user_agent, SystemTime::now())
-            .map_err(DirectError::Refused)
+        Ok(response.json().await?)
     }
 
     /// A visitor id, fetched once an hour (`None` when YouTube gave none:

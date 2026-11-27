@@ -395,8 +395,10 @@ fn queue_rows_move_and_go() {
     ));
 }
 
-/// "Video" over the cover switches the window to the clip (on
-/// Linux, which has no system web view, it hands it to the browser).
+/// "Video" over the cover switches the window to the clip: ours where
+/// this system decodes H.264 (the song plays on, nothing goes to the
+/// session), else YouTube's page in the web view (the song waits) or, on
+/// Linux, the browser.
 #[test]
 fn the_video_button_switches_to_the_clip() {
     let mut h = harness();
@@ -405,6 +407,16 @@ fn the_video_button_switches_to_the_clip() {
     h.absorb(snapshot(view, Changes::default()));
     h.ui.invoke_watch_video();
     let cmds = h.commands();
+    if crate::clip::available() {
+        assert!(h.ui.get_expanded(), "the video needs the full-screen view");
+        assert!(h.ui.get_video_on());
+        assert!(cmds.is_empty(), "the song isn't paused");
+        // "Song" goes back, also while the clip is still loading.
+        h.ui.invoke_watch_video();
+        assert!(!h.ui.get_video_on());
+        assert!(h.commands().is_empty());
+        return;
+    }
     #[cfg(any(target_os = "macos", windows))]
     {
         assert!(h.ui.get_expanded(), "the video needs the full-screen view");
@@ -1162,6 +1174,141 @@ fn mini_png() {
         .flat_map(|p| [p.red, p.green, p.blue])
         .collect();
     let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/mini.png");
+    image::RgbImage::from_raw(w, h, raw)
+        .unwrap()
+        .save(&out)
+        .unwrap();
+    println!("wrote {}", out.display());
+}
+
+/// Our clip player in the real window, end to end: "Video" on a playing
+/// song → the video area → InnerTube's HLS → the system's H.264 decoder →
+/// pictures over the cover. Writes `target/clip.png` (needs the network
+/// and FFmpeg's libraries; its own process, like `screens_png`).
+#[test]
+#[ignore = "network; writes target/clip.png; needs its own process (a different Slint platform)"]
+fn clip_png() {
+    use slint::platform::software_renderer::{
+        MinimalSoftwareWindow, PremultipliedRgbaColor, RepaintBufferType,
+    };
+
+    if !crate::clip::available() {
+        eprintln!("no H.264 decoder here; skipped");
+        return;
+    }
+    struct Headless(Rc<MinimalSoftwareWindow>, std::time::Instant);
+    impl slint::platform::Platform for Headless {
+        fn create_window_adapter(
+            &self,
+        ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
+            Ok(self.0.clone())
+        }
+        fn duration_since_start(&self) -> Duration {
+            self.1.elapsed()
+        }
+    }
+    let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+    slint::platform::set_platform(Box::new(Headless(
+        window.clone(),
+        std::time::Instant::now(),
+    )))
+    .unwrap();
+    let (w, h) = (1100u32, 720u32);
+    window.set_size(slint::PhysicalSize::new(w, h));
+    let library = seeded_library();
+    let library_view = Rc::new(RefCell::new(LibraryView::new(library.clone()).unwrap()));
+    let (tx, _rx) = unbounded_channel();
+    let prefs = Prefs {
+        cookies: String::new(),
+        normalize: true,
+        notifications: false,
+        tray: true,
+        crossfade: 0.0,
+        language: "en".into(),
+    };
+    let view = new_view(library, library_view, prefs, tx);
+    VIEW.with(|cell| *cell.borrow_mut() = Some(view.clone()));
+    let ui = open_window().unwrap();
+    ui.set_yt_signed_in(true);
+    ui.show().unwrap();
+
+    let mut snap = session_view();
+    snap.now = Some(track("Bohemian Rhapsody"));
+    snap.state = PlayState::Playing;
+    snap.position = Duration::from_secs(30);
+    snap.video = Some(("fJ9rUzIMcZQ".into(), 0.0));
+    view.borrow_mut()
+        .absorb(snapshot(snap, Changes::default()), None);
+    ui.invoke_watch_video();
+
+    let render = |w: u32, scratch: &mut [PremultipliedRgbaColor]| {
+        slint::platform::update_timers_and_animations();
+        std::thread::sleep(Duration::from_millis(10));
+        window.request_redraw();
+        window.draw_if_needed(|renderer| {
+            renderer.render(scratch, w as usize);
+        });
+    };
+    let mut scratch = vec![PremultipliedRgbaColor::default(); (w * h) as usize];
+    let begun = std::time::Instant::now();
+    while begun.elapsed() < Duration::from_secs(20) && ui.get_video_frame().size().width == 0 {
+        render(w, &mut scratch);
+    }
+    let small = ui.get_video_frame().size();
+    println!(
+        "first picture after {:?}, picture {small:?}",
+        begun.elapsed()
+    );
+    assert!(small.width > 0, "pictures arrive");
+
+    // A bigger window: sharper pictures from the next segment on.
+    let (w, h) = (1920u32, 1260u32);
+    window.set_size(slint::PhysicalSize::new(w, h));
+    let mut scratch = vec![PremultipliedRgbaColor::default(); (w * h) as usize];
+    let grown = std::time::Instant::now();
+    while grown.elapsed() < Duration::from_secs(10) && ui.get_video_frame().size().height < 600 {
+        render(w, &mut scratch);
+    }
+    for _ in 0..50 {
+        render(w, &mut scratch);
+    }
+    let size = ui.get_video_frame().size();
+    println!("after growing: {size:?} in {:?}", grown.elapsed());
+    assert!(
+        size.height >= 600,
+        "the 720p variant for a 692 px tall area"
+    );
+    assert!(ui.get_video_on(), "the clip didn't fail");
+    assert!(size.width > 0, "pictures arrive");
+    let raw: Vec<u8> = scratch
+        .iter()
+        .flat_map(|p| [p.red, p.green, p.blue])
+        .collect();
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/clip.png");
+    image::RgbImage::from_raw(w, h, raw)
+        .unwrap()
+        .save(&out)
+        .unwrap();
+    println!("wrote {}", out.display());
+
+    // Paused, full screen: the picture fills the window, our controls over it.
+    let mut paused = session_view();
+    paused.now = Some(track("Bohemian Rhapsody"));
+    paused.state = PlayState::Paused;
+    paused.position = Duration::from_secs(36);
+    paused.video = Some(("fJ9rUzIMcZQ".into(), 0.0));
+    view.borrow_mut()
+        .absorb(snapshot(paused, Changes::default()), None);
+    ui.set_video_full(true);
+    for _ in 0..40 {
+        render(w, &mut scratch);
+    }
+    assert!(ui.get_video_on() && ui.get_video_full());
+    let raw: Vec<u8> = scratch
+        .iter()
+        .flat_map(|p| [p.red, p.green, p.blue])
+        .collect();
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/clip-full.png");
     image::RgbImage::from_raw(w, h, raw)
         .unwrap()
         .save(&out)

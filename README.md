@@ -14,7 +14,8 @@ Linux, Windows, iOS, Android.
 - **Playback:** gapless or crossfade, loudness normalization like YouTube
   Music, editable queue, sleep timer, offline downloads, Chromecast, media
   keys and the system "Now Playing" widget. A song with a clip can be
-  watched in the window and handed back to the audio where the video stopped.
+  watched in the window: on Linux the player plays the clip itself, in step
+  with the song (no YouTube page, ~30 MB at 720p).
 - **English or Ukrainian:** the whole interface, switched in Settings
   (`language` in the config; `auto` follows the system).
 - **Light:** the window takes ~50 MB playing and ~30 MB closed to the tray; near-zero

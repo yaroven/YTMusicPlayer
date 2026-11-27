@@ -37,10 +37,16 @@ Open **Yarek Music** from your applications, or run `yarek`.
   **sleep timer** and the full-screen view.
 - **Song or video:** the switch over the cover in the full-screen view (♪ /
   ▶, like YouTube Music's), or `V`. The clip then plays in the window in
-  place of the cover, with Up next / Lyrics / Related beside it; the audio
-  waits meanwhile, and switching back (♪, `V`, or closing the full-screen
-  view) continues the song where the video stopped. On Linux, which has no
-  system web view, the clip opens in your browser.
+  place of the cover, with Up next / Lyrics / Related beside it.
+  - **Linux:** the player plays the clip itself — just the picture, in step
+    with the song, which keeps playing; the player bar drives both, and
+    switching back (♪, `V`, closing the full-screen view) shows the cover
+    again. It needs FFmpeg's libraries (`libavcodec` and `libswscale`, which
+    most desktops already have; the packages recommend them); without them
+    the clip opens in your browser.
+  - **macOS, Windows:** YouTube's player in the window for now; the audio
+    waits meanwhile, and switching back continues the song where the video
+    stopped.
 - **Now playing** (click the track or ▲): big cover — click it to play or
   pause — with **Up next**
   (reorder, remove, clear, autoplay switch), **Lyrics** and **Related**, over

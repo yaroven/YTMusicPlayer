@@ -117,7 +117,7 @@ struct Demux {
     audio_pid: Option<u16>,
 }
 
-const PACKET: usize = 188;
+pub(crate) const PACKET: usize = 188;
 /// PMT stream type of ADTS AAC.
 const STREAM_AAC: u8 = 0x0F;
 
@@ -142,7 +142,7 @@ impl Demux {
             if pid == 0 && start {
                 self.pmt_pid = parse_pat(payload);
             } else if Some(pid) == self.pmt_pid && start {
-                self.audio_pid = parse_pmt(payload).or(self.audio_pid);
+                self.audio_pid = parse_pmt(payload, STREAM_AAC).or(self.audio_pid);
             } else if Some(pid) == self.audio_pid {
                 if start {
                     out.extend_from_slice(pes_payload(payload).unwrap_or_default());
@@ -155,7 +155,7 @@ impl Demux {
 }
 
 /// PAT: the first program's PMT PID.
-fn parse_pat(payload: &[u8]) -> Option<u16> {
+pub(crate) fn parse_pat(payload: &[u8]) -> Option<u16> {
     let section = payload.get(1 + usize::from(*payload.first()?)..)?;
     // table_id, section length (2), ts id (2), version, section/last (2), then programs.
     let program = section.get(8..12)?;
@@ -163,18 +163,17 @@ fn parse_pat(payload: &[u8]) -> Option<u16> {
     (number != 0).then(|| (u16::from(program[2] & 0x1F) << 8) | u16::from(program[3]))
 }
 
-/// PMT: the PID of the ADTS AAC stream.
-fn parse_pmt(payload: &[u8]) -> Option<u16> {
+/// PMT: the PID of the first stream of type `kind` (e.g. [`STREAM_AAC`]).
+pub(crate) fn parse_pmt(payload: &[u8], kind: u8) -> Option<u16> {
     let section = payload.get(1 + usize::from(*payload.first()?)..)?;
     let length = usize::from(u16::from_be_bytes([section[1], section[2]]) & 0x0FFF);
     let end = (3 + length).saturating_sub(4).min(section.len()); // minus CRC
     let info_len = usize::from(u16::from_be_bytes([*section.get(10)?, *section.get(11)?]) & 0x0FFF);
     let mut at = 12 + info_len;
     while at + 5 <= end {
-        let kind = section[at];
         let pid = (u16::from(section[at + 1] & 0x1F) << 8) | u16::from(section[at + 2]);
         let es_info = usize::from(u16::from_be_bytes([section[at + 3], section[at + 4]]) & 0x0FFF);
-        if kind == STREAM_AAC {
+        if section[at] == kind {
             return Some(pid);
         }
         at += 5 + es_info;

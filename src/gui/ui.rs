@@ -277,6 +277,8 @@ slint::slint! {
             : name == "plus" ? "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"
             : name == "check" ? "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"
             : name == "delete" ? "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
+            : name == "fullscreen" ? "M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"
+            : name == "fullscreen-exit" ? "M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"
             : name == "busy" ? "M6 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm6 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"
             : "";
     }
@@ -904,25 +906,80 @@ slint::slint! {
         }
     }
 
-    // Where the clip plays: the web view is a child of the window, put
-    // exactly over this rectangle, so Slint keeps the layout and the system
-    // draws the video into it.
+    // Where the clip plays: our own player's pictures (`frame`), or, where
+    // there is none (macOS / Windows for now), the web view as a child of
+    // the window put exactly over this rectangle, so Slint keeps the layout
+    // and the system draws the video into it.
     component VideoArea inherits Rectangle {
+        in property <image> frame;
+        // Our player's controls over the picture (not over the web view).
+        in property <bool> playing;
+        in property <bool> full;
         callback rect(length, length, length, length);
+        callback toggle();
+        callback prev();
+        callback next();
+        callback toggle-full();
         property <Point> spot: self.absolute-position;
+        property <bool> ours: root.frame.width > 0;
         background: #000000;
-        border-radius: 8px;
+        border-radius: root.full ? 0 : 8px;
         changed spot => { root.rect(self.spot.x, self.spot.y, self.width, self.height); }
         changed width => { root.rect(self.spot.x, self.spot.y, self.width, self.height); }
         changed height => { root.rect(self.spot.x, self.spot.y, self.width, self.height); }
         init => { root.rect(self.spot.x, self.spot.y, self.width, self.height); }
-        Text {
+        clip: true;
+        if !root.ours: Text {
             text: L.loading-video;
             color: Yt.secondary;
             horizontal-alignment: center;
             vertical-alignment: center;
             width: parent.width;
             height: parent.height;
+        }
+        Image {
+            source: root.frame;
+            image-fit: contain;
+            width: parent.width;
+            height: parent.height;
+        }
+        // A click pauses / plays, a double click goes full screen. The
+        // controls (⏮ ⏯ ⏭ in the middle, full screen in the corner) show
+        // while the pointer is over the video, or paused.
+        if root.ours: touch := TouchArea {
+            property <bool> shown: self.has-hover || !root.playing;
+            clicked => { root.toggle(); }
+            double-clicked => { root.toggle-full(); }
+            Rectangle {
+                opacity: touch.shown ? 1 : 0;
+                animate opacity { duration: 180ms; easing: ease-out; }
+                background: #00000059;
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: root.full ? 48px : 28px;
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton { icon: "prev"; size: root.full ? 80px : 56px; icon-size: root.full ? 56px : 40px; tint: Yt.text; clicked => { root.prev(); } }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton { icon: root.playing ? "pause" : "play"; size: root.full ? 112px : 80px; icon-size: root.full ? 84px : 60px; tint: Yt.text; clicked => { root.toggle(); } }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        IconButton { icon: "next"; size: root.full ? 80px : 56px; icon-size: root.full ? 56px : 40px; tint: Yt.text; clicked => { root.next(); } }
+                    }
+                }
+                IconButton {
+                    x: parent.width - self.width - 8px;
+                    y: parent.height - self.height - 8px;
+                    icon: root.full ? "fullscreen-exit" : "fullscreen";
+                    size: root.full ? 52px : 40px;
+                    icon-size: root.full ? 34px : 26px;
+                    tint: Yt.text;
+                    clicked => { root.toggle-full(); }
+                }
+            }
         }
     }
 
@@ -1371,6 +1428,15 @@ slint::slint! {
         in-out property <bool> video-on;
         // The playing song has a clip (YouTube Music's "Video").
         in property <bool> has-video;
+        // The clip's picture now (our player).
+        in property <image> video-frame;
+        // Our clip on the whole screen (the window goes full screen).
+        in-out property <bool> video-full;
+        callback fullscreen(bool);
+        changed video-full => { root.fullscreen(self.video-full); }
+        changed video-on => {
+            if (!self.video-on) { self.video-full = false; }
+        }
         // Where the video goes (window coordinates).
         callback video-rect(length, length, length, length);
         // The video was switched off (closing the full-screen view).
@@ -1512,6 +1578,7 @@ slint::slint! {
             key-pressed(event) => {
                 if (event.text == Key.Escape && root.account-open) { root.account-open = false; return accept; }
                 if (event.text == Key.Escape && root.settings-open) { root.settings-open = false; return accept; }
+                if (event.text == Key.Escape && root.video-full) { root.video-full = false; return accept; }
                 if (event.text == Key.Escape && root.expanded) { root.expanded = false; return accept; }
                 if (event.text == Key.Escape && root.can-back) { root.go-back(); return accept; }
                 if (event.text == Key.Backspace && root.can-back) { root.go-back(); return accept; }
@@ -2006,12 +2073,18 @@ slint::slint! {
                                 }
                                 if root.video-on: Rectangle {
                                     vertical-stretch: 1;
-                                    VideoArea {
+                                    if !root.video-full: VideoArea {
                                         // 16:9, as big as fits, centred.
                                         width: min(parent.width, parent.height * 16 / 9);
                                         height: self.width * 9 / 16;
                                         x: (parent.width - self.width) / 2;
                                         y: (parent.height - self.height) / 2;
+                                        frame: root.video-frame;
+                                        playing: root.playing;
+                                        toggle => { root.toggle-pause(); keys.focus(); }
+                                        prev => { root.prev(); keys.focus(); }
+                                        next => { root.next(); keys.focus(); }
+                                        toggle-full => { root.video-full = true; keys.focus(); }
                                         rect(x, y, w, h) => { root.video-rect(x, y, w, h); }
                                     }
                                 }
@@ -2062,8 +2135,14 @@ slint::slint! {
                                 playing: root.playing;
                                 clicked => { root.toggle-pause(); keys.focus(); }
                             }
-                            if root.video-on: VideoArea {
+                            if root.video-on && !root.video-full: VideoArea {
                                 height: min(root.win-width - 32px, root.win-height * 0.36) * 9 / 16;
+                                frame: root.video-frame;
+                                playing: root.playing;
+                                toggle => { root.toggle-pause(); keys.focus(); }
+                                prev => { root.prev(); keys.focus(); }
+                                next => { root.next(); keys.focus(); }
+                                toggle-full => { root.video-full = true; keys.focus(); }
                                 rect(x, y, w, h) => { root.video-rect(x, y, w, h); }
                             }
                             QueuePanel {
@@ -2849,6 +2928,22 @@ slint::slint! {
                     AboutSlint {}
                 }
             }
+        }
+
+        // The clip full screen: above everything else in the window.
+        if root.video-on && root.video-full: VideoArea {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            full: true;
+            frame: root.video-frame;
+            playing: root.playing;
+            toggle => { root.toggle-pause(); keys.focus(); }
+            prev => { root.prev(); keys.focus(); }
+            next => { root.next(); keys.focus(); }
+            toggle-full => { root.video-full = false; keys.focus(); }
+            rect(x, y, w, h) => { root.video-rect(x, y, w, h); }
         }
     }
 

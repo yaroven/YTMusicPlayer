@@ -174,7 +174,7 @@ maintainer = "yaroven <yaroven@users.noreply.github.com>"
 section = "sound"
 priority = "optional"
 depends = "$auto, fontconfig, libxkbcommon0"
-recommends = "libxkbcommon-x11-0, libwayland-client0, libxcursor1, libxi6, libxrandr2, pipewire-alsa | libasound2-plugins, gnome-keyring | kwalletmanager"
+recommends = "libxkbcommon-x11-0, libwayland-client0, libxcursor1, libxi6, libxrandr2, pipewire-alsa | libasound2-plugins, gnome-keyring | kwalletmanager, libavcodec61 | libavcodec60 | libavcodec59 | libavcodec58, libswscale8 | libswscale7 | libswscale6 | libswscale5"
 extended-description = """\
 Plays your YouTube Music likes and playlists with a fraction of the memory
 of the browser tab, in a desktop window (`yarek`)."""

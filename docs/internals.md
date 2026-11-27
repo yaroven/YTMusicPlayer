@@ -142,14 +142,28 @@ download button again or the row menu.
 
 ## Watching the clip
 
-The song / video switch over the cover (♪ / ▶, or `V`) pauses the audio and
-puts the system web view — WebKit on macOS, WebView2 on Windows — in the
+**Our own player** (`clip`, Linux for now): the switch over the cover (♪ /
+▶, or `V`) shows the clip's picture in the video area while the studio song
+keeps playing. A thread of its own asks InnerTube for the clip's HLS master
+playlist (VISIONOS: H.264 + AAC up to 1080p, every segment answers),
+takes the H.264 variant that fits the area (switching at a segment boundary
+when the window grows or shrinks), fetches the MPEG-TS segments one ahead,
+pulls the H.264 access units and their PTS out with our TS demuxer and
+decodes them with the system's FFmpeg (`clip::ffmpeg`, `dlopen`ed: no
+link-time dependency) into RGB pictures scaled to the area; three wait in
+a queue. `gui::clip_view`'s 15 ms timer shows the one due at the song's
+position plus the clip's intro offset, from the same snapshot clock the
+lyrics use; a jump in the position is a seek. Without the libraries, or
+when YouTube has no clip for it, the old ways below apply.
+
+**Elsewhere** (macOS, Windows, until their decoders are written) the switch
+pauses the audio and puts the system web view — WebKit on macOS, WebView2 on Windows — in the
 window as a **child view** over the cover's place (`gui::video`): Slint keeps
 the layout, the system draws the video into the rectangle Slint reports. The
 page is YouTube's watch page, stripped to the player by an injected script
 that also reports `currentTime`; switching back destroys the view (its
 WebContent processes go too) and seeks the audio to where the video stopped.
-Linux — which has no system web view — opens it in the browser.
+Linux without FFmpeg's libraries opens it in the browser.
 
 ## Signing in
 
