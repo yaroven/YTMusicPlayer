@@ -40,6 +40,23 @@ impl Session {
         });
     }
 
+    /// YouTube stopped taking the sign-in. The library stays as it was; the
+    /// browser the user lets us read is asked for a fresh one (once a run),
+    /// else the window shows its sign-in screen with this message.
+    pub(super) fn sign_in_expired(&mut self) {
+        if !self.cookies_browser.is_empty() && !std::mem::replace(&mut self.renewed, true) {
+            self.sign_in_youtube(Some(self.cookies_browser.clone()));
+            return;
+        }
+        if !self.youtube_signing_in {
+            self.set_error(tr!(
+                self.lang,
+                "The YouTube sign-in has expired: sign in again",
+                "Вхід у YouTube більше не дійсний: увійди ще раз"
+            ));
+        }
+    }
+
     pub fn sign_out_youtube(&mut self) {
         let (tx, youtube) = (self.tx.clone(), self.deps.youtube.clone());
         tokio::spawn(async move {

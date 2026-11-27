@@ -818,6 +818,12 @@ Domain terms are defined in `CONTEXT.md`.
   (`recheck_download`) and a clip saved with its own sound is replaced.
   Names come from `next`'s own entry first: a listing may carry the
   video's title on the label's channel, which matched no song (2026-11-24).
+- **Expired sign-in** (2026-11-24, user's Linux log): YouTube answers
+  stale cookies with HTTP 200 as to a stranger (`logged_in` = 0), so a sync
+  emptied the library and Home was anonymous. `Catalog::send` checks it on
+  the account's own pages → `SignInExpired`: the library stays, the
+  browser in `cookies_from_browser` is asked once a run, else the sign-in
+  screen. Rotated `Set-Cookie`s are kept. Phones don't check it yet.
 - **Player bar**: both side layouts take the wider one's preferred width
   (`side`), so the song block is centred in the window, not in what the
   sides left (user's screenshot 2026-10-26). iPhone's top row got a 40 pt

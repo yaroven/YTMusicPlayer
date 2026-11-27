@@ -461,6 +461,8 @@ pub struct Session {
     /// The YouTube sign-in window (or browser import) is running.
     youtube_signing_in: bool,
     cookies_browser: String,
+    /// An expired sign-in was renewed from the browser this run.
+    renewed: bool,
     pub status: Option<Status>,
     pub player_status: PlayerStatus,
     /// The queue revision last written to the library (`meta`).
@@ -619,6 +621,7 @@ impl Session {
             login_generation: 0,
             youtube_signing_in: false,
             cookies_browser,
+            renewed: false,
             status: None,
             memory: String::new(),
             memory_at: None,
@@ -680,7 +683,7 @@ impl Session {
             downloading: self.downloading.len(),
             signed_in: self.signed_in(),
             signing_in: self.signing_in,
-            youtube_signed_in: self.deps.youtube.signed_in(),
+            youtube_signed_in: self.youtube_signed_in(),
             youtube_signing_in: self.youtube_signing_in,
             client_id: self.client_id().unwrap_or_default().to_owned(),
             memory: self.memory.clone(),

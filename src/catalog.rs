@@ -25,6 +25,27 @@ const CLIENT_VERSION: &str = "1.20260901.01.00";
 /// The player endpoint's loudness data is only given to this client.
 const IOS_CLIENT: &str = "IOS";
 const IOS_VERSION: &str = "20.10.4";
+/// Browse ids that are the account's own (Home, the library).
+const PERSONAL: [&str; 3] = ["FEmusic_home", "FEmusic_liked", "FEmusic_library"];
+
+/// YouTube no longer takes the stored sign-in: it answered as to a stranger
+/// (HTTP 200, empty lists) although the request was signed.
+#[derive(Debug, thiserror::Error)]
+#[error("the YouTube sign-in has expired, sign in again")]
+pub struct SignInExpired;
+
+/// Whether YouTube answered as the account (`logged_in` in the response's
+/// tracking parameters); `None` when it doesn't say.
+fn answered_signed_in(data: &Value) -> Option<bool> {
+    data.pointer("/responseContext/serviceTrackingParams")?
+        .as_array()?
+        .iter()
+        .filter_map(|service| service["params"].as_array())
+        .flatten()
+        .find(|p| p["key"] == "logged_in")
+        .map(|p| p["value"] == "1")
+}
+
 /// YouTube Music's own "Liked Music" playlist.
 pub const LIKED_MUSIC: &str = "VLLM";
 
@@ -198,6 +219,12 @@ impl Catalog {
         if let Some(visitor) = visitor {
             body["context"]["client"]["visitorData"] = json!(visitor);
         }
+        // Pages that are the account's own: an anonymous answer to them looks
+        // like an empty library.
+        let personal = body["browseId"]
+            .as_str()
+            .is_some_and(|id| id == LIKED_MUSIC || PERSONAL.iter().any(|p| id.starts_with(p)));
+        let mut sent_as = None;
         let mut request = self
             .http
             .post(format!("{BASE}/{endpoint}?prettyPrint=false"))
@@ -208,6 +235,7 @@ impl Catalog {
         {
             for (name, value) in session.headers("https://music.youtube.com") {
                 request = request.header(name, value);
+                sent_as = Some(session);
             }
         }
         let response = request
@@ -219,7 +247,27 @@ impl Catalog {
         if !status.is_success() {
             bail!("YouTube Music {endpoint}: HTTP {status}");
         }
-        Ok(response.json().await?)
+        if let Some(session) = sent_as {
+            // Rotated cookies, or the session goes stale sooner.
+            session.absorb_set_cookies(
+                response
+                    .headers()
+                    .get_all(reqwest::header::SET_COOKIE)
+                    .iter()
+                    .filter_map(|v| v.to_str().ok()),
+            );
+        }
+        let data: Value = response.json().await?;
+        if let Some(session) = sent_as
+            && personal
+            && let Some(signed_in) = answered_signed_in(&data)
+        {
+            session.set_expired(!signed_in);
+            if !signed_in {
+                return Err(SignInExpired.into());
+            }
+        }
+        Ok(data)
     }
 
     pub async fn search(&self, query: &str, kind: SearchKind) -> Result<Vec<Item>> {
@@ -1759,6 +1807,18 @@ mod tests {
             &*large_art("https://yt3.googleusercontent.com/a=w120-h120-l90-rj"),
             "https://yt3.googleusercontent.com/a=w544-h544-l90-rj"
         );
+    }
+
+    #[test]
+    fn an_anonymous_answer_is_recognized() {
+        let answer = |v: &str| {
+            json!({ "responseContext": { "serviceTrackingParams": [
+                { "service": "CSI", "params": [{ "key": "c", "value": "WEB_REMIX" }] },
+                { "service": "GFEEDBACK", "params": [{ "key": "logged_in", "value": v }] } ] } })
+        };
+        assert_eq!(answered_signed_in(&answer("1")), Some(true));
+        assert_eq!(answered_signed_in(&answer("0")), Some(false));
+        assert_eq!(answered_signed_in(&json!({})), None);
     }
 
     #[test]

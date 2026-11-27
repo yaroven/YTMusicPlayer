@@ -512,3 +512,28 @@ async fn saving_the_queue_needs_an_account() {
     let status = s.status.as_ref().unwrap();
     assert!(status.is_error, "{}", status.text);
 }
+
+/// YouTube answering as to a stranger must not empty the library: the
+/// window goes to its sign-in screen and says why.
+#[tokio::test]
+async fn an_expired_sign_in_keeps_the_library() {
+    let library = seeded_library();
+    let before = library.playlists().unwrap().len();
+    let (mut s, _, _) = session_with(Resolves::Fail, library.clone()).await;
+    assert!(s.youtube_signed_in());
+    s.deps.youtube.set_expired(true);
+    s.syncing = true;
+    s.tx.send(Background::Synced(
+        Err(crate::catalog::SignInExpired.into()),
+    ))
+    .unwrap();
+    s.next_event().await;
+    assert!(!s.syncing && !s.youtube_signed_in() && !s.view().youtube_signed_in);
+    let status = s.status.as_ref().unwrap();
+    assert!(
+        status.is_error && status.text.contains("expired"),
+        "{}",
+        status.text
+    );
+    assert_eq!(library.playlists().unwrap().len(), before);
+}

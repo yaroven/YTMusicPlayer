@@ -142,6 +142,10 @@ impl Session {
                     // ones straight away (the window asks for more on scroll).
                     self.load_more_home();
                 }
+                Err(err) if err.is::<crate::catalog::SignInExpired>() => {
+                    changes.account = true;
+                    self.sign_in_expired();
+                }
                 Err(err) => {
                     self.retry_home = self.network_failed(&err);
                     self.set_error(net::failed(self.lang, "Home", "Головна", &err));

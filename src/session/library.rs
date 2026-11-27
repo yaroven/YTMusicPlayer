@@ -13,7 +13,7 @@ use crate::{
         client::{Rating, YouTubeClient},
         models::{LIKED_PLAYLIST_ID, Playlist, Track},
     },
-    catalog::{Catalog, Item, ItemKind},
+    catalog::{Catalog, Item, ItemKind, SignInExpired},
     net,
     storage::OfflineList,
     sync::{sync_library, sync_with_session},
@@ -139,6 +139,10 @@ impl Session {
                         changes.library = true;
                         changes.saved = true;
                         self.set_info(r.summary(self.lang));
+                    }
+                    Err(err) if err.is::<SignInExpired>() => {
+                        changes.account = true;
+                        self.sign_in_expired();
                     }
                     Err(err) => self.set_error(trf!(
                         self.lang,
@@ -1190,7 +1194,7 @@ impl Session {
     /// Signed in to YouTube ("Sign in with Google"): what the player needs
     /// before it shows anything (it shows only the account's own music).
     pub fn youtube_signed_in(&self) -> bool {
-        self.deps.youtube.signed_in()
+        self.deps.youtube.signed_in() && !self.deps.youtube.expired()
     }
 
     /// Forgets the (made-up) YouTube sign-in of the test session.

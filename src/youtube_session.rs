@@ -88,6 +88,8 @@ struct Inner {
     store: Box<dyn SecretStore>,
     /// cookies.txt for yt-dlp (0600), present while signed in.
     file: PathBuf,
+    /// YouTube stopped accepting the cookies (it answers as to a stranger).
+    expired: std::sync::atomic::AtomicBool,
 }
 
 impl YouTubeSession {
@@ -106,6 +108,7 @@ impl YouTubeSession {
                 cookies: RwLock::new(Cookies::new()),
                 store: Box::new(store),
                 file,
+                expired: Default::default(),
             }),
         };
         if is_signed_in(&cookies) {
@@ -138,6 +141,53 @@ impl YouTubeSession {
         is_signed_in(&self.read())
     }
 
+    /// YouTube answered a signed request as to a stranger: the cookies are
+    /// there but worth nothing until the next sign-in.
+    pub fn expired(&self) -> bool {
+        self.inner
+            .expired
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn set_expired(&self, expired: bool) {
+        let was = self
+            .inner
+            .expired
+            .swap(expired, std::sync::atomic::Ordering::Relaxed);
+        if expired && !was {
+            tracing::warn!("YouTube no longer accepts the sign-in");
+        }
+    }
+
+    /// Keeps cookies a response rotated (`Set-Cookie`), in memory and in
+    /// the cookies.txt, from where the store gets them at the next start.
+    pub fn absorb_set_cookies<'a>(&self, headers: impl Iterator<Item = &'a str>) {
+        let mut cookies = self.read();
+        let mut changed = false;
+        for header in headers {
+            let pair = header.split(';').next().unwrap_or_default();
+            if let Some((name, value)) = pair.split_once('=')
+                && !value.is_empty()
+                && value != "EXPIRED"
+                && cookies.get(name.trim()).is_some_and(|old| old != value)
+            {
+                cookies.insert(name.trim().to_owned(), value.to_owned());
+                changed = true;
+            }
+        }
+        if !changed || !is_signed_in(&cookies) {
+            return;
+        }
+        if let Err(err) = write_cookies_file(&self.inner.file, &cookies) {
+            tracing::warn!("{err:#}");
+        }
+        *self
+            .inner
+            .cookies
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = cookies;
+    }
+
     /// The cookies.txt to hand yt-dlp, while signed in.
     pub fn cookies_file(&self) -> Option<&Path> {
         self.signed_in().then_some(self.inner.file.as_path())
@@ -149,6 +199,7 @@ impl YouTubeSession {
         }
         self.inner.store.save(&serde_json::to_string(&cookies)?)?;
         write_cookies_file(&self.inner.file, &cookies)?;
+        self.set_expired(false);
         *self
             .inner
             .cookies
@@ -158,6 +209,7 @@ impl YouTubeSession {
     }
 
     pub fn sign_out(&self) -> Result<()> {
+        self.set_expired(false);
         self.inner
             .cookies
             .write()
@@ -325,6 +377,30 @@ mod tests {
         .into_iter()
         .map(|(k, v)| (k.to_owned(), v.to_owned()))
         .collect()
+    }
+
+    #[test]
+    fn rotated_cookies_are_kept() {
+        let session = YouTubeSession::none();
+        session.sign_in(cookies()).unwrap();
+        session.set_expired(true);
+        session.absorb_set_cookies(
+            [
+                "SID=new; Domain=.youtube.com; Secure",
+                "OTHER=x; Path=/",
+                "SAPISID=EXPIRED; Max-Age=0",
+            ]
+            .into_iter(),
+        );
+        let kept = session.read();
+        assert_eq!(
+            (kept["SID"].as_str(), kept["SAPISID"].as_str()),
+            ("new", "abc")
+        );
+        assert!(!kept.contains_key("OTHER"));
+        assert!(session.expired());
+        session.sign_in(cookies()).unwrap();
+        assert!(!session.expired(), "a new sign-in starts afresh");
     }
 
     #[test]
